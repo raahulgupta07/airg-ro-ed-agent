@@ -835,9 +835,11 @@
     question="Drop one or multiple PDFs to start extraction"
   />
 
-  <div class="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-4" style="min-height: calc(100vh - 280px); overflow-x: hidden;">
+  {@const _hideQueueForReview = !!selectedJob && selectedPipeline === 'v11' && !running}
+  <div class={_hideQueueForReview ? 'grid grid-cols-1 gap-4' : 'grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-4'} style="min-height: calc(100vh - 280px); overflow-x: hidden;">
 
     <!-- ═══════════ LEFT PANEL ═══════════ -->
+    {#if !_hideQueueForReview}
     <div class="flex flex-col">
       <!-- Smart Router info banner (compact for left panel) -->
       <div class="mb-3 p-2 rounded border border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 flex items-center gap-2">
@@ -1007,6 +1009,7 @@
       {/if}
 
     </div>
+    {/if}
 
     <!-- ═══════════ RIGHT PANEL ═══════════ -->
     <div style="min-width: 0; overflow-x: hidden;">

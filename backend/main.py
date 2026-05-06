@@ -542,11 +542,13 @@ async def extract_pdf_v11(file: UploadFile = File(...), job_id: Optional[str] = 
             "model_used": result.get("model_used", "V11 Maestro"),
             "processed_at": result.get("processed_at", ""),
         }
-    finally:
+    except Exception:
+        # Only delete the PDF on error (so review UI can re-show it after success).
         try:
             save_path.unlink(missing_ok=True)
         except Exception:
             pass
+        raise
 
 
 @app.get("/api/extract-v11/stream/{job_id}")
