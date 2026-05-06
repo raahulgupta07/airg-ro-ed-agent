@@ -649,8 +649,11 @@
     <span class="text-[11px] font-mono font-bold" style="color: var(--on-surface);">
       {filename}
     </span>
+    {@const _tIn = (job as any)?.tokens_in ?? 0}
+    {@const _tOut = (job as any)?.tokens_out ?? 0}
+    {@const _model = (job as any)?.model_used || 'V11 Maestro'}
     <span class="text-[10px] font-mono" style="color: var(--outline);">
-      {totalPages} pg · ${cost.toFixed(3)} · ITEMS:{itemsCount} · ACC:{accuracy.toFixed(1)}% · DEC:{decision} · TIME:{duration ? duration.toFixed(0) + 's' : '—'} · EDITS:{editCount} · FLAGS:{flagCount}
+      {totalPages} pg · ${cost.toFixed(3)} · ITEMS:{itemsCount} · ACC:{accuracy.toFixed(1)}% · DEC:{decision} · TIME:{duration ? duration.toFixed(0) + 's' : '—'} · TOK:{(_tIn/1000).toFixed(1)}k/{(_tOut/1000).toFixed(1)}k · {_model} · EDITS:{editCount} · FLAGS:{flagCount}
     </span>
     <div class="flex-1"></div>
     <div class="flex flex-wrap gap-2">

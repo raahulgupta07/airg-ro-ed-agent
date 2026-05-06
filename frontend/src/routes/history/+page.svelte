@@ -331,14 +331,24 @@
       </div>
     </div>
 
-    <!-- KPI Row (always 6 across) -->
-    <div class="grid grid-cols-6 gap-2 mb-4">
+    {@const _ti = selectedJob.tokens_in ?? 0}
+    {@const _to = selectedJob.tokens_out ?? 0}
+    {@const _model = selectedJob.model_used || (selectedJob.pipeline_mode || '').toUpperCase() || '—'}
+    <!-- KPI Row 1: 6 across -->
+    <div class="grid grid-cols-6 gap-2 mb-2">
       <KpiCard title="ITEMS" value="{items.length}" accent="#007518" />
       <KpiCard title="ACCURACY" value="{acc.toFixed(1)}%" progress={acc} accent={getAccuracyColor(acc)} />
       <KpiCard title="DECISION" value="{decision}" accent={getAccuracyColor(acc)} />
       <KpiCard title="PAGES" value="{selectedJob.total_pages ?? '—'}" accent="#006f7c" />
       <KpiCard title="TIME" value="{selectedJob.processing_time_seconds?.toFixed(0) ?? '—'}s" accent="#006f7c" />
       <KpiCard title="COST" value="${selectedJob.cost_usd?.toFixed(3) ?? '—'}" accent="#8b6914" />
+    </div>
+    <!-- KPI Row 2: tokens + model + processed -->
+    <div class="grid grid-cols-4 gap-2 mb-4">
+      <KpiCard title="TOKENS_IN" value="{(_ti/1000).toFixed(1)}K" accent="#1d4ed8" subtitle="{_ti.toLocaleString()}" />
+      <KpiCard title="TOKENS_OUT" value="{(_to/1000).toFixed(1)}K" accent="#7c3aed" subtitle="{_to.toLocaleString()}" />
+      <KpiCard title="TOKENS_TOTAL" value="{((_ti+_to)/1000).toFixed(1)}K" accent="#6d28d9" subtitle="$/1k: ${_ti+_to > 0 ? (((selectedJob.cost_usd||0)*1000)/(_ti+_to)).toFixed(4) : '—'}" />
+      <KpiCard title="MODEL" value="{_model}" accent="#7e22ce" subtitle="{selectedJob.pipeline_mode || ''}" />
     </div>
 
     <!-- Tab bar -->
