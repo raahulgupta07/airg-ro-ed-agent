@@ -1,256 +1,221 @@
 # RO-ED AI Agent
 
-Document intelligence system that extracts structured data from import/export PDF documents using AI vision + Master Agent architecture with self-learning and fee verification.
+## Overview
 
-Built by **City AI Team** — City Holdings Myanmar
+Myanmar customs PDF extraction platform. Each page of a customs declaration is classified and routed to the right specialist — typed pages go to **Veritas** (V7), handwritten pages go to **Scrivener** (V10 PRO) — and the merged result is presented in a side-by-side review UI for human approval. The active production pipeline is **V11 Maestro**: queue-driven (Redis + RQ), Postgres-backed, with live SSE router events. Built by City AI Team — City Holdings Myanmar.
 
 ---
 
-## How It Works
+## Quick Start
+
+```bash
+git clone <repo-url> RO-ED-Lang && cd RO-ED-Lang
+cp .env.example .env       # set OPENROUTER_API_KEY + JWT_SECRET_KEY + FERNET_KEY
+docker compose up -d --build
+```
+
+Open **http://localhost:9000** and log in with `admin` / `admin123` (configurable via `.env`).
+
+`docker compose ps` should show four services healthy: `postgres`, `redis`, `app`, `worker` (replicas: 2).
+
+---
+
+## Architecture
 
 ```
-PDF → HD Images → Vision AI per page → QA → Master Agents → QA → Verifier → Fee Verify → Results
+                           ┌──────────────────────────────────┐
+                           │  SvelteKit 5 frontend (port 9000)│
+                           └───────────────┬──────────────────┘
+                                           │ HTTPS / SSE
+                                           ▼
+ ┌──────────────────────────────────────────────────────────────────┐
+ │  FastAPI app (uvicorn ×2)                                        │
+ │   POST /api/extract-v11 ── 202 ──▶ enqueue RQ                    │
+ │   GET  /api/extract-v11/stream/{id}  (SSE, Redis pubsub)         │
+ │   /api/review/*  /api/jobs/*  /api/costs/*  /api/settings/*      │
+ └──────────────┬─────────────────────────┬────────────────────────┘
+                │                         │
+                ▼                         ▼
+        ┌──────────────┐           ┌──────────────┐
+        │ Postgres 16  │           │  Redis       │
+        │ jobs / items │           │  RQ queue    │
+        │ declarations │           │  pubsub      │
+        │ field_edits  │           └──────┬───────┘
+        │ activity_log │                  │
+        └──────────────┘                  ▼
+                                  ┌──────────────────┐
+                                  │  RQ worker ×2    │
+                                  │                  │
+                                  │  V11 Maestro:    │
+                                  │   classify pages │
+                                  │   split PDF      │
+                                  │   ┌────────────┐ │
+                                  │   │ Veritas    │ │  typed pages
+                                  │   │ (V7)       │ │
+                                  │   └────────────┘ │
+                                  │   ┌────────────┐ │
+                                  │   │ Scrivener  │ │  handwritten
+                                  │   │ (V10 PRO)  │ │
+                                  │   └────────────┘ │
+                                  │   merge          │
+                                  │   field bbox     │
+                                  │   DB save        │
+                                  └─────────┬────────┘
+                                            ▼
+                              S3-compatible storage
+                              (AWS / MinIO / R2 / Wasabi /
+                               Backblaze, or local fallback)
 ```
-
-12 steps. No Tesseract. No hardcoding. Zero calculations. Every value read directly from the document.
 
 ---
 
 ## Features
 
-- **Master + Column Agent architecture** — Declaration (16 agents), Items (9 agents per product)
-- **Claude Sonnet verification** — Premium model cross-checks every value against source page images
-- **Fee verification** — Text-based LLM verifies fee-label mapping + 7-layer deterministic fallback
-- **Fee self-learning** — User corrections auto-save fee baselines per importer for future accuracy
-- **json_schema enforced** — Guaranteed valid JSON output, all fields present, zero parse errors
-- **Token optimized** — Deduplicated fields, no metadata sent to assembler (~11% savings)
-- **Self-learning** — User corrections feed back as few-shot examples
-- **Vision QA** — Re-runs low-quality pages automatically
-- **Table QA** — Re-runs missing fields until all filled
-- **Cross-validation** — Items sum must match declaration total
-- **Pipeline Visualizer** — Real-time flow diagram showing each step's progress
-- **Confidence indicators** — Green/yellow/red dots on every table and page
-- **Annotated PDF** — Highlights where values were found on original PDF
-- **Excel export** — Items + Declaration as separate sheets
-- **Field search** — Search any value across all pages with copy buttons
-- **Document map** — Clickable page grid with expand to see image + data
-- **Duplicate detection** — VIEW RESULTS (free) or RE-PROCESS (double confirmation)
-- **Persistent sessions** — Results stay when navigating away (localStorage)
-- **10 concurrent users** — SQLite WAL + API semaphore + per-job isolation
-- **Review queue** — Auto-approve (≥95%) / Needs review (80-95%) / Escalate (<80%)
-- **REST API** — `POST /api/extract` for headless integration
-- **Batch processing** — Multiple PDFs with real-time streaming terminal
-- **100% accuracy** — Tested on 12 verified customs PDFs, zero corrections needed
-- **Cost: ~$0.15-0.20 per PDF**
+- **V11 Maestro routing** — per-page classifier sends typed pages to Veritas and handwritten pages to Scrivener, then merges results
+- **Async queue** — 202 + `stream_id`; live SSE router events (JOB_START, CLASSIFY, ROUTE, STAGE_START, STAGE_DONE, MERGE, DB_SAVE, DONE, FAIL)
+- **Side-by-side review UI** — PDF iframe + editable form + Excel-style item table; inline cell edit, ▲▼🗑 row actions, [+ ADD] row, page-jump 📍
+- **Field-edit audit** — every cell change recorded in `field_edits`
+- **Auto-approve cron** — hourly job auto-approves above configurable confidence threshold
+- **Activity Log v2** — 9 enrichment fields (IP, UA, auth source, severity, duration, status), KPI strip, security tab, JOB events, filter bar
+- **Cost tracking** — `tokens_in` / `tokens_out` per job; `/costs` dashboard with dual-axis trend (ECharts) + Excel/CSV export
+- **Multi-LDAP** — cascade login, Fernet-encrypted bind passwords, per-user fast-path cache
+- **Keycloak OIDC** — RS256 / PKCE
+- **Pluggable storage** — S3-compatible (AWS / MinIO / R2 / Wasabi / Backblaze) configured in `/settings/STORAGE`; local fallback
+- **Encrypted secrets at rest** — Fernet for LDAP bind passwords and storage secret keys
+- **Field bounding boxes** — `fitz.search_for` rectangles attached to extracted values for highlight on the PDF
+- **Fee verification chain** — text-based LLM verifier + 7-layer deterministic fallback + auto-revert safety net
+- **Self-learning** — user corrections auto-save fee baselines per importer
+- **json_schema enforced** — guaranteed valid JSON output from every assembler step
+- **REST API** — V11 plus legacy V7 sync endpoint for external integration
+- **No Tesseract** — vision-only OCR via Gemini
+
+---
+
+## Configuration
+
+### `.env`
+
+| Variable | Required | Description |
+|---|---|---|
+| `OPENROUTER_API_KEY` | yes | OpenRouter key for AI models |
+| `JWT_SECRET_KEY` | yes | `openssl rand -hex 32` |
+| `FERNET_KEY` | yes | `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` — used to encrypt LDAP + storage secrets at rest |
+| `POSTGRES_HOST` / `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | yes | Postgres connection (defaults provided in compose) |
+| `REDIS_URL` | yes | e.g. `redis://redis:6379/0` |
+| `ADMIN_DEFAULT_USERNAME` | no | First-init admin (default `admin`) |
+| `ADMIN_DEFAULT_PASSWORD` | no | First-init admin (default `admin123`) |
+| `KEYCLOAK_REALM_URL` / `KEYCLOAK_CLIENT_ID` / `KEYCLOAK_CLIENT_SECRET` / `KEYCLOAK_ADMIN_ROLE` | no | Optional SSO; can also be set via `/settings/KEYCLOAK` |
+
+### Storage (`/settings/STORAGE`)
+
+Pick provider (`aws`, `minio`, `r2`, `wasabi`, `backblaze`, or `local`), supply endpoint + bucket + access key + secret key. The secret key is Fernet-encrypted before being written to `storage_config`.
+
+### LDAP (`/settings/LDAP`)
+
+Multiple directories supported with cascade fallback. Bind passwords are Fernet-encrypted in `ldap_configs`. Per-user fast-path caches the matching directory.
+
+---
+
+## API
+
+### Submit a PDF (V11 Maestro)
+
+```bash
+curl -X POST http://localhost:9000/api/extract-v11 \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@invoice.pdf"
+# 202 Accepted
+# {"stream_id": "abc123", "job_id": null, "status": "queued"}
+```
+
+### Stream live events (SSE)
+
+```bash
+curl -N http://localhost:9000/api/extract-v11/stream/abc123 \
+  -H "Authorization: Bearer $TOKEN"
+# event: CLASSIFY  data: {"page": 1, "verdict": "PRINTED"}
+# event: ROUTE     data: {"printed": [1,2], "inked": [3]}
+# event: STAGE_DONE data: {"stage": "veritas", "ms": 41200}
+# event: DONE      data: {"job_id": "...", "items": 7}
+```
+
+### Poll status
+
+```bash
+curl http://localhost:9000/api/extract-v11/status/abc123 \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Legacy synchronous extract (V7)
+
+```bash
+curl -X POST http://localhost:9000/api/extract \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@invoice.pdf"
+# Returns full JSON when complete
+```
+
+### Review API (selected)
+
+```
+GET    /api/review/queue
+GET    /api/review/stats
+POST   /api/review/{job_id}/approve
+POST   /api/review/{job_id}/reject
+POST   /api/review/{job_id}/draft
+POST   /api/review/{job_id}/edit
+POST   /api/review/{job_id}/items           (add)
+PATCH  /api/review/{job_id}/items/{item_id}
+DELETE /api/review/{job_id}/items/{item_id}
+POST   /api/review/{job_id}/rerun
+POST   /api/review/bulk-approve
+```
 
 ---
 
 ## Tech Stack
 
 | Layer | Technology |
-|-------|-----------|
-| Frontend | SvelteKit 5 + TailwindCSS 4.2 |
-| Backend | FastAPI 0.115 + Uvicorn (Python 3.12) |
-| Database | SQLite (WAL mode, 30s busy_timeout) |
-| Vision + Assembler | Google Gemini 3 Flash Preview via OpenRouter |
-| Verifier | Anthropic Claude Sonnet 4.6 via OpenRouter |
-| Fee Verifier | Google Gemini 3 Flash Preview (text-based, ~$0.002/call) |
-| PDF | PyMuPDF at 300 DPI + Pillow (NO Tesseract) |
-| Auth | Local JWT + Keycloak OIDC |
-| Container | Docker (4GB RAM, 2 CPUs) |
+|---|---|
+| Frontend | SvelteKit 5 (runes), TailwindCSS 4.2, ECharts |
+| Backend | FastAPI 0.115, Uvicorn (Python 3.12, 2 workers) |
+| Database | Postgres 16 (psycopg3 + SQLAlchemy QueuePool) |
+| Queue | Redis + RQ (worker replicas: 2) |
+| Vision + Assembler | Google Gemini 3 Flash Preview (OpenRouter) |
+| Verifier | Anthropic Claude Sonnet 4.6 (OpenRouter) |
+| Fee Verifier | Gemini 3 Flash, text-based |
+| PDF | PyMuPDF (300 DPI) + Pillow — no Tesseract |
+| Auth | Local JWT + multi-LDAP + Keycloak OIDC |
+| Storage | S3-compatible (factory) or local |
+| Container | docker-compose (postgres + redis + app + worker x2) |
 
 ---
 
-## Quick Install
+## Deployment
+
+### docker-compose (default)
+
+`docker compose up -d --build` provisions four services. Postgres data is volume-mounted; storage is configurable via `/settings/STORAGE`.
+
+### Production notes
+
+- Set strong `JWT_SECRET_KEY`, `FERNET_KEY`, and `POSTGRES_PASSWORD` (never reuse defaults)
+- Pin `worker` replicas to expected throughput (each worker handles one V11 job at a time; default `replicas: 2`)
+- Postgres pool: SQLAlchemy QueuePool 10 + 10 overflow, 30s timeout — tune via env if you raise app workers
+- API semaphore caps OpenRouter calls at 16; raise carefully
+- Run Alembic migrations via `docker compose exec app alembic upgrade head`
+- Migrating from a SQLite deployment? Use `backend/scripts/migrate_sqlite_to_pg.py`
+- Activity Log v2 is append-only — set up a retention policy if you ingest at high volume
+- `auto_approve_threshold` and `auto_approve_enabled` live in `app_settings` and are managed in `/settings/AUTO_APPROVE`
+
+### Health check
 
 ```bash
-git clone <repo-url> RO-ED-Lang && cd RO-ED-Lang
-cp .env.example .env   # Edit .env — set OPENROUTER_API_KEY + JWT_SECRET_KEY
-./start-docker.sh      # Builds frontend, validates config, starts Docker
-```
-
-Or manually:
-```bash
-cp .env.example .env                          # Fill in your values
-cd frontend && npm install && npm run build && cd ..
-docker-compose up -d --build
-```
-
-Open **http://localhost:9000** — Login with credentials from `.env` (default: `admin` / `admin123`)
-
-### Environment Variables
-
-| Variable | Required | Where | Description |
-|----------|----------|-------|-------------|
-| `OPENROUTER_API_KEY` | Yes | `.env` | API key for AI models ([get one](https://openrouter.ai/keys)) |
-| `JWT_SECRET_KEY` | Yes | `.env` | Secret for JWT signing — generate: `openssl rand -hex 32` |
-| `ADMIN_DEFAULT_USERNAME` | No | `.env` | Admin username on first init (default: `admin`) |
-| `ADMIN_DEFAULT_PASSWORD` | No | `.env` | Admin password on first init (default: `admin123`) |
-| `KEYCLOAK_REALM_URL` | No | `.env` / Settings page | Keycloak SSO (optional) |
-| `KEYCLOAK_CLIENT_ID` | No | `.env` / Settings page | Keycloak client ID |
-| `KEYCLOAK_CLIENT_SECRET` | No | `.env` / Settings page | Keycloak client secret |
-| `KEYCLOAK_ADMIN_ROLE` | No | `.env` / Settings page | Keycloak role mapped to admin (default: `admin`) |
-
----
-
-## Pipeline Architecture
-
-```
-Step 1:  SPLITTER           — PDF → HD images (300 DPI)
-Step 2:  VISION AGENTS      — Per-page extraction (parallel, 8 workers, semaphore=16)
-Step 3:  VISION QA          — Re-run bad pages only
-Step 4:  DECLARATION AGENT  — 16 column agents (json_schema enforced)
-Step 5:  DECLARATION QA     — Re-run missing fields only
-Step 6:  ITEMS AGENT        — 10 column agents (json_schema enforced)
-Step 7:  ITEMS QA           — Re-run missing fields only
-Step 8:  ITEM DEDUP         — Remove duplicate items (same name + HS code)
-Step 9:  PRICE FALLBACK     — Copy Invoice↔CIF price if one is missing
-Step 10: CROSS-VALIDATION   — Items sum = declaration total
-Step 11: VERIFIER           — Claude Sonnet checks against page images
-Step 12: FEE VERIFY         — Text LLM verifies fee-label mapping (deterministic fallback)
-```
-
-### Models
-
-| Step | Model | Role | Cost |
-|------|-------|------|------|
-| Vision | Gemini 3 Flash | Read each page image → JSON | ~$0.002/page |
-| Declaration Agent | Gemini 3 Flash | 16 column agents find declaration fields | ~$0.01 |
-| Items Agent | Gemini 3 Flash | 9 column agents find item fields | ~$0.01 |
-| Verifier | Claude Sonnet 4.6 | Cross-check all values against page images | ~$0.12 |
-| Fee Verifier | Gemini 3 Flash | Verify fee-label mapping using raw page text | ~$0.002 |
-
-### Fee Verification (Step 12)
-
-LLMs can shift fee/tax values down by 1 position in Myanmar customs documents (CT→AT, SF→MF). However, CT=0 and SF=0 are often genuine (tax-exempt goods). The system uses a 5-layer defense chain:
-
-1. **Assembler extracts only** — no self-correction. Clean values go to verifier.
-2. **Claude Sonnet verifier** — cross-checks fees against page images.
-3. **Primary: Text-based LLM** (`verify_fees_with_llm()`) — matches fee labels to values using raw vision text (not images). Avoids visual layout confusion. Cost: ~$0.002. Sanity-checked before applying.
-4. **Fallback: Conservative deterministic** (`_fix_fee_shift()`) — only fires with **page text evidence** (not heuristics alone). 7 safety layers including importer baseline, page text cross-check, post-fix sanity check, and audit trail.
-5. **Final safety net** — if any fee exceeds customs value after correction, ALL changes revert to assembler original.
-
-**Self-learning:** User corrections auto-save fee baselines per importer for future accuracy.
-
-**Tested:** 13/13 PDFs pass, 2/2 verified against ground truth with 100% fee accuracy.
-
----
-
-## Output Tables
-
-### Table 1: Product Items (13 columns)
-
-| Column | Description |
-|--------|-------------|
-| Job | Job ID |
-| Item Name | Full product description |
-| Customs Duty Rate | Duty as decimal (0.15 = 15%) |
-| Quantity (1) | Quantity with unit (e.g. "17,280 KG") |
-| Invoice Unit Price | FOB price from commercial invoice (supplier price, lower) |
-| CIF Unit Price | CIF price from customs declaration (includes freight+insurance, higher) |
-| Currency | Invoice currency (from declaration) |
-| Commercial Tax % | Tax as decimal (0.05 = 5%) |
-| Exchange Rate (1) | Foreign to local currency rate |
-| HS Code | Harmonized system tariff code |
-| Origin Country | Country of origin |
-| Customs Value (MMK) | Value in local currency |
-| Processed | Extraction timestamp |
-
-### Table 2: Customs Declaration (18 columns)
-
-| Column | Description |
-|--------|-------------|
-| Job | Job ID |
-| Declaration No | 12-digit customs declaration number |
-| Date | Declaration date (YYYY-MM-DD) |
-| Importer | Importing company name |
-| Consignor | Exporter/shipper name |
-| Invoice Number | Invoice reference (with prefix) |
-| Invoice Price | Total invoice amount in foreign currency |
-| Currency | Invoice currency (USD, THB, etc.) |
-| Exchange Rate | Conversion rate to MMK |
-| Currency 2 | Same as Currency |
-| Customs Value | Total CIF value in MMK |
-| Duty | Import/export customs duty |
-| Tax (CT) | Commercial tax |
-| Income Tax (AT) | Advance income tax |
-| Security (SF) | Security fee |
-| MACCS (MF) | MACCS service fee |
-| Exemption/Reduction | Tax exemption amount |
-| Processed | Extraction timestamp |
-
----
-
-## UI Pages
-
-| Tab | Description |
-|-----|-------------|
-| **Agent** | Upload PDFs, pipeline visualizer, streaming log, all results |
-| **History** | Job list → same results view (ResultAccordion) |
-| **Review** | Confidence queue: auto-approve ≥95%, review 80-95%, escalate <80% |
-| **Items** | All items across jobs |
-| **Declarations** | All declarations across jobs |
-| **Costs** | Daily trends, per-PDF costs |
-| **Settings** | Users + Auth + Groups |
-
-### Results View (RESULTS | PDF ANNOTATED | PIPELINE LOG)
-
-1. Pipeline Flow Visualizer
-2. KPI Cards
-3. Field Confidence
-4. Document Insights
-5. Product Items table
-6. Customs Declaration table
-7. Corrections Log
-8. Document Summary
-9. Field Search
-10. Document Map (expandable)
-
----
-
-## CLI Usage
-
-```bash
-cd backend && python -m pipeline.pipeline /path/to/document.pdf
+curl http://localhost:9000/api/health
 ```
 
 ---
 
-## Performance
+## License
 
-| Metric | Value |
-|--------|-------|
-| Accuracy | 100% (12 PDFs, zero corrections) |
-| Cost | $0.15-0.20 per PDF |
-| Speed | 60-130s per PDF |
-| Max pages tested | 29 pages (cap: 50) |
-| Max items | 21 per document |
-| Concurrent users | 10 |
-
----
-
-## Troubleshooting
-
-| Issue | Symptom | Fix |
-|-------|---------|-----|
-| `res.json()` hangs | "LOADING..." forever, server logs 200 OK | Use `res.text()` + `JSON.parse()` in `api.ts` instead of `res.json()` |
-| Pipeline view stuck | Job shows DONE but results don't appear | Replace array entry with new object: `queue[i] = {...entry, status: 'done'}` |
-| `{@const}` crash | `ReferenceError: X is not defined` in console | `{@const}` is block-scoped — don't reference outside its `{#if}`/`{#each}` |
-| 401 on some routes | Works in curl, fails in browser | Match trailing slashes in API paths exactly (`/users/` not `/users`) |
-| Results not loading after pipeline | WebSocket completes but no tables shown | Check `ws.py` sends `job_data` in `file_complete` message |
-| Fee values shifted | CT/AT/SF/MF off by 1 position | Step 12: text LLM verifier (primary) + evidence-based deterministic fallback + sanity checks + auto-revert safety net |
-| Declaration No shows as float | `100303470412.0` instead of `100303470412` | STRING_FIELDS in assembler.py skips numeric conversion |
-| Currency 2 always empty | Not saved to DB | Fixed key from `Currency.1` to `Currency 2` in database.py |
-| Missing columns in Excel | Only 15 columns instead of 18 | Added Job, Currency 2, Processed to all 3 export endpoints |
-
-### Debug "LOADING..." Issues
-
-1. Open browser DevTools Console — check for red errors
-2. If no errors: add debug state to show fetch progress (see CLAUDE.md)
-3. If `fetch done: 200 OK` but stuck: body streaming issue → use `res.text()` + `JSON.parse()`
-4. If JavaScript error: fix the referenced variable/scope issue
-5. Test API with curl: `curl -s http://localhost:9000/api/jobs/ -H "Authorization: Bearer <token>"`
-
----
-
-Created by **City AI Team** — City Holdings Myanmar
+Proprietary. Created by **City AI Team** — City Holdings Myanmar.
