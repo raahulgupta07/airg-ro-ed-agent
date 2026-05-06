@@ -1,218 +1,224 @@
 # CLAUDE.md — Project Guide for AI Assistants
 
-## What This Project Is
+## What this project is
 
-**RO-ED AI Agent** — Myanmar customs PDF extraction system. Routes each page of a customs declaration to the right specialist (typed pages → Veritas, handwritten pages → Scrivener), extracts structured data, and presents it for human review and approval. Built by City AI Team — City Holdings Myanmar.
+**RO-ED AI Agent** is a Myanmar-customs PDF extraction platform. It classifies each page of a customs declaration and routes it to the right specialist (typed pages → **Veritas** / V7, handwritten pages → **Scrivener** / V10 PRO), merges results, and presents them in a side-by-side review UI for human approval. The active production pipeline is **V11 Maestro** — queue-driven (Redis + RQ), Postgres-backed, with live SSE router events. Built by City AI Team — City Holdings Myanmar. Designed for ~10 concurrent users.
 
-The active pipeline is **V11 Maestro**. It is queue-driven, streams live router events over SSE, and writes to Postgres.
+## Tech stack
 
-## Tech Stack
-
-- **Frontend:** SvelteKit 5 (runes) + TailwindCSS 4.2 + ECharts
-- **Backend:** FastAPI 0.115 + Uvicorn (Python 3.12, 2 workers)
-- **Database:** **Postgres 16** (psycopg3 + SQLAlchemy QueuePool 10+10)
-- **Job queue:** **RQ + Redis** (`worker` service, replicas: 2)
-- **AI Models:** OpenRouter API (per-step model config)
-  - Typed-page vision + assembler: Google Gemini 3 Flash Preview
-  - Handwritten (V10 PRO): vision + arbiter + consensus models per step
-  - Verifier: Anthropic Claude Sonnet 4.6
-  - Fee Verifier: Gemini 3 Flash (text-based)
-- **Auth:** Local JWT (HS256) + multi-LDAP cascade + Keycloak OIDC (RS256/PKCE)
-- **Storage:** S3-compatible (AWS / MinIO / R2 / Wasabi / Backblaze) or local fallback. Fernet-encrypted secret keys in DB.
+- **Frontend:** SvelteKit 5 (runes) + TailwindCSS 4.2 + ECharts (cost dashboard) + Vite
+- **Backend:** FastAPI 0.115 + Uvicorn (Python 3.12, 2 workers), Pydantic v2
+- **Database:** Postgres 16 (psycopg3 + SQLAlchemy QueuePool 10+10) + Alembic
+- **Queue:** RQ + Redis 7 (`worker` container, `replicas: 2`)
+- **Reverse proxy:** Nginx 1.27 with HTTPS (TLS 1.2/1.3 + HSTS); self-signed dev / Let's Encrypt prod
+- **Auth:** Local JWT (HS256, ≥ 32 chars enforced) + multi-LDAP cascade + Keycloak OIDC (RS256, PKCE)
+- **Storage:** S3-compatible (AWS / MinIO / R2 / Wasabi / Backblaze) configurable from `/settings`; local fallback. Secrets Fernet-encrypted in DB.
 - **PDF:** PyMuPDF (fitz) at 300 DPI + Pillow. **No Tesseract.**
-- **Container:** docker-compose (postgres + redis + app + worker x2)
+- **LLMs:** OpenRouter API. Typed-page vision + assembler: Gemini 3 Flash Preview. Verifier: Claude Sonnet 4.6. V10 PRO uses per-stage configurable models.
+- **Rate limiting:** slowapi + Redis storage. Login 5/min, extract 10/min, global 1000/hour per IP.
+- **Observability:** Sentry SDK (optional, via `SENTRY_DSN`). Integrations: FastAPI, Starlette, AsyncIO, Redis, SQLAlchemy, RQ.
 
-## Pipeline Architecture (V11 Maestro)
+## Pipeline architecture (V11 Maestro)
 
 ```
-PDF upload
-  → POST /api/extract-v11      (returns 202 + {stream_id, job_id})
-  → RQ enqueue → worker picks up
-  → V11 workflow.py:
-       1. PageClassifier        (per-page: PRINTED / INKED / EXTRA)
-       2. pdf_split             (route pages by verdict)
+PDF upload (browser)
+  → POST /api/extract-v11      (returns 202 + {stream_id})
+  → backend/jobs/queue.py      (enqueue RQ on Redis)
+  → backend/worker.py          (RQ worker container picks job)
+  → backend/v11/workflow.py    Maestro orchestrator:
+       1. PageClassifier        → per-page verdict: PRINTED / INKED / EXTRA
+       2. pdf_split             → route pages by verdict
        3. PARALLEL:
-            - Veritas (V7 pipeline) on PRINTED pages
-            - Scrivener (V10 PRO)    on INKED pages
-       4. Merger                (combine declarations + items)
-       5. field_bbox            (fitz.search_for → highlight rectangles)
+            ├─ Veritas  (V7  pipeline, backend/pipeline/)   typed pages
+            └─ Scrivener (V10 PRO,     backend/v10_pro/)    handwritten pages
+       4. Merger                → combine declarations + items
+       5. field_bbox            → fitz.search_for() → highlight rects
        6. DB save → DONE
-  → SSE /api/extract-v11/stream/{id} streams: JOB_START, CLASSIFY,
-       ROUTE, STAGE_START, STAGE_DONE, MERGE, DB_SAVE, DONE, FAIL
+  → SSE /api/extract-v11/stream/{id} streams:
+       JOB_START, CLASSIFY, ROUTE,
+       STAGE_START, STAGE_DONE,
+       MERGE, DB_SAVE, DONE, FAIL   (Redis pubsub channel `job:{id}`)
 ```
 
-V7 (legacy sync) is still mounted at `POST /api/extract` for external integrations. V10 PRO standalone at `POST /api/extract-v10-pro` is kept for testing. **All UI traffic uses V11.**
+V7 (legacy sync) is still mounted at `POST /api/extract` for external integrations. V10 PRO standalone at `POST /api/extract-v10-pro` is kept for HW testing. **All UI traffic uses V11.**
 
-### Active extract endpoints
+## Active extract endpoints
 
 ```
-POST /api/extract                     V7 sync (legacy, external)
-POST /api/extract-v10-pro             V10 PRO standalone (rare)
-POST /api/extract-v11                 V11 Maestro queue → 202        ← MAIN
-GET  /api/extract-v11/stream/{id}     SSE live router events
-GET  /api/extract-v11/status/{id}     Poll RQ status
+POST /api/extract                          V7 sync (legacy / external)
+POST /api/extract-v10-pro                  V10 PRO standalone (HW testing)
+POST /api/extract-v11                      V11 Maestro queue → 202        ← MAIN
+GET  /api/extract-v11/stream/{stream_id}   SSE Redis pubsub
+GET  /api/extract-v11/status/{stream_id}   Poll RQ status
 ```
 
-### Review API (`backend/routes/review.py`, ~15 endpoints)
+## Review API (`backend/routes/review.py`, 15 endpoints)
 
-Queue, stats, approve / reject / draft, field edits, items CRUD (add / update / delete / reorder), rerun, bulk approve.
+```
+GET    /api/review/queue                          filter list (status, importer, date)
+GET    /api/review/stats                          counts per status
+GET    /api/review/{job_id}                       full job + items + edits
+PATCH  /api/review/{job_id}/declaration           inline cell edit
+PATCH  /api/review/{job_id}/items/{item_index}    inline cell edit
+POST   /api/review/{job_id}/approve
+POST   /api/review/{job_id}/reject
+POST   /api/review/{job_id}/draft
+POST   /api/review/bulk/approve                   body: {job_ids: [...]}
+POST   /api/review/bulk/reject                    body: {job_ids: [...]}
+GET    /api/review/{job_id}/edits                 audit trail
+POST   /api/review/{job_id}/items                 add row
+DELETE /api/review/{job_id}/items/{item_index}    soft-delete row
+POST   /api/review/{job_id}/items/reorder         body: {order: [...]}
+POST   /api/review/{job_id}/rerun                 re-extract; links via parent_job_id
+```
 
-## File Structure
+Every cell change writes a row in `field_edits` (job_id, field_path, old, new, user, ts).
+
+## Auth
+
+- **Local** — bcrypt password hash, HS256 JWT. `JWT_SECRET_KEY` ≥ 32 chars enforced unless `DEV_MODE=1`.
+- **LDAP** — multi-config cascade in `backend/ldap_auth.py`. Configs in `ldap_configs` table (Fernet-encrypted bind passwords via `ldap_crypto.py`). On successful bind: user upserted with `auth_source=ldap`, `default_ldap_id=N` for next-time fast path.
+- **Keycloak** — OIDC RS256 + PKCE. Config from `KEYCLOAK_*` env vars *or* the Settings UI (`settings` table). `/api/auth/config` exposes discovery to frontend. `/api/auth/token` exchanges code; `/api/auth/refresh` refreshes.
+- **Force-change-password** — flag set on first admin boot when password was randomly generated. Frontend redirects to `/change-password` until cleared.
+
+## Storage (factory pattern)
+
+`backend/storage/__init__.py` returns either `S3Storage` or `LocalStorage` based on the active `storage_config` row. Switching is live (no restart): writes go to whichever config is currently `active=1`. Reads first try the recorded `pdf_storage` for that job, then fall back to local. Secrets Fernet-encrypted with `STORAGE_FERNET_KEY`.
+
+## File structure (verified)
 
 ```
 backend/
-  main.py                 FastAPI app + 3 extract endpoints + lifespan + auto-approve cron
-  database.py             Postgres-backed; sqlite3-compat shim wraps psycopg3
-  db_engine.py            SQLAlchemy QueuePool + dict-row factory + ?→%s translator
-  schemas.py              Pydantic models (incl. tokens_in/out, model_used, review fields)
-  worker.py               RQ Worker entrypoint
-  jobs/
-    queue.py              RQ + Redis singletons
-    tasks.py              run_v11_task background entry
-  v11/
-    workflow.py           V11 Maestro orchestrator
-    event_bus.py          Redis pub/sub for SSE
-    agents/page_classifier.py, merger.py
-    tools/pdf_split.py, field_bbox.py
-  v10_pro/
-    workflow.py           Scrivener (handwritten) — used by V11
-  pipeline/               V7 — used by V11 for typed pages (Veritas)
-    pipeline.py, splitter.py, vision.py, assembler.py, verifier.py,
-    holistic_voter.py, solo_extractor.py, consensus_resolver.py,
-    vision_arbiter.py, cell_zoom.py
-  routes/
-    auth.py, users.py, groups.py, jobs.py, data.py
-    review.py             queue / stats / approve / reject / edits / items CRUD / rerun / bulk
-    settings.py, ldap.py, storage.py, activity.py
-    corrections.py, usage.py
-  storage/                local + S3 factory pattern
-  alembic/                versioned migrations
+  main.py                  FastAPI app, 3 extract endpoints, lifespan, auto-approve cron, Sentry init
+  worker.py                RQ worker entrypoint (separate container, replicas=2)
+  auth.py                  JWT + bcrypt + OIDC verification
+  ldap_auth.py             multi-LDAP cascade login
+  ldap_crypto.py           Fernet wrapper for bind passwords
+  database.py              Postgres-backed sqlite-compat shim (legacy callers)
+  db_engine.py             SQLAlchemy QueuePool, dict-row factory, ?→%s translator
+  schemas.py               Pydantic models (incl. tokens_in/out, model_used, review fields)
+  config.py                env loading + validation (≥32 char JWT, fernet keys)
+  middleware.py            request logging, CORS, Sentry hooks
+  rate_limit.py            slowapi limiter (Redis-backed)
+  event_logger.py          activity_logs writer (9-field enrichment)
+  cost_tracker.py          token + USD accounting
+  alembic/versions/        DB migrations (0001_initial_schema.py = full schema)
+  routes/                  auth, jobs, users, groups, data, settings, corrections,
+                           usage, ldap, activity, storage, review
+  jobs/queue.py            RQ + Redis singletons
+  jobs/tasks.py            run_v11_task (background entry)
+  v11/workflow.py          Maestro orchestrator
+  v11/event_bus.py         Redis pub/sub publisher
+  v11/agents/              page_classifier.py, merger.py
+  v11/tools/               pdf_split.py, field_bbox.py
+  v10_pro/                 Scrivener — workflow.py, agents/, tools/, schemas, knowledge
+  pipeline/                V7 / Veritas — pipeline.py, splitter.py, vision.py,
+                           assembler.py, verifier.py, vision_arbiter.py,
+                           consensus_resolver.py, holistic_voter.py, solo_extractor.py,
+                           cell_zoom.py
+  v2/                      confidence.py, step4_validate.py, step5_report.py
+  storage/                 local.py, s3.py (factory in __init__.py)
   scripts/migrate_sqlite_to_pg.py
 
 frontend/src/
-  routes/
-    agent/                upload + V11 queue + side-by-side review
-    history/              job list + detail (ReviewSplitView for V11)
-    review/               queue w/ KPIs + filters + bulk approve
-    review/[job_id]/      single-job side-by-side
-    items/, declarations/ flat lists + Excel export
-    costs/                tokens KPIs + 3-line trend (ECharts) + XLSX/CSV export
-    settings/             USERS / GROUPS / AUTH / LDAP / STORAGE /
-                          ACTIVITY_LOG / KEYCLOAK / AUTO_APPROVE
-    login/
-  lib/
-    api.ts, stores/auth.svelte, pipelineConfig.ts (V11 only),
-    utils/pipelineLabels.ts
-    components/
-      ReviewSplitView.svelte    side-by-side w/ inline edit
-      ResultAccordion.svelte    legacy view (V7 fallback)
-      ExcelTable.svelte         editable Excel-style table
-      AgentTerminal.svelte      live SSE router stream
-      Toast / KpiCard / Button / Badge / etc.
+  routes/                  agent, login, change-password, review, history,
+                           declarations, items, costs, users, settings
+  lib/api.ts, components/, stores/, utils/, colors.ts, pipelineConfig.ts
 
-docker-compose.yml        postgres + redis + app + worker (x2)
-Dockerfile                multi-stage (frontend build + backend)
+nginx/
+  conf.d/                  HTTP redirect + HTTPS server blocks (SSE buffering off)
+  ssl/                     fullchain.pem, privkey.pem
+  logs/                    persisted access + error logs
+
+scripts/
+  generate_dev_cert.sh     self-signed TLS for local dev
+  pg_backup_loop.sh        daily cron entrypoint for pg-backup container
+  pg_backup_now.sh         manual one-shot backup
+  pg_restore.sh            restore from <file>.sql.gz
 ```
 
-## Database (Postgres 16)
+## DB schema
 
-High-level tables:
+20 tables (full DDL in `backend/alembic/versions/0001_initial_schema.py`). Key ones:
 
-- **jobs** — adds `review_status`, `reviewed_by`, `reviewed_at`, `edits_count`, `parent_job_id`, `field_bboxes_json`, `tokens_in`, `tokens_out`, `model_used`, `processed_at`, `document_type`, `pipeline_mode`, `pdf_storage`
-- **items** — adds `is_deleted`, `display_order`
-- **declarations**
-- **field_edits** — per-cell edit audit
-- **activity_log** — v2 schema with 9 enrichment fields (IP / UA / auth_source / severity / duration / status / etc.)
-- **ldap_configs** — Fernet-encrypted `bind_password`
-- **storage_config** — Fernet-encrypted `secret_access_key`
-- **app_settings** — `auto_approve_enabled`, `auto_approve_threshold`, etc.
-- **users**, **groups**, **group_members**
+- `jobs` — job_id (PK), pdf_name, pdf_hash, pdf_storage, status, pipeline_version, pipeline_mode, document_type, review_status (`pending_review` / `approved` / `rejected` / `draft`), reviewed_by, edits_count, parent_job_id, field_bboxes_json, tokens_in, tokens_out, cost_usd, accuracy_percent
+- `declarations` — one per job, all customs header fields + invoice_price, exchange_rate, total_customs_value, taxes (CT / AT / SF / MF), sanity_flags_json, cross_val_passed, verified
+- `items` — line items (item_name, hs_code, quantity, prices, customs_value_mmk), `is_deleted` for soft-delete, `display_order` for reorder
+- `field_edits` — per-cell audit (job_id, field_path, old_value, new_value, user, created_at)
+- `users` — local + LDAP + Keycloak unified; `auth_source`, `default_ldap_id`, `ldap_dn`, `keycloak_id`
+- `groups` + `user_groups` — RBAC scaffolding
+- `ldap_configs` — multi-LDAP (Fernet-encrypted bind_password)
+- `storage_config` — multi S3 (Fernet-encrypted secret_access_key, `active=1` for the current target)
+- `settings` — kv store for auto-approve threshold, Keycloak runtime config
+- `activity_logs` — 9-field enriched audit (auth_source, status, duration_ms, resource, severity, error_message, payload_json, user_agent, ip_address)
+- `processing_logs`, `page_contents`, `page_extractions`, `pdf_metadata` — pipeline diagnostics
+- `field_accuracy`, `value_audit`, `corrections`, `learning_events`, `importer_profiles` — feedback / learning
 
-## Review / Approve Workflow
+## Hardening
 
-- Side-by-side: PDF iframe (left) + editable form + Excel-style item table (right).
-- Inline cell edit, ▲▼🗑 row actions, [+ ADD] row, page-jump 📍.
-- Statuses: `pending_review` / `approved` / `rejected` / `draft`.
-- Every cell edit → row in `field_edits`.
-- Hourly cron auto-approves jobs above `auto_approve_threshold`.
+- **HTTPS** — nginx terminates TLS 1.2/1.3, HSTS on. SSE locations: `proxy_buffering off`, long timeouts.
+- **Rate limit** — slowapi + Redis (shared across uvicorn workers). Defaults `5/min` login, `10/min` extract, `1000/hour` global per IP.
+- **Sentry** — opt-in via `SENTRY_DSN`. Filters out `HTTPException` + `RequestValidationError`. `send_default_pii=False`.
+- **Backups** — `pg-backup` sidecar runs `pg_backup_loop.sh` (daily, 14-day retention). Optional S3 push via `S3_BACKUP_BUCKET`.
+- **Secrets at rest** — LDAP bind passwords (Fernet via `LDAP_FERNET_KEY`), S3 secret keys (Fernet via `STORAGE_FERNET_KEY`).
+- **First-boot security** — random admin password printed once when `ADMIN_INITIAL_PASSWORD` is unset; force-change-password on first login.
+- **Healthchecks** — postgres (`pg_isready`), redis (`PING`), app (`/api/health`), nginx (`/health`).
 
-## Activity Log v2
+## Concurrency targets (10 users)
 
-- 9 enrichment columns (IP, UA, auth_source, severity, duration, status, etc.)
-- KPI strip + drawer + security tab + JOB events + filter bar.
+- 2 uvicorn workers (`--workers 2 --limit-concurrency 50 --timeout-keep-alive 300`)
+- 2 RQ worker containers (sequential per-worker, parallel across)
+- SQLAlchemy QueuePool 10 base + 10 overflow
+- Redis maxmemory 512 MB, allkeys-lru
+- App container `mem_limit: 4g`, worker `mem_limit: 8g`
 
-## Cost Tracking
+## Key design principles
 
-- `tokens_in` / `tokens_out` recorded per job.
-- `/costs` page: dual-axis line chart (cost / docs / tokens), KPI cards, Excel/CSV export.
+1. **Queue everything heavy.** Extract requests return `202` immediately; UI follows via SSE.
+2. **One pipeline per page type.** The Maestro classifier never tries to do extraction itself — only routing.
+3. **Postgres is the source of truth.** Redis is ephemeral (queue + pubsub + rate-limit storage only).
+4. **Secrets in DB are Fernet-encrypted.** Plaintext is never stored or returned by the API.
+5. **Every edit is auditable.** `field_edits` for cells, `activity_logs` for security/system events.
+6. **Storage is pluggable.** Factory + multi-config + live-active-row pattern.
 
-## Concurrency (target: 10 simultaneous users)
+## DON'T list
 
-- Postgres SQLAlchemy QueuePool (10 base + 10 overflow, 30s timeout)
-- Redis-backed RQ; `worker` service replicas: 2
-- App: Uvicorn 2 workers
-- API semaphore: max 16 simultaneous OpenRouter calls
-- Per-job file isolation (S3 key or local path), no global state
+- **Don't reference deleted code.** V8 / V9 / V9_PRO / V10 (without _PRO) are gone. So is the WebSocket SSE proxy and Tesseract OCR. Don't mention them.
+- **Don't read `database.py` for schema.** It's a legacy compat shim. Schema lives in `backend/alembic/versions/0001_initial_schema.py`.
+- **Don't write secrets to logs.** No printing JWT_SECRET_KEY, LDAP bind passwords, S3 keys, or OpenRouter keys.
+- **Don't bypass `require_admin`** for `/settings`, `/users`, `/groups`, `/ldap`, `/storage`, `/activity` admin views.
+- **Don't return plaintext Fernet-encrypted columns** (e.g., `bind_password_encrypted`, `secret_access_key_encrypted`) from any API response.
+- **Don't use Svelte 4 reactive `$:`** — this is Svelte 5 with runes (`$state`, `$derived`, `$effect`).
+- **Don't put `{@const}` at template root** — must be inside `{#if}` / `{#each}` / `<Component>` blocks.
+- **Don't add slowapi limits without `request: Request` in the handler signature** — it 500s.
+- **Don't store the legacy SQLite file.** Postgres has been the only backend since `0001_initial_schema.py`. Use `backend/scripts/migrate_sqlite_to_pg.py` if you find one in the wild.
 
-## Key Design Principles
+## Common issues + troubleshooting
 
-- **Zero hardcoded values** — no field names, currencies, tax codes in code
-- **Zero calculations** — every value read from document, never computed
-- **json_schema enforced** on all assembler calls (guaranteed JSON, all required fields)
-- **Token optimized** — deduplicated fields; no metadata/visual/entities sent to assembler
-- **Fee verification chain** — text-based LLM (primary) + 7-layer deterministic fallback + auto-revert safety net
-- **Self-learning** — user corrections feed importer fee baselines + few-shot examples
-- **Per-job isolation** — no shared mutable state between jobs
-- **Memory cleanup** — image data freed after verifier step
-- **Encrypted secrets at rest** — Fernet for LDAP bind passwords + S3 secret keys
+| Issue | Cause / Fix |
+|---|---|
+| `JWT_SECRET_KEY too short` on boot | Set ≥ 32 chars, e.g. `openssl rand -hex 32`. Empty `DEV_MODE` in prod. |
+| SSE silent / hangs | Check Redis pubsub: `docker exec ro-ed-redis redis-cli SUBSCRIBE 'job:*'`. Confirm nginx `proxy_buffering off` for `/api/extract-v11/stream`. |
+| OOM mid-job | Bump worker `mem_limit` in `docker-compose.yml` (default 8g) and Docker Desktop allocation ≥ 12 GB. |
+| `500` on rate-limited route | slowapi requires `request: Request` (or `response: Response`) parameter on the handler. |
+| `database is locked` | Legacy SQLite path. Re-run `alembic upgrade head` and verify `DATABASE_URL` is Postgres. |
+| Brave `res.json()` hangs | Use `res.text()` + `JSON.parse()` in `frontend/src/lib/api.ts`. |
+| LDAP login slow | Multi-LDAP cascade tries each config in priority order. Set `default_ldap_id` per user (auto-set on first success) to fast-path. |
+| Sentry not capturing | Confirm `SENTRY_DSN` is set in *both* `app` and `worker` env (they share `.env`). `HTTPException` is filtered by design. |
+| Auto-approve not running | Check `main.py` lifespan logs — cron is in-process. Threshold value lives in `settings` table; UI at Settings → AUTO_APPROVE. |
+| Schema drift after pull | `docker compose exec app alembic upgrade head`. New migrations land in `backend/alembic/versions/`. |
 
-## Don't (Deprecated / Removed)
+## Quick reference
 
-- **Don't** reference V8, V9, V9_PRO, or V10 (non-pro) — directories deleted, endpoints removed
-- **Don't** reference `/api/extract-v8`, `/api/extract-v9`, `/api/extract-v9-pro`, `/api/extract-v10` — gone
-- **Don't** reference `/api/ws/batch` — WebSocket pipeline deleted; V11 uses SSE
-- **Don't** reference `gemini_solo.py` / `opus_read.py` — deleted
-- **Don't** reference SQLite — migrated to Postgres (the `sqlite3` shim only translates the legacy DB-API surface)
-- **Don't** use Tesseract (project policy)
-- **Don't** add calculations to prompts
-- **Don't** hardcode field names, currencies, or patterns
-- **Don't** commit `.env`
-- **Don't** use `sqlite3.connect()` directly — use `database._connect()` (psycopg3 underneath)
-- **Don't** use bare `except:` — always `except Exception:`
-- **Don't** use `json_object` mode — use `json_schema` (9× faster)
-- **Don't** use `res.json()` in `api.ts` — use `res.text()` + `JSON.parse()` (see troubleshooting)
-- **Don't** reference `{@const}` outside its enclosing block in Svelte 5
-- **Don't** mutate `$state` array entries in-place — replace with new object
-- **Don't** convert `declaration_no` to float — string field
-- **Don't** use vision/images for fee verification — text-based avoids layout confusion and is 10× cheaper
-
-## Known Issues & Troubleshooting
-
-### 1. SQLite → Postgres compatibility
-The codebase preserved the `sqlite3`-style API surface for minimum churn. `db_engine.py` provides a dict-row factory and a `?` → `%s` placeholder translator. If a query fails on Postgres but worked on SQLite, check: `?` placeholders, `INTEGER PRIMARY KEY AUTOINCREMENT` (use `SERIAL`), `INSERT OR REPLACE` (use `ON CONFLICT`), and date functions.
-
-### 2. `res.json()` hangs in browser (fetch returns 200 but body never arrives)
-**Symptom:** Page shows "LOADING..." forever. Server logs show 200 OK. curl works fine.
-**Root cause:** Starlette SPA middleware streams API responses; some browsers (confirmed Brave) hang on `res.json()`.
-**Fix:** In `api.ts`, always use `res.text()` + `JSON.parse()`.
-
-### 3. Svelte 5 `$derived` doesn't re-render after `$state` array mutation
-**Symptom:** Queue shows DONE but pipeline view stays.
-**Fix:** Replace the array entry with a new object: `queue[i] = { ...entry, status: 'done' }; queue = [...queue];`
-
-### 4. `{@const}` scoping
-`{@const}` is scoped to its enclosing `{#if}` / `{#each}` / `{#snippet}`. Move it inside, inline the expression, or hoist to a `$derived` at the script level.
-
-### 5. FastAPI trailing-slash redirects (307)
-Browser strips `Authorization` on 307. Match frontend API paths exactly to backend definitions.
-
-### 6. SSE stream silent on V11 jobs
-Check Redis is up and `worker` replicas are running. The router publishes via `v11/event_bus.py`; if Redis is unreachable, the SSE endpoint will hold the connection but emit nothing. `docker compose ps` should show `app`, `worker` (x2), `postgres`, `redis` all healthy.
-
-### 7. Fee values shifted (CT/AT/SF/MF wrong)
-Step 12 fee verification (text-based LLM + 7-layer deterministic fallback + auto-revert) handles this. Don't disable any layer; they compose. CT=0 / SF=0 are often genuine, so corrections require positive page-text evidence.
-
-## URLs
-
-- App: http://localhost:9000
-- Default login: `admin` / `admin123`
+- **URL:** `https://localhost:9443` (dev) — nginx terminates TLS, proxies to `app:9000`
+- **HTTP redirect:** `9080` → `9443`
+- **Login:** `admin` / (random pw printed in `docker logs ro-ed-api` on first boot, or `ADMIN_INITIAL_PASSWORD`)
+- **Healthcheck:** `GET /api/health`
+- **API docs:** `GET /docs` (FastAPI auto-generated)
+- **Dev workflow:**
+  1. `docker compose up -d` — back end + DB + queue
+  2. `cd frontend && npm run dev` — frontend on `:5173` proxies `/api` → `:9000`
+  3. Backend code changes → `docker compose restart app worker`
+  4. New migration → `cd backend && alembic revision -m "..."` → `alembic upgrade head` (in container or local)
+- **Add a new pipeline stage:** wire it in `backend/v11/workflow.py`, emit events through `event_bus.py`, register cost in `cost_tracker.py`.
+- **Add a new endpoint:** new file under `backend/routes/`, mount with `app.include_router(...)` in `main.py`, add `Depends(get_current_user)` (or `require_admin`) for auth.
