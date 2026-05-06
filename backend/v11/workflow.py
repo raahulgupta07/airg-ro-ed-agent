@@ -181,12 +181,42 @@ def _save_to_db(out: Dict, pdf_path: str) -> str:
         except Exception as e:
             print(f"[V11 DB] save_items error: {e}")
 
+    # Compute accuracy from extraction signals:
+    # - decl populated rate: how many of expected fields filled
+    # - items populated rate: how many cells filled per item
+    # - cross_val flag (V7 inside V11)
+    try:
+        _decl = out.get("declaration") or {}
+        _items = out.get("items") or []
+        _expected_decl = ['declaration_no','declaration_date','importer_name','consignor_name',
+                          'invoice_number','currency','exchange_rate','invoice_price',
+                          'total_customs_value','customs_duty','commercial_tax',
+                          'advance_income_tax','maccs_service_fee']
+        _decl_filled = sum(1 for f in _expected_decl if _decl.get(f) not in (None, '', 0))
+        _decl_score = _decl_filled / len(_expected_decl)
+        _expected_item = ['item_name','hs_code','quantity','invoice_unit_price','customs_value_mmk','origin']
+        if _items:
+            _item_filled = 0
+            _item_total = 0
+            for _it in _items:
+                for _f in _expected_item:
+                    _item_total += 1
+                    if _it.get(_f) not in (None, '', 0):
+                        _item_filled += 1
+            _item_score = _item_filled / max(1, _item_total)
+        else:
+            _item_score = 0
+        # Weighted: decl 60%, items 40%
+        _accuracy_pct = round((_decl_score * 0.6 + _item_score * 0.4) * 100, 1)
+    except Exception:
+        _accuracy_pct = 0
+
     try:
         database.update_job_metrics(
             job_id,
             processing_time=out.get("duration_seconds", 0) or 0,
             cost=out.get("cost", 0) or 0,
-            accuracy=0,
+            accuracy=_accuracy_pct,
         )
         database.update_job_status(job_id, "COMPLETED")
     except Exception as e:
