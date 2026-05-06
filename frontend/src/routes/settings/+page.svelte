@@ -204,6 +204,42 @@
   let createError = $state('');
   let createSuccess = $state('');
 
+  // Self-service change-my-password form
+  let myCurrentPw = $state('');
+  let myNewPw = $state('');
+  let myConfirmPw = $state('');
+  let myPwBusy = $state(false);
+  let myPwError = $state('');
+  let myPwSuccess = $state('');
+
+  async function changeMyPassword() {
+    myPwError = ''; myPwSuccess = '';
+    if (myNewPw.length < 8) { myPwError = 'MIN_8_CHARS'; return; }
+    if (myNewPw !== myConfirmPw) { myPwError = 'PASSWORDS_DO_NOT_MATCH'; return; }
+    if (myNewPw === myCurrentPw) { myPwError = 'NEW_MUST_DIFFER'; return; }
+    myPwBusy = true;
+    try {
+      const r = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${auth.token}`,
+        },
+        body: JSON.stringify({ current_password: myCurrentPw, new_password: myNewPw }),
+      });
+      const t = await r.text();
+      const j = JSON.parse(t);
+      if (!r.ok) throw new Error(j.detail || 'CHANGE_FAILED');
+      myCurrentPw = ''; myNewPw = ''; myConfirmPw = '';
+      myPwSuccess = 'PASSWORD_UPDATED';
+      if (auth.user) auth.user = { ...auth.user, must_change_password: false };
+    } catch (e: any) {
+      myPwError = e?.message || 'FAILED';
+    } finally {
+      myPwBusy = false;
+    }
+  }
+
   // Keycloak settings
   let kcRealmUrl = $state('');
   let kcClientId = $state('');
@@ -495,8 +531,24 @@
 
   {:else if activeTab === 'users'}
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-      <div class="lg:col-span-2">
+      <div class="lg:col-span-2 space-y-4">
         <DataTable title="REGISTERED_USERS" count={users.length} columns={userColumns} rows={userRows} />
+
+        {#if !auth.isKeycloak && auth.user?.auth_type !== 'keycloak'}
+          <div class="border-2 stamp-shadow" style="border-color: var(--on-surface);">
+            <div class="dark-bar">CHANGE_MY_PASSWORD</div>
+            <div class="bg-white p-3 space-y-2">
+              {#if myPwError}<div class="p-2 text-xs font-bold uppercase text-white" style="background: var(--error);">{myPwError}</div>{/if}
+              {#if myPwSuccess}<div class="p-2 text-xs font-bold uppercase text-white" style="background: var(--primary);">{myPwSuccess}</div>{/if}
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <FormInput label="CURRENT_PASSWORD" type="password" bind:value={myCurrentPw} placeholder="current" />
+                <FormInput label="NEW_PASSWORD" type="password" bind:value={myNewPw} placeholder="≥8 chars" />
+                <FormInput label="CONFIRM_NEW" type="password" bind:value={myConfirmPw} placeholder="repeat new" />
+              </div>
+              <Button variant="secondary" size="md" onclick={changeMyPassword}>{myPwBusy ? '… SAVING' : 'UPDATE_MY_PASSWORD'}</Button>
+            </div>
+          </div>
+        {/if}
       </div>
       {#if !auth.isKeycloak}
         <div class="border-2 stamp-shadow" style="border-color: var(--on-surface);">

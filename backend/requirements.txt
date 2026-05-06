@@ -41,3 +41,9 @@ redis>=5.0.0
 psycopg[binary]>=3.2.0
 SQLAlchemy[asyncio]>=2.0.0
 alembic>=1.13.0
+
+# Rate limiting (Redis-backed, shared across uvicorn + RQ workers)
+slowapi>=0.1.9
+
+# Observability (optional — activated only if SENTRY_DSN env var is set)
+sentry-sdk[fastapi]>=2.18.0

@@ -48,11 +48,23 @@
   });
 
   const isLoginPage = $derived(page.url.pathname === '/login');
+  const isChangePasswordPage = $derived(page.url.pathname === '/change-password');
 
   // Redirect to login if not authenticated and not on login page (skip during init)
   $effect(() => {
     if (!auth.initializing && !auth.isAuthenticated && !isLoginPage) {
       goto('/login');
+    }
+  });
+
+  // Force-change password guard: any authenticated user with must_change_password=true
+  // gets redirected to /change-password from any other route.
+  $effect(() => {
+    if (auth.initializing) return;
+    if (!auth.isAuthenticated) return;
+    if (isLoginPage || isChangePasswordPage) return;
+    if (auth.user?.must_change_password) {
+      goto('/change-password');
     }
   });
 </script>
@@ -64,7 +76,7 @@
       <div class="text-sm font-bold uppercase tracking-widest" style="color: var(--outline);">INITIALIZING...</div>
     </div>
   </div>
-{:else if isLoginPage || !auth.isAuthenticated}
+{:else if isLoginPage || isChangePasswordPage || !auth.isAuthenticated}
   {@render children()}
 {:else}
   <Header

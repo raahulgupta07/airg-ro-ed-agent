@@ -12,7 +12,10 @@
   let redirecting = $state(false);
 
   $effect(() => {
-    if (auth.isAuthenticated) goto('/agent');
+    if (auth.isAuthenticated) {
+      if (auth.user?.must_change_password) goto('/change-password');
+      else goto('/agent');
+    }
   });
 
   async function handleLocalLogin() {
@@ -20,8 +23,12 @@
     loading = true;
     try {
       const res = await api.login(username, password);
-      auth.loginLocal(res.access_token, res.user);
-      goto('/agent');
+      await auth.loginLocal(res.access_token, res.user);
+      if (auth.user?.must_change_password) {
+        goto('/change-password');
+      } else {
+        goto('/agent');
+      }
     } catch (e: any) {
       error = e.message || 'AUTHENTICATION_FAILED';
     } finally {

@@ -15,6 +15,27 @@ if _HERE not in sys.path:
 if os.path.isdir('/app') and '/app' not in sys.path:
     sys.path.insert(0, '/app')
 
+# -----------------------------------------------------------------------------
+# Sentry (optional — only initialized if SENTRY_DSN is set). Must come before
+# RQ imports so the RqIntegration can patch worker job dispatch.
+# -----------------------------------------------------------------------------
+_DSN = os.environ.get("SENTRY_DSN", "").strip()
+if _DSN:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.rq import RqIntegration
+        sentry_sdk.init(
+            dsn=_DSN,
+            environment=os.environ.get("SENTRY_ENVIRONMENT", "production"),
+            release=os.environ.get("SENTRY_RELEASE", "ro-ed-worker@dev"),
+            traces_sample_rate=float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+            send_default_pii=False,
+            integrations=[RqIntegration()],
+        )
+        print(f"[sentry-worker] enabled — env={os.environ.get('SENTRY_ENVIRONMENT', 'production')}")
+    except Exception as e:
+        print(f"[sentry-worker] init failed: {e}")
+
 from rq import Worker
 from jobs.queue import get_redis, get_queue
 

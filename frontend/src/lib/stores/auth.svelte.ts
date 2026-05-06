@@ -22,6 +22,7 @@ interface User {
   auth_type?: string;
   group?: { id: number; name: string } | null;
   permissions?: Permissions | null;
+  must_change_password?: boolean;
 }
 
 interface OIDCConfig {

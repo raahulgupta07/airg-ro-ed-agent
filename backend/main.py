@@ -8,7 +8,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Request
 from typing import Optional
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -82,14 +82,71 @@ async def lifespan(app: FastAPI):
             pass
 
 
+# -----------------------------------------------------------------------------
+# Sentry error tracking (optional — only initialized if SENTRY_DSN is set).
+# Lives just before app construction so FastAPI/Starlette integrations attach
+# correctly to all subsequently-created routers.
+# -----------------------------------------------------------------------------
+import os as _sentry_os
+
+_SENTRY_DSN = _sentry_os.environ.get("SENTRY_DSN", "").strip()
+if _SENTRY_DSN:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.starlette import StarletteIntegration
+        from sentry_sdk.integrations.asyncio import AsyncioIntegration
+        from sentry_sdk.integrations.redis import RedisIntegration
+        from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+
+        sentry_sdk.init(
+            dsn=_SENTRY_DSN,
+            environment=_sentry_os.environ.get("SENTRY_ENVIRONMENT", "production"),
+            release=_sentry_os.environ.get("SENTRY_RELEASE", "ro-ed@dev"),
+            traces_sample_rate=float(_sentry_os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+            profiles_sample_rate=float(_sentry_os.environ.get("SENTRY_PROFILES_SAMPLE_RATE", "0.0")),
+            send_default_pii=False,  # don't auto-attach PII (usernames, IPs); we control via tags
+            integrations=[
+                FastApiIntegration(transaction_style="endpoint"),
+                StarletteIntegration(transaction_style="endpoint"),
+                AsyncioIntegration(),
+                RedisIntegration(),
+                SqlalchemyIntegration(),
+            ],
+            ignore_errors=[
+                "starlette.exceptions.HTTPException",  # 404s, 401s — too noisy
+                "fastapi.exceptions.HTTPException",
+                "fastapi.exceptions.RequestValidationError",
+            ],
+        )
+        print(f"[sentry] enabled — env={_sentry_os.environ.get('SENTRY_ENVIRONMENT', 'production')}")
+    except Exception as e:
+        print(f"[sentry] init failed: {e}")
+
+
 app = FastAPI(
     title="RO-ED AI Agent",
     version="3.0.0",
     lifespan=lifespan,
 )
 
-# CORS — env-driven for production lockdown
+# ── Rate limiting (slowapi + Redis storage) ──
+# Limiter lives in rate_limit.py so route modules can import without circular deps.
 import os as _os
+from rate_limit import limiter, RATE_LIMIT_OK as _RATE_LIMIT_OK, maybe_limit as _maybe_limit, LIMIT_LOGIN as _LIMIT_LOGIN, LIMIT_EXTRACT as _LIMIT_EXTRACT
+if limiter is not None:
+    try:
+        from slowapi import _rate_limit_exceeded_handler
+        from slowapi.errors import RateLimitExceeded
+        from slowapi.middleware import SlowAPIMiddleware
+        app.state.limiter = limiter
+        app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+        app.add_middleware(SlowAPIMiddleware)
+    except Exception as e:
+        print(f"[rate-limit] middleware install failed: {e}")
+
+
+# CORS — env-driven for production lockdown
 _cors_env = _os.environ.get(
     "CORS_ALLOWED_ORIGINS",
     "http://localhost:5173,http://localhost:8000,http://localhost:9000,https://localhost"
@@ -138,7 +195,9 @@ app.include_router(review_routes.router, prefix="/api/review", tags=["review"])
 
 
 @app.post("/api/extract")
+@_maybe_limit(_LIMIT_EXTRACT)
 async def extract_pdf(
+    request: Request,
     file: UploadFile = File(...),
     mode: str = "ro_ed",
 ):
@@ -197,7 +256,8 @@ async def extract_pdf(
 
 
 @app.post("/api/extract-v10-pro")
-async def extract_pdf_v10_pro(file: UploadFile = File(...)):
+@_maybe_limit(_LIMIT_EXTRACT)
+async def extract_pdf_v10_pro(request: Request, file: UploadFile = File(...)):
     """V10 PRO — HW with shape-validation + memory + 800 DPI digit-list + box detection."""
     import asyncio, shutil, uuid
 
@@ -254,7 +314,8 @@ async def extract_pdf_v10_pro(file: UploadFile = File(...)):
 
 
 @app.post("/api/extract-v11", status_code=202)
-async def extract_pdf_v11(file: UploadFile = File(...), job_id: Optional[str] = Form(None)):
+@_maybe_limit(_LIMIT_EXTRACT)
+async def extract_pdf_v11(request: Request, file: UploadFile = File(...), job_id: Optional[str] = Form(None)):
     """V11 — Master Router. Queues extraction; returns immediately with job_id.
 
     Behavior change: this endpoint no longer blocks for 90-180s. It saves the PDF,

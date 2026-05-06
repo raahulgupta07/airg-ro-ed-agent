@@ -23,6 +23,7 @@ class UserResponse(BaseModel):
     display_name: Optional[str] = None
     role: str
     is_active: bool = True
+    must_change_password: bool = False
 
 
 class TokenResponse(BaseModel):

@@ -18,6 +18,7 @@ try:
 except Exception:  # pragma: no cover
     event_logger = None
 from middleware import get_current_user
+from rate_limit import maybe_limit as _maybe_limit, LIMIT_LOGIN as _LIMIT_LOGIN
 
 
 def _safe_log_login(**kwargs):
@@ -98,6 +99,7 @@ async def get_auth_config():
 # =============================================================================
 
 @router.post("/login", response_model=TokenResponse)
+@_maybe_limit(_LIMIT_LOGIN)
 async def login(request: Request, payload: LoginRequest):
     """Authenticate user with username/password (works in both modes).
 
@@ -215,6 +217,7 @@ async def login(request: Request, payload: LoginRequest):
                 display_name=db_user.get("display_name", "") or cn,
                 role=db_user.get("role", "user"),
                 is_active=True,
+                must_change_password=bool(db_user.get("must_change_password", False)),
             ),
         )
 
@@ -255,6 +258,7 @@ async def login(request: Request, payload: LoginRequest):
             display_name=user.get("display_name", ""),
             role=user["role"],
             is_active=True,
+            must_change_password=bool(user.get("must_change_password", False)),
         ),
     )
 
@@ -444,7 +448,71 @@ async def get_me(current_user: dict = Depends(get_current_user)):
         "auth_type": "keycloak" if has_keycloak else "local",
         "group": {"id": group["id"], "name": group["name"]} if group else None,
         "permissions": permissions,
+        "must_change_password": bool(user_row.get("must_change_password", False)) if user_row else False,
     }
+
+
+from pydantic import BaseModel as _BM
+
+
+class ChangePasswordRequest(_BM):
+    current_password: str
+    new_password: str
+
+
+@router.post("/change-password")
+async def change_password(body: ChangePasswordRequest, current_user: dict = Depends(get_current_user)):
+    """Allow an authenticated user to change their own password.
+
+    Verifies the current password, enforces minimum length / difference, then
+    updates the bcrypt hash and clears `must_change_password`.
+    """
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+    if body.new_password == body.current_password:
+        raise HTTPException(status_code=400, detail="New password must differ from current")
+
+    import bcrypt
+    conn = database._connect()
+    cur = conn.cursor()
+    cur.execute("SELECT password_hash FROM users WHERE id = ?", (current_user["id"],))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="User not found")
+    try:
+        stored_hash = row["password_hash"] if not isinstance(row, (list, tuple)) else row[0]
+    except Exception:
+        try:
+            stored_hash = row[0]
+        except Exception:
+            stored_hash = None
+    if not stored_hash or not bcrypt.checkpw(body.current_password.encode(), str(stored_hash).encode()):
+        conn.close()
+        raise HTTPException(status_code=401, detail="Current password incorrect")
+
+    new_hash = bcrypt.hashpw(body.new_password.encode(), bcrypt.gensalt()).decode()
+    cur.execute(
+        "UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?",
+        (new_hash, current_user["id"]),
+    )
+    conn.commit()
+    conn.close()
+
+    _safe_log_event(
+        "PASSWORD_CHANGED",
+        user=current_user.get("username"),
+        status="OK",
+        details=f"User {current_user.get('username')} changed password",
+    )
+    try:
+        database.log_activity(
+            current_user["id"], current_user["username"], "PASSWORD_CHANGED", "self-service"
+        )
+    except Exception:
+        pass
+
+    return {"ok": True, "message": "Password updated successfully"}
 
 
 @router.post("/logout")
