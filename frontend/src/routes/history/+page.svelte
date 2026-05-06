@@ -6,8 +6,6 @@
   import KpiCard from '$lib/components/KpiCard.svelte';
   import Button from '$lib/components/Button.svelte';
   import Badge from '$lib/components/Badge.svelte';
-  import PageMap from '$lib/components/PageMap.svelte';
-  import PageDetail from '$lib/components/PageDetail.svelte';
   import ResultAccordion from '$lib/components/ResultAccordion.svelte';
   import ReviewSplitView from '$lib/components/ReviewSplitView.svelte';
   import { getAccuracyColor, getPageTypeColor } from '$lib/colors';
@@ -27,7 +25,6 @@
   // Page map
   let pageData = $state<any[]>([]);
   let pageDataLoaded = $state(false);
-  let selectedPageDetail = $state<any>(null);
 
   // History detail tab
   let historyTab = $state<'data' | 'log'>('data');
@@ -118,7 +115,6 @@
     detailError = '';
     pageDataLoaded = false;
     pageData = [];
-    selectedPageDetail = null;
 
     try {
       selectedJob = await api.getJob(jobId);

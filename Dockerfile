@@ -45,17 +45,6 @@ COPY backend/agents/ /app/agents/
 # Backend code — routes
 COPY backend/routes/ /app/routes/
 
-# Backend code — V8 Claude-only pipeline
-COPY backend/v8/ /app/v8/
-
-# Backend code — V9 Agno agentic pipeline
-COPY backend/v9/ /app/v9/
-# Backend code — V9 PRO (revalidator + field_zoom + HW + memory)
-COPY backend/v9_pro/ /app/v9_pro/
-
-# Backend code — V10 (HW Specialist: detector + multi-DPI vote + memory)
-COPY backend/v10/ /app/v10/
-
 # Backend code — V10 PRO (shape validator + memory + 800 DPI digit-list + box detect)
 COPY backend/v10_pro/ /app/v10_pro/
 # Backend code — V11 (Master Router: per-page classify → V7 + V10 parallel → merge)

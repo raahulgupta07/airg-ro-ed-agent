@@ -2,7 +2,6 @@
   import { onMount } from 'svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { api, extractPDF, normalizeExtractResult } from '$lib/api';
-  import PipelineSelector from '$lib/components/PipelineSelector.svelte';
   import type { PipelineKey } from '$lib/pipelineConfig';
   import ChapterHeading from '$lib/components/ChapterHeading.svelte';
   import KpiCard from '$lib/components/KpiCard.svelte';
@@ -12,7 +11,6 @@
   import RecentJobs from '$lib/components/RecentJobs.svelte';
   import ResultAccordion from '$lib/components/ResultAccordion.svelte';
   import ReviewSplitView from '$lib/components/ReviewSplitView.svelte';
-  import PipelineTerminal from '$lib/components/PipelineTerminal.svelte';
   import PipelineVisualizer from '$lib/components/PipelineVisualizer.svelte';
   import AgentTerminal from '$lib/components/AgentTerminal.svelte';
   import { getAccuracyColor } from '$lib/colors';
@@ -47,7 +45,6 @@
   let pipelineSteps = $state<StepMsg[]>([]);
   let running = $state(false);
   let batchSummary = $state<any>(null);
-  let ws = $state<WebSocket | null>(null);
   let jobResults = $state<Record<string, any>>({});
   let loadingResult = $state(false);
   let terminalLogs = $state<{ time: string; agent: string; text: string; type: string }[]>([]);
@@ -70,15 +67,8 @@
   }
   const isProcessing = $derived(running);
 
-  // Route extraction through chosen pipeline. V7 keeps WebSocket flow (handled in startPipeline);
-  // V10/V11 use HTTP since they don't have WebSocket support yet.
+  // Route extraction through V11 (queue-based HTTP path).
   async function runExtract(file: File, jobId?: string) {
-    if (selectedPipeline === 'v7') {
-      // TODO: V7 normally uses the WebSocket flow in startPipeline().
-      // This HTTP fallback is provided for parity if called directly.
-      const raw = await extractPDF(file, 'v7', auth.token);
-      return normalizeExtractResult(raw);
-    }
     const raw = await extractPDF(file, selectedPipeline, auth.token, jobId);
     return normalizeExtractResult(raw);
   }
@@ -228,260 +218,10 @@
     vizSummary = null;
     streamingJobId = null;
 
-    // V10/V11 don't have WebSocket support yet — use HTTP path. V7 uses WebSocket below.
-    if (selectedPipeline !== 'v7') {
-      runHttpPipeline(filesToProcess);
-      return;
-    }
-
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const socket = new WebSocket(`${protocol}//${location.host}/api/ws/batch`);
-    ws = socket;
-
-    socket.onopen = () => {
-      const filesPayload = queue
-        .filter(f => f.status === 'queued')
-        .map(f => ({ path: f.savedPath, filename: f.filename }));
-
-      socket.send(JSON.stringify({ token: auth.token, files: filesPayload, mode: pipelineMode }));
-    };
-
-    socket.onmessage = async (event) => {
-      const msg = JSON.parse(event.data);
-
-      if (msg.error) {
-        running = false;
-        return;
-      }
-
-      // Batch complete
-      if (msg.batch_complete) {
-        batchSummary = msg.summary;
-        running = false;
-        ws = null;
-        // Only switch to batch view if we don't already have results showing
-        if (viewMode === 'pipeline') viewMode = 'results';
-        return;
-      }
-
-      // Find file by index (index into queued-only list)
-      const queuedFiles = queue.filter(f => f.status !== 'done' && f.status !== 'error' || f.status === 'processing' || f.status === 'queued' || f.status === 'stopped');
-      const fileIdx = msg.file_index;
-
-      // Handle log messages FIRST (they don't have file_index)
-      if (msg.log && msg.file_index === undefined) {
-        agentLines = [...agentLines, { text: msg.log, type: msg.log_type || 'detail' }];
-        // Also add to last terminal step
-        const lastStep = terminalSteps[terminalSteps.length - 1];
-        if (lastStep) {
-          lastStep.lines.push({ text: msg.log, type: msg.log_type || 'detail' });
-          terminalSteps = [...terminalSteps];
-        }
-        return;
-      }
-
-      // Map file_index to queue index
-      let queueIdx = -1;
-      let counter = 0;
-      for (let i = 0; i < queue.length; i++) {
-        if (queue[i].status === 'queued' || queue[i].status === 'processing' || queue[i].status === 'stopped') {
-          if (counter === fileIdx) { queueIdx = i; break; }
-          counter++;
-        }
-      }
-      // Fallback: direct index
-      if (queueIdx < 0 && fileIdx < queue.length) queueIdx = fileIdx;
-      if (queueIdx < 0) return;
-
-      const entry = queue[queueIdx];
-
-      // Job created — save jobId early so it survives navigation
-      if (msg.job_created) {
-        queue[queueIdx] = { ...entry, jobId: msg.job_id, status: 'processing' };
-        queue = [...queue];
-        return;
-      }
-
-      // File complete
-      if (msg.file_complete) {
-        terminalComplete = true;
-        vizSummary = {
-          items: msg.items_count || 0, accuracy: msg.accuracy || 0,
-          cost: msg.cost || 0, duration: msg.duration || 0,
-          corrections: (msg.corrections || []).length || 0,
-          aiTables: 0,
-          declFilled: 16,
-        };
-        terminalSummary = {
-          items: msg.items_count || 0,
-          accuracy: msg.accuracy || 0,
-          decision: (msg.gate_log?.[0] || '').split('—')[0]?.trim() || 'UNKNOWN',
-          duration: msg.duration || 0,
-          cost: msg.cost || 0,
-          pipelineMode: msg.pipeline_mode || pipelineMode,
-          crossValidation: msg.cross_validation || null,
-        };
-
-        // Replace entry with NEW object (forces $derived to detect change)
-        queue[queueIdx] = {
-          ...entry,
-          status: msg.status === 'done' ? 'done' : msg.status === 'stopped' ? 'stopped' : 'error',
-          jobId: msg.job_id || '',
-          accuracy: msg.accuracy || 0,
-          itemsCount: msg.items_count || 0,
-          cost: msg.cost || 0,
-          duration: msg.duration || 0,
-          gateLog: msg.gate_log || [],
-          progress: 100,
-        };
-        queue = [...queue];
-
-        // Auto-select completed file and load results
-        if (msg.job_id) {
-          selectedIndex = queueIdx;
-          // Use inline job data from WebSocket (avoids separate HTTP fetch)
-          if (msg.job_data) {
-            jobResults[msg.job_id] = msg.job_data;
-            jobResults = { ...jobResults };
-            loadingResult = false;
-            viewMode = 'results';
-          } else {
-            loadJobResult(msg.job_id);
-            viewMode = 'results';
-          }
-        }
-        return;
-      }
-
-      // Step progress → build terminal steps + visualizer
-      if (msg.step) {
-        queue[queueIdx] = {
-          ...entry,
-          status: 'processing',
-          stepLabel: `${msg.name} ${msg.status === 'done' ? '✓' : '...'}`,
-          progress: (msg.step / 10) * 100,
-        };
-        queue = [...queue];
-        selectedIndex = queueIdx;
-
-        // Update visualizer flow diagram
-        const vizIcons: Record<string, string> = {
-          'HD_SPLITTER': '📄', 'VISION_EXTRACT': '👁', 'AI_ASSEMBLER': '🤖',
-          'AI_VERIFIER': '✦', 'VALIDATE_SAVE': '💾',
-        };
-        const vizIdx = vizSteps.findIndex(s => s.id === msg.name);
-        if (vizIdx < 0) {
-          vizSteps = [...vizSteps, {
-            id: msg.name, label: msg.name.replace(/_/g, ' '),
-            icon: vizIcons[msg.name] || '⚙', status: msg.status,
-            detail: msg.detail || '', time: '',
-          }];
-        } else {
-          vizSteps[vizIdx].status = msg.status;
-          if (msg.detail) vizSteps[vizIdx].detail = msg.detail;
-          vizSteps = [...vizSteps];
-        }
-
-        // Update terminal steps (deduplicate by step + name)
-        const existingIdx = terminalSteps.findIndex(s => s.step === msg.step && s.name === msg.name);
-        if (msg.status === 'running') {
-          if (existingIdx < 0) {
-            terminalSteps = [...terminalSteps, { step: msg.step, name: msg.name, status: 'running', lines: [], duration: 0, cost: 0 }];
-          } else {
-            terminalSteps[existingIdx].status = 'running';
-            terminalSteps = [...terminalSteps];
-          }
-        } else if (msg.status === 'done') {
-          if (existingIdx >= 0) {
-            terminalSteps[existingIdx].status = 'done';
-            terminalSteps[existingIdx].duration = msg.duration || 0;
-            terminalSteps[existingIdx].cost = msg.cost || 0;
-            if (msg.detail) {
-              terminalSteps[existingIdx].lines.push({ text: msg.detail, type: 'success' });
-            }
-            // Add detailed log lines from backend
-            if (msg.log_lines && Array.isArray(msg.log_lines)) {
-              for (const line of msg.log_lines) {
-                terminalSteps[existingIdx].lines.push({ text: line, type: 'data' });
-              }
-            }
-            terminalSteps = [...terminalSteps];
-          }
-        } else if (msg.status === 'error') {
-          if (existingIdx >= 0) {
-            terminalSteps[existingIdx].status = 'error';
-            terminalSteps[existingIdx].duration = msg.duration || 0;
-            if (msg.detail) {
-              terminalSteps[existingIdx].lines.push({ text: msg.detail, type: 'error' });
-            }
-            terminalSteps = [...terminalSteps];
-          }
-        }
-      }
-
-      // Log messages → add to BOTH old terminal AND new agent terminal
-      if (msg.log) {
-        const lastStep = terminalSteps[terminalSteps.length - 1];
-        if (lastStep) {
-          lastStep.lines.push({ text: msg.log, type: msg.log_type || 'detail' });
-          terminalSteps = [...terminalSteps];
-        }
-        // New agent terminal — just append every line
-        agentLines = [...agentLines, { text: msg.log, type: msg.log_type || 'detail' }];
-      }
-    };
-
-    socket.onerror = () => { running = false; ws = null; startCompletionPoll(); };
-    socket.onclose = () => { running = false; ws = null; startCompletionPoll(); };
-
-    // Also start a safety poll — if WS goes silent, check DB for completion
-    const safetyPoll = setInterval(async () => {
-      const processingEntries = queue.filter(q => q.status === 'processing' && q.jobId);
-      if (processingEntries.length === 0 && !running) {
-        clearInterval(safetyPoll);
-        return;
-      }
-      for (const entry of processingEntries) {
-        try {
-          const job = await api.getJob(entry.jobId);
-          if (job.status === 'COMPLETED') {
-            entry.status = 'done';
-            entry.accuracy = job.accuracy_percent || 0;
-            entry.itemsCount = job.items?.length || 0;
-            entry.cost = job.cost_usd || 0;
-            entry.duration = job.processing_time_seconds || 0;
-            entry.progress = 100;
-            entry.stepLabel = '';
-            jobResults[entry.jobId] = job;
-            jobResults = { ...jobResults };
-            terminalComplete = true;
-            terminalSummary = {
-              items: job.items?.length || 0,
-              accuracy: job.accuracy_percent || 0,
-              decision: (job.accuracy_percent || 0) >= 90 ? 'ACCEPTED' : 'FIXED',
-              duration: job.processing_time_seconds || 0,
-              cost: job.cost_usd || 0,
-            };
-            queue = [...queue];
-            running = false;
-            clearInterval(safetyPoll);
-          }
-        } catch {}
-      }
-    }, 5000);
+    runHttpPipeline(filesToProcess);
   }
 
-  // ── WS closed — start polling for completion ──
-  function startCompletionPoll() {
-    if (pollTimer) return; // already polling
-    const hasProcessing = queue.some(q => q.status === 'processing' && q.jobId);
-    if (hasProcessing) {
-      pollProcessingJobs();
-      pollTimer = setInterval(pollProcessingJobs, 3000);
-    }
-  }
-
-  // ── HTTP pipeline path (V10/V11 — no WebSocket yet) ──
+  // ── HTTP pipeline path (V11 queue-based) ──
   // V11 is now QUEUE-BASED: /api/extract-v11 returns 202 + {job_id, stream_id}
   // and we poll /api/extract-v11/status/{stream_id} until finished/failed.
   // V10 (and others) keep the old synchronous flow.
@@ -623,9 +363,9 @@
 
   // ── Stop ──
   function stopPipeline() {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ stop: true }));
-    }
+    // V11 queue-based path — no WebSocket. Stopping is not yet wired through
+    // the queue. Mark UI as not running so the user can re-execute.
+    running = false;
   }
 
   // ── Load job results ──
@@ -687,69 +427,7 @@
     }
   }
 
-  // Poll for completion of processing jobs
-  let pollTimer: ReturnType<typeof setInterval> | null = null;
-
-  let pollAttempts = 0;
-  const MAX_POLL_ATTEMPTS = 20; // ~60s at 3s intervals
-
-  async function pollProcessingJobs() {
-    // Only poll WS-pipeline jobs (V7 path) — these have DB ids prefixed with "JOB_".
-    // V11 path uses HTTP response directly + SSE; skipping prevents 404 spam on pre-allocated UUIDs.
-    const processingEntries = queue.filter(q =>
-      q.status === 'processing' && q.jobId && typeof q.jobId === 'string' && q.jobId.startsWith('JOB_')
-    );
-    if (processingEntries.length === 0) {
-      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-      pollAttempts = 0;
-      return;
-    }
-
-    pollAttempts++;
-
-    for (const entry of processingEntries) {
-      try {
-        const job = await api.getJob(entry.jobId);
-        if (job.status === 'COMPLETED') {
-          entry.status = 'done';
-          entry.accuracy = job.accuracy_percent || 0;
-          entry.itemsCount = job.items?.length || 0;
-          entry.cost = job.cost_usd || 0;
-          entry.duration = job.processing_time_seconds || 0;
-          entry.progress = 100;
-          entry.stepLabel = '';
-          jobResults[entry.jobId] = job;
-          jobResults = { ...jobResults };
-          queue = [...queue];
-        } else if (job.status === 'FAILED') {
-          entry.status = 'error';
-          entry.progress = 100;
-          entry.stepLabel = job.error_message || 'FAILED';
-          queue = [...queue];
-        } else if (pollAttempts >= MAX_POLL_ATTEMPTS) {
-          // Job stuck in PROCESSING too long — mark as error
-          entry.status = 'error';
-          entry.progress = 100;
-          entry.stepLabel = 'TIMED OUT — pipeline may have crashed';
-          queue = [...queue];
-        }
-      } catch {
-        // API error (404 etc) — mark as error
-        entry.status = 'error';
-        entry.progress = 100;
-        entry.stepLabel = 'FAILED — job not found';
-        queue = [...queue];
-      }
-    }
-
-    // Stop polling if no more processing
-    if (!queue.some(q => q.status === 'processing')) {
-      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-      pollAttempts = 0;
-    }
-  }
-
-  // On mount: restore queue, then poll for updates
+  // On mount: restore queue (V11 SSE handles live updates).
   onMount(async () => {
     // Try restoring saved queue state first
     const restored = restoreQueueState();
@@ -778,15 +456,7 @@
         // Fall through to check DB for in-progress jobs
       }
 
-      // Check if any restored items were processing WITH jobId — immediately check DB status
-      if (queue.some(q => q.status === 'processing' && q.jobId)) {
-        pollAttempts = 0;
-        await pollProcessingJobs();
-        // If still processing after first check, continue polling
-        if (queue.some(q => q.status === 'processing')) {
-          pollTimer = setInterval(pollProcessingJobs, 3000);
-        }
-      }
+      // V11 SSE handles live status; nothing to poll on restore.
       // Load results for completed items
       for (const entry of queue) {
         if (entry.status === 'done' && entry.jobId && !jobResults[entry.jobId]) {
@@ -826,17 +496,12 @@
           }
           queue = [...queue];
           if (queue.length > 0) selectedIndex = 0;
-          pollTimer = setInterval(pollProcessingJobs, 3000);
         }
       }
     } catch {}
 
     // Enable queue persistence now that restore is done
     mounted = true;
-
-    return () => {
-      if (pollTimer) clearInterval(pollTimer);
-    };
   });
 
 

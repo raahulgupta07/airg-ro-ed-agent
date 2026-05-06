@@ -1,5 +1,5 @@
 /** Pipeline metadata for the agent UI selector. */
-export type PipelineKey = 'v11' | 'v7' | 'v10';
+export type PipelineKey = 'v11';
 
 export interface PipelineConfig {
   key: PipelineKey;
@@ -23,26 +23,9 @@ export const PIPELINES: Record<PipelineKey, PipelineConfig> = {
     isDefault: true,
     badge: 'Recommended',
   },
-  v7: {
-    key: 'v7',
-    name: 'Fast Typed',
-    endpoint: '/api/extract',
-    description: 'Cheapest. Best for clean MACCS typed forms. Production-tested, full UI features.',
-    estCost: '$0.10',
-    estTime: '70s',
-  },
-  v10: {
-    key: 'v10',
-    name: 'Handwriting Specialist',
-    endpoint: '/api/extract-v10',
-    description: 'Multi-DPI 3-model vote on critical fields. Best for ink-pen-filled CUSDEC-1 forms.',
-    estCost: '$0.50',
-    estTime: '160s',
-    badge: 'Premium',
-  },
 };
 
-export const PIPELINE_ORDER: PipelineKey[] = ['v11', 'v7', 'v10'];
+export const PIPELINE_ORDER: PipelineKey[] = ['v11'];
 
 export function getDefaultPipeline(): PipelineKey {
   return (Object.values(PIPELINES).find(p => p.isDefault)?.key) || 'v11';
