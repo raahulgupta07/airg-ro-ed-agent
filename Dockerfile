@@ -16,11 +16,9 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# System deps (mupdf for PDF rendering, libgl for PaddleOCR opencv runtime)
-# NOTE: NO Tesseract — V11 image-only PDF bbox fallback uses PaddleOCR.
+# System deps (mupdf for PDF rendering only — NO OCR)
 RUN apt-get update && apt-get install -y \
     gcc g++ libmupdf-dev mupdf-tools curl \
-    libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Python deps (cached layer)

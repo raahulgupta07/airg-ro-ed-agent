@@ -32,10 +32,3 @@ cryptography>=42.0
 
 # Storage providers
 boto3>=1.35.0
-
-# V11 — OCR fallback for image-only / scanned PDFs (field bbox detection)
-# Heavy install (~600MB CPU wheel, several minutes on first build).
-# If install fails the v11.tools.ocr_cache module silently disables OCR
-# fallback and the bbox detector continues with text-layer search only.
-paddleocr>=2.7.0
-paddlepaddle>=2.5.0
