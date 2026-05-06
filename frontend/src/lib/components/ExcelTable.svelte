@@ -222,7 +222,7 @@
 
   <div class="overflow-auto" style="max-height: {maxHeight}; border: 1px solid #999;">
     <table class="text-[11px]"
-           style="border-collapse: separate; border-spacing: 0; width: {totalWidth}px; table-layout: fixed; font-family: 'Calibri', 'Segoe UI', sans-serif;">
+           style="border-collapse: separate; border-spacing: 0; min-width: {totalWidth}px; width: 100%; table-layout: fixed; font-family: 'Calibri', 'Segoe UI', sans-serif;">
       <colgroup>
         {#each columns as c (c.id)}
           <col style="width: {widths[c.id] || c.width || 120}px;" />

@@ -38,8 +38,12 @@
 </script>
 
 <div class="flex items-center gap-3 mb-3">
-  <Button size="sm" variant="ghost" onclick={back}>← BACK_TO_QUEUE</Button>
-  <span class="text-xs font-mono opacity-70">JOB_ID: <strong>{jobId}</strong></span>
+  <button
+    class="px-3 py-1.5 text-[10px] font-black uppercase border-2 cursor-pointer press-effect"
+    style="border-color: var(--on-surface); background: var(--surface); color: var(--on-surface); box-shadow: 2px 2px 0px 0px var(--on-surface);"
+    onclick={back}
+  >← BACK_TO_QUEUE</button>
+  <span class="text-xs font-mono" style="color: var(--on-surface);">JOB_ID: <strong>{jobId}</strong></span>
 </div>
 
 {#if loading}
