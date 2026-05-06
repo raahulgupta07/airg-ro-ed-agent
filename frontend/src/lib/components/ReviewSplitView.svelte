@@ -2,6 +2,39 @@
   import { auth } from '$lib/stores/auth.svelte';
   import Toast from './Toast.svelte';
   import ExcelTable from './ExcelTable.svelte';
+  import PdfViewer from './PdfViewer.svelte';
+
+  // ── Field color scheme for bbox overlays (datalab-chandra style) ──
+  const FIELD_COLORS: Record<string, string> = {
+    declaration_no:           '#c084fc',  // purple
+    declaration_date:         '#c084fc',
+    importer_name:            '#86efac',  // green
+    consignor_name:           '#86efac',
+    invoice_number:           '#67e8f9',  // cyan
+    invoice_number_customs_declaration:  '#67e8f9',
+    invoice_number_commercial_invoice:   '#67e8f9',
+    invoice_price:            '#67e8f9',
+    currency:                 '#fde047',  // yellow
+    currency_2:               '#fde047',
+    exchange_rate:            '#fde047',
+    total_customs_value:      '#fca5a5',  // red
+    import_export_customs_duty: '#fdba74',  // orange (fees)
+    commercial_tax_ct:        '#fdba74',
+    advance_income_tax_at:    '#fdba74',
+    security_fee_sf:          '#fdba74',
+    maccs_service_fee_mf:     '#fdba74',
+    exemption_reduction:      '#fdba74',
+    item_name:                '#f9a8d4',  // pink
+    hs_code:                  '#a5b4fc',  // indigo
+    quantity:                 '#fcd34d',  // amber
+    invoice_unit_price:       '#fbbf24',
+    cif_unit_price:           '#fbbf24',
+    customs_duty_rate:        '#fed7aa',
+    origin_country:           '#bef264',  // lime
+  };
+  function colorFor(field: string): string {
+    return FIELD_COLORS[field] || '#94a3b8';
+  }
 
   type Col = {
     id: string;
@@ -219,6 +252,61 @@
   }
   function itemBbox(idx: number, field: string) {
     return fieldBboxes?.items?.[String(idx)]?.[field] || null;
+  }
+
+  // ── Bbox overlay list (PDF page coords from backend) ──
+  let hoveredField = $state<string | null>(null);
+  const allBoxes = $derived.by(() => {
+    const fb: any = (job as any)?.field_bboxes || {};
+    const out: any[] = [];
+    for (const [field, bb] of Object.entries(fb.declaration || {})) {
+      const b: any = bb;
+      if (!b || typeof b.x !== 'number') continue;
+      out.push({
+        field,
+        label: field.replace(/_/g, ' ').toUpperCase().slice(0, 22),
+        page: b.page || 1,
+        x: b.x, y: b.y, w: b.w, h: b.h,
+        color: colorFor(field),
+        kind: 'decl',
+      });
+    }
+    for (const [idxStr, item] of Object.entries(fb.items || {})) {
+      const idx = parseInt(idxStr, 10);
+      if (Number.isNaN(idx)) continue;
+      for (const [field, bb] of Object.entries((item as any) || {})) {
+        const b: any = bb;
+        if (!b || typeof b.x !== 'number') continue;
+        out.push({
+          field,
+          item_index: idx,
+          label: `[${idx + 1}] ${field.replace(/_/g, ' ').slice(0, 14)}`,
+          page: b.page || 1,
+          x: b.x, y: b.y, w: b.w, h: b.h,
+          color: colorFor(field),
+          kind: 'item',
+        });
+      }
+    }
+    return out;
+  });
+
+  function onBboxClick(field: string, item_index?: number) {
+    let id: string;
+    if (item_index !== undefined) {
+      id = `field-item-${item_index}-${field}`;
+      // Also jump page strip
+      jumpPdfImmediate(itemPageRef(item_index, field));
+    } else {
+      id = `field-decl-${field}`;
+      jumpPdfImmediate(declPageRef(field));
+    }
+    setTimeout(() => {
+      const el = document.getElementById(id);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el?.classList.add('bbox-flash');
+      setTimeout(() => el?.classList.remove('bbox-flash'), 1500);
+    }, 50);
   }
 
   const pdfSrc = $derived.by(() => {
@@ -778,7 +866,7 @@
         onclick={() => jumpToPage(Math.min(totalPages, currentPage + 1))}>▶</button>
     </div>
 
-    <div class="flex-1 min-h-[400px]">
+    <div class="flex-1 min-h-[400px]" style="min-height: calc(100vh - 280px);">
       {#if pdfLoading}
         <div class="flex items-center justify-center h-full">
           <span class="text-xs font-bold uppercase" style="color: var(--outline);">LOADING PDF...</span>
@@ -787,12 +875,19 @@
         <div class="flex items-center justify-center h-full">
           <span class="text-xs font-bold uppercase" style="color: var(--tertiary);">{pdfError}</span>
         </div>
+      {:else if pdfBlobUrl}
+        <PdfViewer
+          pdfUrl={pdfBlobUrl}
+          page={currentPage}
+          bboxes={allBoxes}
+          highlightField={hoveredField}
+          onBoxClick={onBboxClick}
+          onPageChange={(p) => { currentPage = p; }}
+        />
       {:else}
-        <iframe
-          src={pdfSrc}
-          title="PDF"
-          style="width: 100%; height: 100%; border: none; min-height: calc(100vh - 280px);"
-        ></iframe>
+        <div class="flex items-center justify-center h-full">
+          <span class="text-xs font-bold uppercase" style="color: var(--outline);">PDF NOT AVAILABLE</span>
+        </div>
       {/if}
     </div>
   </div>
@@ -813,8 +908,10 @@
             id={`field-decl-${row.field}`}
             class="border-2 p-2"
             style="border-color: {declBorder(row.field)}; background: {declBg(row.field)};"
-            onmouseenter={() => jumpPdf(dPage, _searchVal)}
-            onfocusin={() => jumpPdf(dPage, _searchVal)}
+            onmouseenter={() => { jumpPdf(dPage, _searchVal); hoveredField = row.field; }}
+            onmouseleave={() => { if (hoveredField === row.field) hoveredField = null; }}
+            onfocusin={() => { jumpPdf(dPage, _searchVal); hoveredField = row.field; }}
+            onfocusout={() => { if (hoveredField === row.field) hoveredField = null; }}
             role="group"
           >
             <div class="flex items-center justify-between gap-1">
@@ -1090,6 +1187,13 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     gap: 0.5rem;
+  }
+  :global(.bbox-flash) {
+    animation: bbox-flash-anim 1.5s ease-out;
+  }
+  @keyframes bbox-flash-anim {
+    0% { background-color: #fef9c3 !important; box-shadow: 0 0 0 4px #facc15; }
+    100% { background-color: inherit; box-shadow: none; }
   }
   @media (min-width: 768px) {
     .review-grid {
