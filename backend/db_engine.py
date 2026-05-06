@@ -1,0 +1,419 @@
+#!/usr/bin/env python3
+"""
+PostgreSQL connection engine — replaces the previous direct sqlite3 driver.
+
+Provides:
+  * `engine`             — SQLAlchemy Engine (QueuePool, 10 + 10 conns).
+  * `get_conn()`         — Returns a `Sqlite3CompatConnection` that mimics the
+                            sqlite3 connection API used everywhere in
+                            `database.py` (so we don't have to rewrite ~3000
+                            lines of raw SQL).
+
+The compatibility shim handles, on every `cursor.execute(sql, params)`:
+  * `?` placeholder      → `%s` (psycopg3 paramstyle)
+  * `INSERT OR REPLACE`  → `INSERT ... ON CONFLICT DO UPDATE` (best-effort
+                            rewrite using the table's primary key)
+  * `INSERT OR IGNORE`   → `INSERT ... ON CONFLICT DO NOTHING`
+  * `PRAGMA …`           → no-op (Postgres equivalents handled at server level)
+  * `datetime('now')`    → `now()`
+  * `DATE('now')`        → `CURRENT_DATE`
+  * `CURRENT_TIMESTAMP`  → unchanged (works in both)
+  * `cursor.lastrowid`   → returned id from a transparent `RETURNING id`
+  * `conn.row_factory = sqlite3.Row` → swap subsequent cursors to dict rows
+                            (rows behave like dicts AND tuples — same as Row)
+
+This minimises diffs to the existing data layer while giving us PG concurrency.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import re
+import threading
+from typing import Any, Iterable, Optional
+
+from sqlalchemy import create_engine
+from sqlalchemy.pool import QueuePool
+
+logger = logging.getLogger(__name__)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Engine
+# ─────────────────────────────────────────────────────────────────────────────
+
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL",
+    "postgresql+psycopg://ro_ed:ro_ed@postgres:5432/ro_ed",
+)
+
+# QueuePool sized for ~10 concurrent users + a few background workers.
+engine = create_engine(
+    DATABASE_URL,
+    poolclass=QueuePool,
+    pool_size=10,
+    max_overflow=10,
+    pool_pre_ping=True,
+    pool_recycle=3600,
+    future=True,
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# sqlite3-compat exception aliases (so `except sqlite3.OperationalError` keeps
+# working without changing every call site).
+# ─────────────────────────────────────────────────────────────────────────────
+
+import psycopg  # noqa: E402
+
+OperationalError = psycopg.errors.OperationalError
+IntegrityError = psycopg.errors.IntegrityError
+ProgrammingError = psycopg.errors.ProgrammingError
+DatabaseError = psycopg.errors.DatabaseError
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SQL syntax translation
+# ─────────────────────────────────────────────────────────────────────────────
+
+_QMARK_RE = re.compile(r"(?<!')\?(?!')")       # not-quoted-only is approximate
+_PRAGMA_RE = re.compile(r"^\s*PRAGMA\s", re.IGNORECASE)
+_INSERT_OR_REPLACE_RE = re.compile(
+    r"^\s*INSERT\s+OR\s+REPLACE\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)",
+    re.IGNORECASE | re.DOTALL,
+)
+_INSERT_OR_IGNORE_RE = re.compile(r"\bINSERT\s+OR\s+IGNORE\b", re.IGNORECASE)
+_DATETIME_NOW_RE = re.compile(r"datetime\('now'\)", re.IGNORECASE)
+_DATE_NOW_RE = re.compile(r"DATE\('now'\)", re.IGNORECASE)
+_AUTOINCREMENT_RE = re.compile(
+    r"INTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT", re.IGNORECASE
+)
+
+# Tables where INSERT OR REPLACE is used → primary key column for upsert.
+_PK_BY_TABLE = {
+    "pdf_metadata": "job_id",
+    "settings": "key",
+}
+
+
+def _qmark_to_pct(sql: str) -> str:
+    """Replace `?` placeholders with `%s` (psycopg3 paramstyle).
+
+    Naive but the codebase doesn't use ? inside string literals — verified.
+    """
+    return sql.replace("?", "%s")
+
+
+def _rewrite_insert_or_replace(sql: str) -> str:
+    """`INSERT OR REPLACE INTO t (a,b,c) VALUES (?,?,?)` →
+    `INSERT INTO t (a,b,c) VALUES (?,?,?) ON CONFLICT (pk) DO UPDATE SET
+        a = EXCLUDED.a, b = EXCLUDED.b, c = EXCLUDED.c`.
+    """
+    m = _INSERT_OR_REPLACE_RE.match(sql.strip())
+    if not m:
+        # Bare token replacement (rare, e.g. multi-row inserts) — best effort
+        return re.sub(
+            r"\bINSERT\s+OR\s+REPLACE\b",
+            "INSERT",
+            sql,
+            flags=re.IGNORECASE,
+        )
+
+    table = m.group(1)
+    cols_str = m.group(2)
+    vals_str = m.group(3)
+    pk = _PK_BY_TABLE.get(table.lower(), "id")
+    cols = [c.strip() for c in cols_str.split(",")]
+    set_clause = ", ".join(
+        f"{c} = EXCLUDED.{c}" for c in cols if c.lower() != pk.lower()
+    )
+    rebuilt = (
+        f"INSERT INTO {table} ({cols_str}) VALUES ({vals_str}) "
+        f"ON CONFLICT ({pk}) DO UPDATE SET {set_clause}"
+    )
+    # Keep any trailing SQL the regex didn't capture
+    tail = sql[m.end():]
+    return rebuilt + tail
+
+
+def _translate(sql: str) -> str:
+    """Apply all SQLite → Postgres syntax fixes."""
+    if _PRAGMA_RE.match(sql):
+        # Postgres has no PRAGMAs; turn into a no-op SELECT.
+        return "SELECT 1"
+
+    if "INSERT OR REPLACE" in sql.upper():
+        sql = _rewrite_insert_or_replace(sql)
+    if "INSERT OR IGNORE" in sql.upper():
+        sql = _INSERT_OR_IGNORE_RE.sub("INSERT", sql)
+        # Append ON CONFLICT DO NOTHING if not already present
+        if "ON CONFLICT" not in sql.upper():
+            # Strip trailing semicolons before append
+            sql = sql.rstrip().rstrip(";") + " ON CONFLICT DO NOTHING"
+
+    sql = _DATETIME_NOW_RE.sub("now()", sql)
+    sql = _DATE_NOW_RE.sub("CURRENT_DATE", sql)
+    sql = _qmark_to_pct(sql)
+    return sql
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Compatibility wrapper
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _DictRow(dict):
+    """Behaves like sqlite3.Row: `row['col']` and `row[0]` and `dict(row)`."""
+
+    def __init__(self, mapping, ordered_keys):
+        super().__init__(mapping)
+        self._keys_ordered = list(ordered_keys)
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return self._values_ordered()[key]
+        return super().__getitem__(key)
+
+    def _values_ordered(self):
+        return [super(_DictRow, self).__getitem__(k) for k in self._keys_ordered]
+
+    def keys(self):  # sqlite3.Row API
+        return list(self._keys_ordered)
+
+    def __iter__(self):
+        # sqlite3.Row iterates values in column order, not keys
+        return iter(self._values_ordered())
+
+
+class _CursorWrapper:
+    """Wraps a psycopg cursor, translates SQL, mimics sqlite3 cursor surface."""
+
+    def __init__(self, raw_cur, dict_rows: bool):
+        self._cur = raw_cur
+        self._dict_rows = dict_rows
+        self._last_returned_id: Optional[int] = None
+        self._last_sql_was_returning_insert: bool = False
+
+    # ── Statement execution ────────────────────────────────────────────────
+
+    def execute(self, sql: str, params: Optional[Iterable] = None):
+        translated = _translate(sql)
+
+        # Auto-append RETURNING id on INSERTs so we can mimic lastrowid.
+        # Heuristic: only for single-statement INSERT … VALUES … without an
+        # existing RETURNING. We capture id into _last_returned_id.
+        # Wrapped in a SAVEPOINT so a failed RETURNING (e.g. table has no
+        # `id` column) doesn't poison the outer transaction.
+        upper = translated.lstrip().upper()
+        self._last_sql_was_returning_insert = False
+        if (upper.startswith("INSERT INTO ")
+                and " RETURNING " not in translated.upper()
+                and " ON CONFLICT" not in translated.upper()):
+            translated_with_ret = translated.rstrip().rstrip(";") + " RETURNING id"
+            sp_name = "_sp_lastrowid"
+            try:
+                self._cur.execute(f"SAVEPOINT {sp_name}")
+                self._cur.execute(translated_with_ret, params or ())
+                row = self._cur.fetchone()
+                self._cur.execute(f"RELEASE SAVEPOINT {sp_name}")
+                self._last_returned_id = row[0] if row else None
+                self._last_sql_was_returning_insert = True
+                return self
+            except psycopg.errors.UndefinedColumn:
+                # Table has no `id` PK (e.g. user_groups composite, settings.key,
+                # pdf_metadata.job_id). Roll back to savepoint and re-run plain.
+                try:
+                    self._cur.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
+                except Exception:
+                    pass
+            except Exception:
+                try:
+                    self._cur.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
+                except Exception:
+                    pass
+                raise
+
+        self._cur.execute(translated, params or ())
+        self._last_returned_id = None
+        return self
+
+    def executemany(self, sql, seq_of_params):
+        self._cur.executemany(_translate(sql), seq_of_params)
+        return self
+
+    # ── Fetching ───────────────────────────────────────────────────────────
+
+    def _wrap(self, row):
+        if row is None:
+            return None
+        if self._dict_rows and self._cur.description is not None:
+            cols = [d.name for d in self._cur.description]
+            if isinstance(row, dict):
+                return _DictRow(row, cols)
+            return _DictRow(dict(zip(cols, row)), cols)
+        return row
+
+    def fetchone(self):
+        # If we already drained the row off RETURNING id, signal that there is
+        # no further user-visible row (sqlite3 INSERT yields no row either).
+        if self._last_sql_was_returning_insert:
+            self._last_sql_was_returning_insert = False
+            return None
+        try:
+            row = self._cur.fetchone()
+        except psycopg.ProgrammingError:
+            return None
+        return self._wrap(row)
+
+    def fetchall(self):
+        if self._last_sql_was_returning_insert:
+            self._last_sql_was_returning_insert = False
+            return []
+        try:
+            rows = self._cur.fetchall()
+        except psycopg.ProgrammingError:
+            return []
+        return [self._wrap(r) for r in rows]
+
+    def fetchmany(self, size=None):
+        try:
+            rows = self._cur.fetchmany(size) if size else self._cur.fetchmany()
+        except psycopg.ProgrammingError:
+            return []
+        return [self._wrap(r) for r in rows]
+
+    # ── Properties ─────────────────────────────────────────────────────────
+
+    @property
+    def lastrowid(self):
+        return self._last_returned_id
+
+    @property
+    def rowcount(self):
+        return self._cur.rowcount
+
+    @property
+    def description(self):
+        return self._cur.description
+
+    def __iter__(self):
+        return iter(self.fetchall())
+
+    def close(self):
+        try:
+            self._cur.close()
+        except Exception:
+            pass
+
+
+class _Sqlite3CompatConnection:
+    """Wraps a raw psycopg connection, mimicking sqlite3.Connection.
+
+    * `execute(sql, params)` opens a transient cursor and runs it (used in many
+      `conn.execute(...)`-as-shortcut sites).
+    * `cursor()` returns a `_CursorWrapper`.
+    * `row_factory = sqlite3.Row` (or anything truthy) toggles dict rows.
+    * `commit()`, `rollback()`, `close()` proxy through.
+    """
+
+    def __init__(self, raw_conn):
+        self._raw = raw_conn
+        self._dict_rows = False
+        # Postgres autocommit-off by default. Make sure we're in tx mode so
+        # commit()/rollback() match sqlite3 semantics.
+        try:
+            self._raw.autocommit = False
+        except Exception:
+            pass
+
+    # ── sqlite3 surface area ──────────────────────────────────────────────
+
+    @property
+    def row_factory(self):
+        return self._dict_rows
+
+    @row_factory.setter
+    def row_factory(self, value):
+        # sqlite3.Row → dict rows. None → tuple rows.
+        self._dict_rows = bool(value)
+
+    def cursor(self, *args, **kwargs):
+        # If caller passes row_factory=dict_row directly we honour it.
+        cur = self._raw.cursor()
+        return _CursorWrapper(cur, self._dict_rows)
+
+    def execute(self, sql, params=None):
+        cur = self.cursor()
+        cur.execute(sql, params or ())
+        return cur
+
+    def executemany(self, sql, seq_of_params):
+        cur = self.cursor()
+        cur.executemany(sql, seq_of_params)
+        return cur
+
+    def commit(self):
+        try:
+            self._raw.commit()
+        except Exception as exc:
+            logger.debug("commit() raised: %s", exc)
+            try:
+                self._raw.rollback()
+            except Exception:
+                pass
+
+    def rollback(self):
+        try:
+            self._raw.rollback()
+        except Exception:
+            pass
+
+    def close(self):
+        try:
+            # Always rollback any abandoned tx before returning to pool.
+            try:
+                self._raw.rollback()
+            except Exception:
+                pass
+            self._raw.close()
+        except Exception:
+            pass
+
+    # Some callers use the connection as a context manager.
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc:
+            self.rollback()
+        else:
+            self.commit()
+        self.close()
+
+
+def get_conn() -> _Sqlite3CompatConnection:
+    """Get a pooled raw psycopg connection wrapped in the sqlite3-compat shim."""
+    raw = engine.raw_connection()
+    return _Sqlite3CompatConnection(raw)
+
+
+# Keep a thread lock for any one-off operations that need serialisation.
+_init_lock = threading.Lock()
+
+
+def run_alembic_upgrade(target: str = "head") -> None:
+    """Run Alembic migrations against `engine`. Used by `database.init_database()`."""
+    from pathlib import Path
+    from alembic.config import Config
+    from alembic import command
+
+    here = Path(__file__).parent
+    cfg_path = here / "alembic.ini"
+    if not cfg_path.exists():
+        logger.warning("alembic.ini not found at %s — skipping migration", cfg_path)
+        return
+
+    cfg = Config(str(cfg_path))
+    cfg.set_main_option("script_location", str(here / "alembic"))
+    cfg.set_main_option("sqlalchemy.url", DATABASE_URL)
+    with _init_lock:
+        command.upgrade(cfg, target)

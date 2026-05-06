@@ -480,10 +480,18 @@ async def extract_pdf_v10_pro(file: UploadFile = File(...)):
             pass
 
 
-@app.post("/api/extract-v11")
+@app.post("/api/extract-v11", status_code=202)
 async def extract_pdf_v11(file: UploadFile = File(...), job_id: Optional[str] = Form(None)):
-    """V11 — Master Router (per-page classifier → V7 typed + V10 HW parallel → merge)."""
-    import asyncio, shutil, uuid
+    """V11 — Master Router. Queues extraction; returns immediately with job_id.
+
+    Behavior change: this endpoint no longer blocks for 90-180s. It saves the PDF,
+    pre-creates a DB job row, enqueues a background RQ task, and returns 202 with
+    {job_id, stream_id, queue_position}. Clients should:
+      - subscribe to /api/extract-v11/stream/{stream_id} for live router events, and/or
+      - poll /api/extract-v11/status/{stream_id} for queue/worker status, then
+      - fetch final result via /api/jobs/{job_id} once status == 'finished'.
+    """
+    import shutil, uuid
 
     if file is None:
         raise HTTPException(400, "No file uploaded")
@@ -497,59 +505,98 @@ async def extract_pdf_v11(file: UploadFile = File(...), job_id: Optional[str] = 
     with open(save_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
+    # Pre-create DB job row so polling by job_id works immediately.
     try:
-        try:
-            from v11.workflow import run as run_v11
-        except Exception as e:
-            raise HTTPException(500, f"V11 pipeline unavailable: {e}")
-
-        try:
-            result = await asyncio.to_thread(run_v11, str(save_path), job_id)
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(500, f"V11 extraction failed: {e}")
-
-        if not result:
-            raise HTTPException(500, "V11 extraction returned no result")
-
-        return {
-            "status": "ok",
-            "filename": file.filename,
-            "mode": "v11",
-            "job_id": result.get("job_id"),
-            "items_count": len(result.get("items", [])),
-            "duration": result.get("duration_seconds", 0),
-            "cost": result.get("cost", 0),
-            "tokens_in": result.get("tokens_in", 0),
-            "tokens_out": result.get("tokens_out", 0),
-            "cost_breakdown": result.get("cost_breakdown", []),
-            "declaration": result.get("declaration", {}),
-            "declarations": [result["declaration"]] if result.get("declaration") else [],
-            "items": result.get("items", []),
-            "document_format": result.get("document_format", ""),
-            "page_classification": result.get("page_classification", {}),
-            "v7_used": result.get("v7_used", False),
-            "v10_used": result.get("v10_used", False),
-            "needs_review": result.get("needs_review", False),
-            "item_review_flags": result.get("item_review_flags", []),
-            "trace": result.get("trace", []),
-            "total_pages": result.get("total_pages", 0),
-            "text_pages": result.get("text_pages", 0),
-            "image_pages": result.get("image_pages", 0),
-            "attachment_pages": result.get("attachment_pages", 0),
-            "pipeline_version": result.get("pipeline_version", "v11"),
-            "model_used": result.get("model_used", "V11 Maestro"),
-            "processed_at": result.get("processed_at", ""),
-            "field_bboxes": result.get("field_bboxes") or {},
-        }
-    except Exception:
-        # Only delete the PDF on error (so review UI can re-show it after success).
+        db_job_id = database.create_job(
+            pdf_name=file.filename,
+            pdf_path=str(save_path),
+            pdf_size=save_path.stat().st_size,
+            total_pages=0,
+            text_pages=0,
+            image_pages=0,
+        )
+    except Exception as e:
         try:
             save_path.unlink(missing_ok=True)
         except Exception:
             pass
-        raise
+        raise HTTPException(500, f"Failed to create job row: {e}")
+
+    # Use the frontend-provided job_id for SSE alignment if given; otherwise the DB id.
+    # RQ only allows letters/numbers/underscores/dashes — sanitize.
+    import re
+    raw_sse = job_id or db_job_id
+    sse_job_id = re.sub(r'[^A-Za-z0-9_\-]', '-', str(raw_sse))[:128]
+
+    # Enqueue the background extraction task.
+    try:
+        from jobs.queue import get_queue
+        from jobs.tasks import run_v11_task
+        rq_job = get_queue().enqueue(
+            run_v11_task,
+            kwargs={'job_id': sse_job_id, 'pdf_path': str(save_path)},
+            job_id=sse_job_id,           # RQ job id matches SSE/stream id
+            job_timeout=900,
+            result_ttl=3600,
+        )
+    except Exception as e:
+        try:
+            database.update_job_status(db_job_id, 'FAILED')
+        except Exception:
+            pass
+        try:
+            save_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise HTTPException(500, f"Failed to enqueue V11 job: {e}")
+
+    return {
+        "status": "queued",
+        "filename": file.filename,
+        "mode": "v11",
+        "job_id": db_job_id,
+        "stream_id": sse_job_id,
+        "queue_position": _queue_position(rq_job),
+        "message": f"PDF queued. Stream live router events at /api/extract-v11/stream/{sse_job_id}",
+    }
+
+
+def _queue_position(rq_job) -> int:
+    """Approx queue depth ahead of this job."""
+    try:
+        from jobs.queue import get_queue
+        q = get_queue()
+        return q.count
+    except Exception:
+        return 0
+
+
+@app.get("/api/extract-v11/status/{stream_id}")
+async def extract_v11_status(stream_id: str):
+    """Poll RQ job status by stream_id (== rq job id).
+
+    Returns:
+      status: queued | started | finished | failed | unknown
+      queue_position: int (>=0 if still queued, else -1)
+      result: dict if finished
+      error: string if failed
+    """
+    try:
+        from rq.job import Job
+        from jobs.queue import get_redis
+        rq_job = Job.fetch(stream_id, connection=get_redis())
+        try:
+            pos = rq_job.get_position()
+        except Exception:
+            pos = None
+        return {
+            "status": rq_job.get_status(),
+            "queue_position": pos if pos is not None else -1,
+            "result": rq_job.result if rq_job.is_finished else None,
+            "error": str(rq_job.exc_info) if rq_job.is_failed else None,
+        }
+    except Exception as e:
+        return {"status": "unknown", "error": str(e)}
 
 
 @app.get("/api/extract-v11/stream/{job_id}")

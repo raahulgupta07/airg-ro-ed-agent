@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-SQLite Database for PDF Extraction Jobs
-Tracks all processing jobs with full history
+PostgreSQL-backed Database for PDF Extraction Jobs
+(formerly SQLite — see db_engine.py for the compat shim that keeps the raw
+SQL in this file working with psycopg3.)
+
+Tracks all processing jobs with full history.
 """
 
-import sqlite3
 import json
 import logging
 from pathlib import Path
@@ -13,35 +15,71 @@ from typing import Dict, List, Optional
 import hashlib
 import bcrypt
 
+# psycopg-backed pooled connections, with a sqlite3-compatible facade so the
+# 60+ functions below didn't have to be rewritten.
+import db_engine
+from db_engine import (
+    OperationalError,
+    IntegrityError,
+    ProgrammingError,
+    DatabaseError,
+)
+
+
+# Backwards-compat: a number of call sites do `import sqlite3` and use
+# `sqlite3.OperationalError` / `sqlite3.Row` / `sqlite3.IntegrityError`. Keep
+# a tiny shim module so they continue to work.
+class _SqliteShim:
+    Row = object  # truthy sentinel — _Sqlite3CompatConnection treats any value as 'dict rows'
+    OperationalError = OperationalError
+    IntegrityError = IntegrityError
+    ProgrammingError = ProgrammingError
+    DatabaseError = DatabaseError
+
+
+sqlite3 = _SqliteShim()  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
-# Database file location
+# Legacy file path — only used by the one-shot SQLite→Postgres migrator.
 DB_PATH = Path(__file__).parent / "data" / "extraction_history.db"
 
-# Connection timeout (seconds) — higher for concurrent users
+# Connection timeout (seconds) — handled by SQLAlchemy QueuePool now.
 DB_TIMEOUT = 30.0
 
 
 def _connect():
-    """Create a database connection with proper settings for concurrent access."""
-    conn = sqlite3.connect(DB_PATH, timeout=DB_TIMEOUT)
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA synchronous = NORMAL")
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA cache_size = -64000")
-    conn.execute("PRAGMA busy_timeout = 30000")  # 30s wait on lock instead of failing
-    return conn
+    """Pooled Postgres connection wrapped in a sqlite3-compatible facade.
+
+    The facade auto-translates `?`→`%s`, `INSERT OR REPLACE`→`ON CONFLICT`,
+    `PRAGMA …` → no-op, and exposes `cursor.lastrowid` (via RETURNING id).
+    """
+    return db_engine.get_conn()
 
 def init_database():
-    """Initialize SQLite database with tables"""
+    """Initialize Postgres schema (idempotent).
 
-    # Ensure data directory exists
+    Postgres supports `CREATE TABLE IF NOT EXISTS` and `ALTER TABLE ... ADD
+    COLUMN IF NOT EXISTS` (9.6+), so we don't need the try/except dance the
+    SQLite version used. Schema is also captured in alembic/versions/ for
+    formal migrations — `init_database()` is kept so existing call sites
+    (pipeline.py, main.py) continue to work without changes.
+    """
+
+    # Ensure local data dir still exists for non-DB artefacts (PDFs, exports).
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    # Best-effort: run alembic to head if a config is present. Skipped silently
+    # otherwise so we can keep using inline DDL during dev.
+    try:
+        db_engine.run_alembic_upgrade()
+    except Exception as exc:  # pragma: no cover — non-fatal
+        logger.debug("alembic upgrade skipped: %s", exc)
 
     conn = _connect()
     cursor = conn.cursor()
 
-    # Jobs table - one row per PDF processed
+    # Jobs table — one row per PDF processed
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS jobs (
             job_id TEXT PRIMARY KEY,
@@ -61,23 +99,16 @@ def init_database():
             error_message TEXT
         )
     """)
+    conn.commit()
 
-    # Add pdf_path column if missing (migration for existing DBs)
-    try:
-        cursor.execute("ALTER TABLE jobs ADD COLUMN pdf_path TEXT")
-    except Exception:
-        pass  # Column already exists
-
-    # Add pdf_storage column (tracks where PDF lives: 'local' or 's3:{key}' or 'gcs:{key}')
-    try:
-        cursor.execute("ALTER TABLE jobs ADD COLUMN pdf_storage TEXT DEFAULT 'local'")
-    except sqlite3.OperationalError:
-        pass
+    cursor.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS pdf_path TEXT")
+    cursor.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS pdf_storage TEXT DEFAULT 'local'")
+    conn.commit()
 
     # Storage config table — S3/GCS/Azure provider configuration
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS storage_config (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             label TEXT NOT NULL,
             provider TEXT NOT NULL,
             endpoint_url TEXT,
@@ -102,7 +133,7 @@ def init_database():
     # Items table - extracted data items FORMAT 1 (6 fields - linked to jobs)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             job_id TEXT NOT NULL,
             item_name TEXT,
             customs_duty_rate REAL,
@@ -123,7 +154,7 @@ def init_database():
     # Declaration table - extracted data FORMAT 2 (16 fields - linked to jobs)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS declarations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             job_id TEXT NOT NULL,
             declaration_no TEXT,
             declaration_date TEXT,
@@ -152,7 +183,7 @@ def init_database():
     # Processing logs - detailed step logs
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS processing_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             job_id TEXT NOT NULL,
             step_number INTEGER,
             step_name TEXT,
@@ -177,7 +208,7 @@ def init_database():
     # Users table — authentication and role management
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
             display_name TEXT,
@@ -191,7 +222,7 @@ def init_database():
     # Activity logs — tracks who did what
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS activity_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             user_id INTEGER,
             username TEXT NOT NULL,
             action TEXT NOT NULL,
@@ -205,7 +236,7 @@ def init_database():
     # Page contents — stores raw text per page for search/RAG
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS page_contents (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             job_id TEXT NOT NULL,
             user_id INTEGER,
             pdf_name TEXT,
@@ -225,29 +256,22 @@ def init_database():
         )
     """)
 
-    # FTS5 virtual table for full-text search on page content
-    try:
-        cursor.execute("""
-            CREATE VIRTUAL TABLE IF NOT EXISTS page_contents_fts USING fts5(
-                content,
-                pdf_name,
-                content='page_contents',
-                content_rowid='id',
-                tokenize='porter unicode61'
-            )
-        """)
-    except Exception:
-        pass  # FTS5 already exists or not supported
+    # Postgres equivalent of FTS5: add a tsvector column + GIN index. Search
+    # falls back to ILIKE if the column is absent (see search_page_contents).
+    cursor.execute(
+        "ALTER TABLE page_contents ADD COLUMN IF NOT EXISTS "
+        "content_tsv tsvector"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_page_contents_tsv "
+        "ON page_contents USING GIN (content_tsv)"
+    )
+    conn.commit()
 
-    # Add user_id to jobs (migration for existing DBs)
-    try:
-        cursor.execute("ALTER TABLE jobs ADD COLUMN user_id INTEGER")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE jobs ADD COLUMN username TEXT")
-    except Exception:
-        pass
+    # Add user_id to jobs (idempotent in Postgres via IF NOT EXISTS)
+    cursor.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS user_id INTEGER")
+    cursor.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS username TEXT")
+    conn.commit()
 
     # Settings table — key-value store for app configuration
     cursor.execute("""
@@ -259,15 +283,14 @@ def init_database():
         )
     """)
 
-    # Keycloak migration: add keycloak_id and email to users
-    try:
-        cursor.execute("ALTER TABLE users ADD COLUMN keycloak_id TEXT UNIQUE")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE users ADD COLUMN email TEXT")
-    except Exception:
-        pass
+    # Keycloak migration: add keycloak_id and email to users (idempotent)
+    cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS keycloak_id TEXT")
+    cursor.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_keycloak_id "
+        "ON users(keycloak_id) WHERE keycloak_id IS NOT NULL"
+    )
+    cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT")
+    conn.commit()
 
     # Create default admin if no users exist
     cursor.execute("SELECT COUNT(*) FROM users")
@@ -285,7 +308,7 @@ def init_database():
     # Groups table — RBAC permission groups
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS groups (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             name TEXT UNIQUE NOT NULL,
             description TEXT DEFAULT '',
             page_agent INTEGER DEFAULT 1,
@@ -332,7 +355,7 @@ def init_database():
     # Page extractions table — v2 per-page structured data
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS page_extractions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             job_id TEXT NOT NULL,
             page_number INTEGER NOT NULL,
             page_type TEXT,
@@ -363,40 +386,22 @@ def init_database():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_page_ext_job ON page_extractions(job_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_page_ext_type ON page_extractions(page_type)")
 
-    # Add pipeline_version to jobs table
-    try:
-        cursor.execute("ALTER TABLE jobs ADD COLUMN pipeline_version TEXT DEFAULT 'v1'")
-    except Exception:
-        pass
-
-    # Add cross_validation_json to jobs table
-    try:
-        cursor.execute("ALTER TABLE jobs ADD COLUMN cross_validation_json TEXT")
-    except Exception:
-        pass
-
-    # Migration v3: add tokens + doc_type + pipeline_mode columns to jobs (idempotent)
-    try:
-        cursor.execute("ALTER TABLE jobs ADD COLUMN tokens_in INTEGER DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass  # already exists
-    try:
-        cursor.execute("ALTER TABLE jobs ADD COLUMN tokens_out INTEGER DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        cursor.execute("ALTER TABLE jobs ADD COLUMN document_type TEXT")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        cursor.execute("ALTER TABLE jobs ADD COLUMN pipeline_mode TEXT")
-    except sqlite3.OperationalError:
-        pass
+    # Idempotent jobs-table column adds (Postgres native IF NOT EXISTS)
+    for stmt in (
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS pipeline_version TEXT DEFAULT 'v1'",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS cross_validation_json TEXT",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS tokens_in INTEGER DEFAULT 0",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS tokens_out INTEGER DEFAULT 0",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS document_type TEXT",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS pipeline_mode TEXT",
+    ):
+        cursor.execute(stmt)
+    conn.commit()
 
     # Importer profiles — learned patterns per importer
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS importer_profiles (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             importer_name TEXT NOT NULL,
             importer_name_normalized TEXT NOT NULL,
             currency TEXT,
@@ -411,21 +416,19 @@ def init_database():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    # Add fee_baseline_json column if not exists (migration-safe)
-    try:
-        cursor.execute("ALTER TABLE importer_profiles ADD COLUMN fee_baseline_json TEXT DEFAULT NULL")
-    except Exception:
-        pass  # Column already exists
-
-    try:
-        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_importer_normalized ON importer_profiles(importer_name_normalized)")
-    except Exception:
-        pass
+    cursor.execute(
+        "ALTER TABLE importer_profiles ADD COLUMN IF NOT EXISTS fee_baseline_json TEXT"
+    )
+    cursor.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_importer_normalized "
+        "ON importer_profiles(importer_name_normalized)"
+    )
+    conn.commit()
 
     # Field accuracy tracker — which fields fail per importer
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS field_accuracy (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             importer_name_normalized TEXT NOT NULL,
             field_key TEXT NOT NULL,
             total_extractions INTEGER DEFAULT 0,
@@ -438,7 +441,7 @@ def init_database():
     # Value audit trail — tracks every change to an extracted value
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS value_audit (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             job_id TEXT NOT NULL,
             table_key TEXT NOT NULL,
             field_key TEXT NOT NULL,
@@ -475,69 +478,32 @@ def init_database():
     if stale:
         logger.info(f"Cleaned up {stale} stale PROCESSING job(s)")
 
-    # Add new item columns if not exist (for existing DBs)
-    try:
-        cursor.execute("ALTER TABLE items ADD COLUMN hs_code TEXT")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE items ADD COLUMN origin_country TEXT")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE items ADD COLUMN customs_value_mmk REAL")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE items ADD COLUMN cif_unit_price TEXT")
-    except Exception:
-        pass
-    # V11 Review UI: soft-delete + display order for items table
-    try:
-        cursor.execute("ALTER TABLE items ADD COLUMN is_deleted INTEGER DEFAULT 0")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE items ADD COLUMN display_order INTEGER DEFAULT 0")
-    except Exception:
-        pass
-    try:
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS idx_items_job_order "
-            "ON items(job_id, is_deleted, display_order, id)"
-        )
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE declarations ADD COLUMN invoice_number_customs_declaration TEXT")
-    except Exception:
-        pass
-    # CUSDEC-1 / handwritten-doc support: format detection + sanity + cross-val + verifier flags
-    try:
-        cursor.execute("ALTER TABLE declarations ADD COLUMN document_format TEXT")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE declarations ADD COLUMN sanity_flags_json TEXT")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE declarations ADD COLUMN cross_val_passed INTEGER")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE declarations ADD COLUMN verified INTEGER")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE declarations ADD COLUMN invoice_number_commercial_invoice TEXT")
-    except Exception:
-        pass
+    # Idempotent column adds (Postgres native IF NOT EXISTS)
+    for stmt in (
+        "ALTER TABLE items ADD COLUMN IF NOT EXISTS hs_code TEXT",
+        "ALTER TABLE items ADD COLUMN IF NOT EXISTS origin_country TEXT",
+        "ALTER TABLE items ADD COLUMN IF NOT EXISTS customs_value_mmk REAL",
+        "ALTER TABLE items ADD COLUMN IF NOT EXISTS cif_unit_price TEXT",
+        # V11 Review UI: soft-delete + display order for items table
+        "ALTER TABLE items ADD COLUMN IF NOT EXISTS is_deleted INTEGER DEFAULT 0",
+        "ALTER TABLE items ADD COLUMN IF NOT EXISTS display_order INTEGER DEFAULT 0",
+        "CREATE INDEX IF NOT EXISTS idx_items_job_order "
+        "ON items(job_id, is_deleted, display_order, id)",
+        "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS invoice_number_customs_declaration TEXT",
+        # CUSDEC-1 / handwritten-doc support
+        "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS document_format TEXT",
+        "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS sanity_flags_json TEXT",
+        "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS cross_val_passed INTEGER",
+        "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS verified INTEGER",
+        "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS invoice_number_commercial_invoice TEXT",
+    ):
+        cursor.execute(stmt)
+    conn.commit()
 
     # Corrections table — stores user corrections for self-learning
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS corrections (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             job_id TEXT NOT NULL,
             profile_id INTEGER DEFAULT 1,
             table_key TEXT NOT NULL,
@@ -557,7 +523,7 @@ def init_database():
     # Learning events — audit trail for auto-generated rules
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS learning_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             profile_id INTEGER DEFAULT 1,
             event_type TEXT NOT NULL,
             event_data TEXT,
@@ -575,7 +541,7 @@ def init_database():
     # ─── Multi-LDAP support ───────────────────────────────
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS ldap_configs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         label TEXT NOT NULL,
         host TEXT NOT NULL,
         port INTEGER NOT NULL,
@@ -596,68 +562,42 @@ def init_database():
     )
     """)
 
-    # Migration: add user columns (idempotent)
-    for col_sql in (
-        "ALTER TABLE users ADD COLUMN default_ldap_id INTEGER",
-        "ALTER TABLE users ADD COLUMN ldap_dn TEXT",
+    # User + activity_logs + jobs idempotent column adds
+    for stmt in (
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS default_ldap_id INTEGER",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS ldap_dn TEXT",
+        "ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS ip_address TEXT",
+        "ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS user_agent TEXT",
+        "ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS auth_source TEXT",
+        "ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS status TEXT",
+        "ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS duration_ms INTEGER",
+        "ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS resource TEXT",
+        "ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS severity TEXT DEFAULT 'info'",
+        "ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS error_message TEXT",
+        "ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS payload_json TEXT",
+        # ── Review/Approve workflow (V11 Maestro) ──
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS review_status TEXT DEFAULT 'pending_review'",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS reviewed_by TEXT",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS reviewed_at TEXT",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS review_notes TEXT",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS edits_count INTEGER DEFAULT 0",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS parent_job_id TEXT",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS field_bboxes_json TEXT",
     ):
-        try:
-            cursor.execute(col_sql)
-        except sqlite3.OperationalError:
-            pass
-
-    # Activity log v2 enhancements (idempotent)
-    # Note: real table is `activity_logs` with columns username/detail/created_at;
-    # ip_address already exists. Remaining ALTERs add v2 enrichment fields.
-    for col_sql in (
-        "ALTER TABLE activity_logs ADD COLUMN ip_address TEXT",
-        "ALTER TABLE activity_logs ADD COLUMN user_agent TEXT",
-        "ALTER TABLE activity_logs ADD COLUMN auth_source TEXT",
-        "ALTER TABLE activity_logs ADD COLUMN status TEXT",
-        "ALTER TABLE activity_logs ADD COLUMN duration_ms INTEGER",
-        "ALTER TABLE activity_logs ADD COLUMN resource TEXT",
-        "ALTER TABLE activity_logs ADD COLUMN severity TEXT DEFAULT 'info'",
-        "ALTER TABLE activity_logs ADD COLUMN error_message TEXT",
-        "ALTER TABLE activity_logs ADD COLUMN payload_json TEXT",
-    ):
-        try:
-            cursor.execute(col_sql)
-        except sqlite3.OperationalError:
-            pass
-
-    # ─── Review/Approve workflow (V11 Maestro) ───────────────────
-    # Add review columns to jobs table (idempotent: check PRAGMA before ALTER)
-    cursor.execute("PRAGMA table_info(jobs)")
-    _existing_job_cols = {r[1] for r in cursor.fetchall()}
-    _review_cols = (
-        ("review_status", "TEXT DEFAULT 'pending_review'"),
-        ("reviewed_by", "TEXT"),
-        ("reviewed_at", "TEXT"),
-        ("review_notes", "TEXT"),
-        ("edits_count", "INTEGER DEFAULT 0"),
-        ("parent_job_id", "TEXT"),
-        ("field_bboxes_json", "TEXT"),
-    )
-    for col_name, col_def in _review_cols:
-        if col_name not in _existing_job_cols:
-            try:
-                cursor.execute(f"ALTER TABLE jobs ADD COLUMN {col_name} {col_def}")
-            except sqlite3.OperationalError:
-                pass
+        cursor.execute(stmt)
+    conn.commit()
 
     # Backfill review_status='pending_review' for existing COMPLETED jobs
-    try:
-        cursor.execute("""
-            UPDATE jobs SET review_status = 'pending_review'
-            WHERE status = 'COMPLETED' AND (review_status IS NULL OR review_status = '')
-        """)
-    except sqlite3.OperationalError:
-        pass
+    cursor.execute("""
+        UPDATE jobs SET review_status = 'pending_review'
+        WHERE status = 'COMPLETED' AND (review_status IS NULL OR review_status = '')
+    """)
+    conn.commit()
 
     # field_edits table — audit trail per field edit (review workflow)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS field_edits (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             job_id TEXT NOT NULL,
             entity_type TEXT NOT NULL,
             entity_index INTEGER DEFAULT 0,
@@ -665,7 +605,7 @@ def init_database():
             original_value TEXT,
             corrected_value TEXT,
             edited_by TEXT,
-            edited_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            edited_at TEXT DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS'),
             pdf_page_ref INTEGER,
             reason TEXT
         )
@@ -675,7 +615,7 @@ def init_database():
     conn.commit()
     conn.close()
 
-    print(f"✅ Database initialized: {DB_PATH}")
+    print(f"✅ Database initialized (postgres) — DSN: {db_engine.DATABASE_URL}")
 
 
 def insert_activity_log_v2(timestamp, user, action, details=None,
@@ -744,7 +684,7 @@ def list_activity_log_v2(limit=100, offset=0, action=None, status=None,
         where.append("created_at <= ?")
         params.append(date_to)
     if search:
-        where.append("(detail LIKE ? OR resource LIKE ? OR error_message LIKE ? OR username LIKE ?)")
+        where.append("(detail ILIKE ? OR resource ILIKE ? OR error_message ILIKE ? OR username ILIKE ?)")
         s = f"%{search}%"
         params += [s, s, s, s]
     sql = ("SELECT id, username AS user, action, detail AS details, "
@@ -794,7 +734,7 @@ def count_activity_log_v2(**filters):
         where.append("created_at <= ?")
         params.append(filters["date_to"])
     if filters.get("search"):
-        where.append("(detail LIKE ? OR resource LIKE ? OR error_message LIKE ? OR username LIKE ?)")
+        where.append("(detail ILIKE ? OR resource ILIKE ? OR error_message ILIKE ? OR username ILIKE ?)")
         s = f"%{filters['search']}%"
         params += [s, s, s, s]
     sql = "SELECT COUNT(*) FROM activity_logs"
@@ -1481,15 +1421,18 @@ def save_page_contents(job_id: str, pdf_name: str, pages: List[Dict], user_id: i
             page.get('filter_reason', '')
         ))
 
-        # Update FTS index
+        # Postgres full-text: maintain tsvector column on the same row.
         row_id = cursor.lastrowid
-        try:
-            cursor.execute("""
-                INSERT INTO page_contents_fts (rowid, content, pdf_name)
-                VALUES (?, ?, ?)
-            """, (row_id, content, pdf_name))
-        except Exception:
-            pass
+        if row_id is not None:
+            try:
+                cursor.execute(
+                    "UPDATE page_contents SET content_tsv = "
+                    "to_tsvector('english', COALESCE(content, '') || ' ' || COALESCE(pdf_name, '')) "
+                    "WHERE id = ?",
+                    (row_id,),
+                )
+            except Exception:
+                pass
 
     conn.commit()
     conn.close()
@@ -1504,15 +1447,19 @@ def search_page_contents(query: str, user_id: int = None, pdf_name: str = None,
     cursor = conn.cursor()
 
     if query and query.strip():
-        # FTS5 search
-        fts_query = ' OR '.join(query.strip().split())
+        # Postgres full-text search via tsvector column. ts_headline emulates
+        # SQLite FTS5 highlight() with **bold** delimiters.
+        tsq_terms = ' | '.join(query.strip().split())
         sql = """
-            SELECT pc.*, highlight(page_contents_fts, 0, '**', '**') as snippet
-            FROM page_contents_fts fts
-            JOIN page_contents pc ON pc.id = fts.rowid
-            WHERE page_contents_fts MATCH ?
+            SELECT pc.*,
+                   ts_headline('english', COALESCE(pc.content, ''),
+                               to_tsquery('english', ?),
+                               'StartSel=**, StopSel=**, MaxFragments=1, MaxWords=20, MinWords=5'
+                              ) AS snippet
+            FROM page_contents pc
+            WHERE pc.content_tsv @@ to_tsquery('english', ?)
         """
-        params = [fts_query]
+        params = [tsq_terms, tsq_terms]
     else:
         sql = "SELECT pc.*, '' as snippet FROM page_contents pc WHERE 1=1"
         params = []

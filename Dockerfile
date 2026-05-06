@@ -28,6 +28,11 @@ RUN pip install --no-cache-dir --timeout 300 -r requirements.txt
 # Backend code — root files
 COPY backend/*.py /app/
 
+# Alembic config + migrations + one-shot SQLite migration script
+COPY backend/alembic.ini /app/alembic.ini
+COPY backend/alembic/ /app/alembic/
+COPY backend/scripts/ /app/scripts/
+
 # Backend code — pipeline
 COPY backend/pipeline/ /app/pipeline/
 
@@ -58,6 +63,9 @@ COPY backend/v11/ /app/v11/
 
 # Backend code — storage abstraction (local + S3)
 COPY backend/storage/ /app/storage/
+
+# Backend code — RQ workers (queue + tasks)
+COPY backend/jobs/ /app/jobs/
 
 # Frontend from stage 1
 COPY --from=frontend-build /frontend/build/ /app/frontend-build/

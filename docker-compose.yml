@@ -1,34 +1,92 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ro-ed-postgres
+    environment:
+      POSTGRES_DB: ro_ed
+      POSTGRES_USER: ro_ed
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-ro_ed_dev_pass}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ro_ed"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    mem_limit: 2g
+
+  redis:
+    image: redis:7-alpine
+    container_name: ro-ed-redis
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    mem_limit: 768m
+
   app:
     build:
       context: .
       dockerfile: Dockerfile
+    image: ro-ed-lang-app:latest
     container_name: ro-ed-api
     ports:
       - "9000:9000"
-    env_file:
-      - ./.env
+    env_file: ./.env
     environment:
-      - PYTHONUNBUFFERED=1
+      PYTHONUNBUFFERED: "1"
+      DATABASE_URL: postgresql+psycopg://ro_ed:${PG_PASSWORD:-ro_ed_dev_pass}@postgres:5432/ro_ed
+      REDIS_URL: redis://redis:6379/0
     volumes:
       - app-data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
-    mem_limit: 12g
+    mem_limit: 4g
     cpus: 4
-    deploy:
-      resources:
-        limits:
-          cpus: '4'
-          memory: 12G
-        reservations:
-          cpus: '2'
-          memory: 2G
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "9000",
+              "--workers", "4",
+              "--limit-concurrency", "50",
+              "--timeout-keep-alive", "300"]
+
+  worker:
+    image: ro-ed-lang-app:latest
+    env_file: ./.env
+    environment:
+      PYTHONUNBUFFERED: "1"
+      DATABASE_URL: postgresql+psycopg://ro_ed:${PG_PASSWORD:-ro_ed_dev_pass}@postgres:5432/ro_ed
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - app-data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      app:
+        condition: service_started
+    restart: unless-stopped
+    mem_limit: 8g
+    cpus: 4
+    command: ["python", "/app/worker.py"]
+    deploy:
+      replicas: 2
 
 volumes:
+  pg-data:
+  redis-data:
   app-data:
-    driver: local

@@ -32,3 +32,12 @@ cryptography>=42.0
 
 # Storage providers
 boto3>=1.35.0
+
+# Background job queue
+rq>=1.16.0
+redis>=5.0.0
+
+# PostgreSQL backend (concurrent writes for 10+ users)
+psycopg[binary]>=3.2.0
+SQLAlchemy[asyncio]>=2.0.0
+alembic>=1.13.0

@@ -482,41 +482,127 @@
   }
 
   // ── HTTP pipeline path (V10/V11 — no WebSocket yet) ──
+  // V11 is now QUEUE-BASED: /api/extract-v11 returns 202 + {job_id, stream_id}
+  // and we poll /api/extract-v11/status/{stream_id} until finished/failed.
+  // V10 (and others) keep the old synchronous flow.
   async function runHttpPipeline(filesToProcess: FileEntry[]) {
     for (const entry of filesToProcess) {
       const queueIdx = queue.indexOf(entry);
       if (queueIdx < 0) continue;
-      // For V11, allocate a job id up-front and start the SSE stream so the
-      // AgentTerminal renders router decisions live while the HTTP call runs.
       const preAllocId = selectedPipeline === 'v11' ? makeJobId() : '';
       queue[queueIdx] = {
         ...entry,
         status: 'processing',
-        stepLabel: `${selectedPipeline.toUpperCase()} extracting...`,
-        progress: 30,
+        stepLabel: selectedPipeline === 'v11'
+          ? 'QUEUED — waiting for worker...'
+          : `${selectedPipeline.toUpperCase()} extracting...`,
+        progress: selectedPipeline === 'v11' ? 5 : 30,
         jobId: preAllocId || entry.jobId,
       };
       queue = [...queue];
       selectedIndex = queueIdx;
       if (preAllocId) streamingJobId = preAllocId;
       try {
-        const job = await runExtract(entry.file, preAllocId || undefined);
-        const jobId = job?.job_id || preAllocId || `${selectedPipeline}-${Date.now()}`;
-        jobResults[jobId] = job;
-        jobResults = { ...jobResults };
-        queue[queueIdx] = {
-          ...queue[queueIdx],
-          status: 'done',
-          jobId,
-          accuracy: job?.accuracy_percent || 0,
-          itemsCount: job?.items?.length || 0,
-          cost: job?.cost_usd || 0,
-          duration: job?.processing_time_seconds || 0,
-          progress: 100,
-          stepLabel: '',
-        };
-        queue = [...queue];
-        viewMode = 'results';
+        // Submit. V11 returns 202 + {job_id, stream_id}; V10 returns full result.
+        const submitRes = await runExtract(entry.file, preAllocId || undefined);
+
+        if (selectedPipeline === 'v11') {
+          // ── Queue-based path: poll status until terminal state ──
+          const streamId: string = submitRes?.stream_id || preAllocId;
+          const dbJobId: string = submitRes?.job_id || preAllocId;
+
+          let pollAttempts = 0;
+          const MAX_POLL = 600;  // 600 × 3s = 30 min ceiling
+          let terminal = false;
+
+          while (pollAttempts < MAX_POLL) {
+            await new Promise(r => setTimeout(r, 3000));
+            pollAttempts++;
+            try {
+              const headers: Record<string, string> = {};
+              if (auth.token) headers['Authorization'] = `Bearer ${auth.token}`;
+              const r = await fetch(`/api/extract-v11/status/${streamId}`, { headers });
+              const txt = await r.text();
+              const statusRes = JSON.parse(txt);
+
+              const sLabel = statusRes.status === 'queued'
+                ? `QUEUED (pos: ${statusRes.queue_position ?? '?'})`
+                : statusRes.status === 'started' ? 'EXTRACTING...'
+                : statusRes.status === 'finished' ? 'DONE'
+                : statusRes.status === 'failed' ? 'FAILED'
+                : (statusRes.status?.toUpperCase?.() || 'PROCESSING');
+              const sProgress = statusRes.status === 'started' ? 50
+                : statusRes.status === 'finished' ? 95
+                : statusRes.status === 'failed' ? 100
+                : 10;
+              queue[queueIdx] = { ...queue[queueIdx], stepLabel: sLabel, progress: sProgress };
+              queue = [...queue];
+
+              if (statusRes.status === 'finished') {
+                // Fetch the full job from DB.
+                const job = await api.getJob(dbJobId);
+                jobResults[dbJobId] = job;
+                jobResults = { ...jobResults };
+                queue[queueIdx] = {
+                  ...queue[queueIdx],
+                  status: 'done',
+                  jobId: dbJobId,
+                  accuracy: job?.accuracy_percent || 0,
+                  itemsCount: job?.items?.length || 0,
+                  cost: job?.cost_usd || 0,
+                  duration: job?.processing_time_seconds || 0,
+                  progress: 100,
+                  stepLabel: '',
+                };
+                queue = [...queue];
+                viewMode = 'results';
+                terminal = true;
+                break;
+              } else if (statusRes.status === 'failed') {
+                queue[queueIdx] = {
+                  ...queue[queueIdx],
+                  status: 'error',
+                  progress: 100,
+                  stepLabel: (statusRes.error || 'WORKER FAILED').slice(0, 80),
+                };
+                queue = [...queue];
+                terminal = true;
+                break;
+              }
+            } catch {
+              // network blip — keep polling
+            }
+          }
+
+          if (!terminal && pollAttempts >= MAX_POLL) {
+            queue[queueIdx] = {
+              ...queue[queueIdx],
+              status: 'error',
+              progress: 100,
+              stepLabel: 'TIMEOUT — check /history',
+            };
+            queue = [...queue];
+          }
+        } else {
+          // ── Legacy sync path (V10 etc.): result returned directly ──
+          const job = submitRes;
+          const jobId = job?.job_id || preAllocId || `${selectedPipeline}-${Date.now()}`;
+          jobResults[jobId] = job;
+          jobResults = { ...jobResults };
+          queue[queueIdx] = {
+            ...queue[queueIdx],
+            status: 'done',
+            jobId,
+            accuracy: job?.accuracy_percent || 0,
+            itemsCount: job?.items?.length || 0,
+            cost: job?.cost_usd || 0,
+            duration: job?.processing_time_seconds || 0,
+            progress: 100,
+            stepLabel: '',
+          };
+          queue = [...queue];
+          viewMode = 'results';
+        }
       } catch (e: any) {
         queue[queueIdx] = {
           ...queue[queueIdx],
