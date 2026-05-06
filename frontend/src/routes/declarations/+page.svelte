@@ -18,6 +18,8 @@
     { key: 'declaration_date', label: 'Date' },
     { key: 'importer_name', label: 'Importer' },
     { key: 'consignor_name', label: 'Consignor' },
+    { key: 'invoice_number_customs_declaration', label: 'Invoice Number (Customs Declaration)' },
+    { key: 'invoice_number_commercial_invoice', label: 'Invoice Number (Commercial Invoice)' },
     { key: 'invoice_number', label: 'Invoice Number' },
     { key: 'invoice_price', label: 'Invoice Price', align: 'right' as const },
     { key: 'currency', label: 'Currency' },
@@ -30,6 +32,8 @@
     { key: 'security_fee_sf', label: 'Security', align: 'right' as const },
     { key: 'maccs_service_fee_mf', label: 'MACCS', align: 'right' as const },
     { key: 'exemption_reduction', label: 'Exemption/Reduction', align: 'right' as const },
+    { key: 'document_format', label: 'Format' },
+    { key: 'verified_display', label: 'Verified' },
     { key: 'created_at', label: 'Processed' },
   ];
 
@@ -47,6 +51,8 @@
       security_fee_sf: fmtNum(d.security_fee_sf),
       maccs_service_fee_mf: fmtNum(d.maccs_service_fee_mf),
       exemption_reduction: fmtNum(d.exemption_reduction),
+      document_format: d.document_format || '—',
+      verified_display: d.verified === false ? '✗' : d.verified === true ? '✓' : '—',
     }));
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
@@ -90,6 +96,18 @@
     loading = false;
   });
 </script>
+
+<div class="w-full max-w-6xl mx-auto mb-4 p-4 rounded border-2 border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30">
+  <div class="flex items-start gap-3 flex-wrap">
+    <span class="text-2xl">📋</span>
+    <div class="flex-1 min-w-[200px]">
+      <div class="font-bold text-base">All Declarations</div>
+      <div class="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5">
+        Header data across every job — declaration no, importer, consignor, customs value, all fees.
+      </div>
+    </div>
+  </div>
+</div>
 
 <ChapterHeading
   icon="receipt_long"

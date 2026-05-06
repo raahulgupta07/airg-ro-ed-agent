@@ -174,9 +174,19 @@ AGENT 4 — Consignor (Name):
   Search for: consignor, exporter, shipper, seller
   Return the full company name.
 
-AGENT 5 — Invoice Number:
-  Search for: invoice number, invoice no, commercial invoice
-  Include any prefix (A-, B-, etc.)
+AGENT 5a — Invoice Number (Customs Declaration):
+  Search the CUSTOMS DECLARATION / RELEASE ORDER pages.
+  Look for the "Invoice" label (NOT "Invoice price"). The value typically has a section code prefix
+  like "A - " (where A = After release order type) followed by the invoice ID.
+  Return EXACTLY as printed, including the prefix and dashes (e.g. "A - AM-PD-001/2025", "A - IV6612/0001").
+  This is the customs-form invoice reference.
+
+AGENT 5b — Invoice Number (Commercial Invoice):
+  Search the COMMERCIAL INVOICE page (separate from customs declaration).
+  Look for the field labeled "Invoice number", "INVOICE No", or "number" at the top of the invoice.
+  Return the bare invoice ID WITHOUT any section-code prefix (e.g. "AM-PD-001/2025", "IV6612/0001").
+  This is the supplier's invoice reference for vendor / accounting systems.
+  If no separate commercial invoice page exists, return the customs invoice value with prefix stripped.
 
 AGENT 6 — Invoice Price:
   Search for: invoice price, total invoice amount, invoice value
@@ -242,7 +252,9 @@ AGENT 16 — Currency 2:
   "Declaration Date": <value>,
   "Importer (Name)": <value>,
   "Consignor (Name)": <value>,
-  "Invoice Number": <value>,
+  "Invoice Number (Customs Declaration)": <value with prefix>,
+  "Invoice Number (Commercial Invoice)": <value without prefix>,
+  "Invoice Number": <commercial invoice value, same as above without prefix>,
   "Invoice Price": <numeric>,
   "Currency": <value>,
   "Currency 2": <value>,
@@ -262,6 +274,106 @@ RULES:
 - Taxes and fees: read from tax/fee tables. Match EACH value to its SPECIFIC labeled row.
   CRITICAL: CT, AT, SF, and MF are 4 SEPARATE line items in the fee table. Do NOT shift values between them.
   If a fee row exists, read its exact amount. If a fee row does NOT exist, return 0 for that field.
+- Return ONLY valid JSON.
+
+## PAGE DATA:
+"""
+
+
+# CUSDEC-1 specialized declaration prompt (old/handwritten Myanmar customs forms).
+CUSDEC1_DECLARATION_PROMPT = """You are the DECLARATION MASTER AGENT for an OLD-STYLE / HANDWRITTEN Myanmar CUSDEC-1 customs form.
+You have 16 column agents, each responsible for finding ONE field. Many values may be HANDWRITTEN — read carefully.
+
+Search ALL pages and fill EVERY field. Return ONLY valid JSON.
+
+## YOUR 16 COLUMN AGENTS:
+
+AGENT 1 — Declaration No:
+  Look for MA0XXXXXXXXX or MD-XXXXXX pattern (e.g. MA0241014920, MD-010642). Could be in
+  'Registration No', 'ID No', 'Declaration No', or top-of-form ID field. Do NOT confuse with
+  internal registration counter numbers (e.g. plain 6-digit values like 100105). Prefer the
+  MA0 or MD pattern.
+
+AGENT 2 — Declaration Date:
+  Search for: declaration date, entry date. Convert to YYYY-MM-DD.
+
+AGENT 3 — Importer (Name):
+  FULL company name, not the code/ID.
+
+AGENT 4 — Consignor (Name):
+  Full company name (consignor / exporter / shipper / seller).
+
+AGENT 5a — Invoice Number (Customs Declaration):
+  Look for the "Invoice" label on the customs form. Section-code prefix like "A - " is OK to keep.
+  Read handwritten "Invoic" / "Invoice" carefully — it is NOT "IDVOPC" or similar OCR-style misreads.
+  Return EXACTLY as printed.
+
+AGENT 5b — Invoice Number (Commercial Invoice):
+  Read the commercial invoice page. Common patterns: AM-PD-XXX/YYYY, IVxxxx/xxxx, IDVxxxxx, etc.
+  Strip section-code prefix (e.g. "A - "). If the customs reading shows "IDVOPC-AM-PD-010/2024",
+  the real commercial invoice is "AM-PD-010/2024" — strip the OCR/prefix garbage.
+
+AGENT 6 — Invoice Price:
+  Total invoice amount in FOREIGN currency (THB / USD / EUR / etc.), NOT MMK.
+
+AGENT 7 — Currency:
+  Read the Currency Code field carefully. THB is common for Thailand-origin documents.
+  Do NOT assume USD. Use the 3-letter code printed on the form.
+
+AGENT 8 — Exchange Rate:
+  Decimal value, typically in range 1.5 to 7000. NOT a 5-digit integer like 68000.
+  THB usually 50-70. USD usually 1500-6000. Watch for handwritten decimal points
+  (e.g. "56.9266" can be misread as "569266" or "56 9266"). Pick the plausible decimal value.
+
+AGENT 9 — Total Customs Value:
+  Total CIF / customs value in MMK as printed.
+
+AGENT 10 — Import/Export Customs Duty:
+  Customs duty amount. 0 if exempt / FREE.
+
+AGENT 11 — Commercial Tax (CT):
+  Old CUSDEC-1 forms often have NO explicit AT/SF/MF rows. If the label is absent, return 0.
+
+AGENT 12 — Advance Income Tax (AT):
+  Old form has NO AT row in many cases — return 0 if labels absent.
+
+AGENT 13 — Security Fee (SF):
+  Old form has NO SF row in many cases — return 0 if labels absent.
+
+AGENT 14 — MACCS Service Fee (MF):
+  Old form has NO MF row in many cases — return 0 if labels absent.
+
+AGENT 15 — Exemption/Reduction:
+  Return 0 if none.
+
+AGENT 16 — Currency 2:
+  Same as Currency (Agent 7).
+
+## OUTPUT FORMAT:
+{
+  "Declaration No": <value>,
+  "Declaration Date": <value>,
+  "Importer (Name)": <value>,
+  "Consignor (Name)": <value>,
+  "Invoice Number (Customs Declaration)": <value with prefix>,
+  "Invoice Number (Commercial Invoice)": <value without prefix>,
+  "Invoice Number": <commercial invoice value, same as above without prefix>,
+  "Invoice Price": <numeric>,
+  "Currency": <value>,
+  "Currency 2": <value>,
+  "Exchange Rate": <numeric>,
+  "Total Customs Value": <numeric>,
+  "Import/Export Customs Duty": <numeric>,
+  "Commercial Tax (CT)": <numeric>,
+  "Advance Income Tax (AT)": <numeric>,
+  "Security Fee (SF)": <numeric>,
+  "MACCS Service Fee (MF)": <numeric>,
+  "Exemption/Reduction": <numeric>
+}
+
+RULES:
+- Old form has NO AT/SF/MF rows in most cases — return 0 if labels absent.
+- Read EXACT values. Do NOT calculate or guess.
 - Return ONLY valid JSON.
 
 ## PAGE DATA:
@@ -416,6 +528,7 @@ Return the COMPLETE items array with ALL fields filled:
 
 DECL_REQUIRED = [
     "Declaration No", "Declaration Date", "Importer (Name)", "Consignor (Name)",
+    "Invoice Number (Customs Declaration)", "Invoice Number (Commercial Invoice)",
     "Invoice Number", "Invoice Price", "Currency", "Exchange Rate",
     "Total Customs Value", "Import/Export Customs Duty", "Commercial Tax (CT)",
     "Advance Income Tax (AT)",
@@ -1015,6 +1128,8 @@ DECL_SCHEMA = {
             "Declaration Date": {"type": ["string", "null"]},
             "Importer (Name)": {"type": ["string", "null"]},
             "Consignor (Name)": {"type": ["string", "null"]},
+            "Invoice Number (Customs Declaration)": {"type": ["string", "null"]},
+            "Invoice Number (Commercial Invoice)": {"type": ["string", "null"]},
             "Invoice Number": {"type": ["string", "null"]},
             "Invoice Price": {"type": ["number", "null"]},
             "Currency": {"type": ["string", "null"]},
@@ -1029,6 +1144,7 @@ DECL_SCHEMA = {
             "Exemption/Reduction": {"type": ["number", "null"]},
         },
         "required": ["Declaration No", "Declaration Date", "Importer (Name)", "Consignor (Name)",
+                      "Invoice Number (Customs Declaration)", "Invoice Number (Commercial Invoice)",
                       "Invoice Number", "Invoice Price", "Currency", "Exchange Rate",
                       "Total Customs Value", "Import/Export Customs Duty", "Commercial Tax (CT)",
                       "Advance Income Tax (AT)", "Security Fee (SF)", "MACCS Service Fee (MF)",
@@ -1086,7 +1202,7 @@ def _cross_validate(declaration: Dict, items: List[Dict]) -> List[str]:
 
             if item_cv_sum > 0:
                 ratio = item_cv_sum / total_cv
-                if ratio < 0.8 or ratio > 1.2:
+                if ratio < 0.95 or ratio > 1.05:
                     warnings.append(f"Items customs value sum ({item_cv_sum:,.0f}) differs from declaration ({total_cv:,.0f}) by {abs(1-ratio)*100:.0f}%")
                 else:
                     print(f"    Cross-check: items sum {item_cv_sum:,.0f} vs declaration {total_cv:,.0f} — OK ({ratio:.2f}x)")
@@ -1115,6 +1231,583 @@ def _cross_validate(declaration: Dict, items: List[Dict]) -> List[str]:
     return warnings
 
 
+# ═══════════════════════════════════════════════════════════════
+# FORMAT DETECTION + SANITY VALIDATORS + NORMALIZERS
+# ═══════════════════════════════════════════════════════════════
+
+_DECL_MACCS_RE = re.compile(r'^\d{12}$')
+_DECL_CUSDEC1_MA_RE = re.compile(r'^MA0\d{9,10}$')
+_DECL_CUSDEC1_MD_RE = re.compile(r'^MD-?\d{6,8}$')
+
+
+def detect_format(page_results: List[Dict]) -> str:
+    """Multi-signal format classifier. Returns 'MACCS' or 'CUSDEC1'.
+
+    Permanent fix for D20-class misroute: weighted scoring across multiple
+    signals (decl no patterns, layout markers, importer history, page count).
+    """
+    if not page_results:
+        return "MACCS"
+
+    # Build blob from first 3 pages
+    blob = ""
+    importer_hint = None
+    for pr in page_results[:3]:
+        if pr.get("status") != "ok":
+            continue
+        parsed = pr.get("parsed", {}) or {}
+        fields = parsed.get("fields", {}) or {}
+        for k, v in fields.items():
+            blob += f" {k}: {v} "
+            kl = str(k).lower()
+            if "importer" in kl and not importer_hint and v:
+                importer_hint = str(v)[:80]
+        for t in parsed.get("tables", []) or []:
+            for h in t.get("headers", []) or []:
+                blob += f" {h} "
+            for row in t.get("rows", []) or []:
+                blob += " ".join(str(c) for c in row) + " "
+        for a in parsed.get("amounts", []) or []:
+            blob += f" {a.get('label','')} "
+        rt = parsed.get("raw_text") or pr.get("raw_text") or ""
+        if rt:
+            blob += " " + str(rt) + " "
+
+    blob_u = blob.upper()
+    score_maccs = 0
+    score_cusdec1 = 0
+    signals = []
+
+    # ── Strong layout markers ──
+    if "RELEASE ORDER NOTIFICATION" in blob_u:
+        score_maccs += 5
+        signals.append("layout:release_order_notification(MACCS+5)")
+    if "MACCS" in blob_u:
+        score_maccs += 3
+        signals.append("layout:MACCS_token(+3)")
+    if "CUSTOMS DEPARTMENT" in blob_u and "IMPORT DECLARATION" in blob_u:
+        score_cusdec1 += 5
+        signals.append("layout:customs_dept+import_decl(CUSDEC1+5)")
+    if "CUSDEC" in blob_u:
+        score_cusdec1 += 4
+        signals.append("layout:CUSDEC_token(+4)")
+
+    # ── Decl no pattern matches ──
+    has_md = bool(re.search(r'\bMD-?\d{6,8}\b', blob_u))
+    has_ma0 = bool(re.search(r'\bMA0\d{9,10}\b', blob))
+    has_maccs_12 = bool(re.search(r'\b\d{12}\b', blob))
+    if has_md:
+        score_cusdec1 += 5
+        signals.append("decl_no:MD-XXXXXX(+5)")
+    if has_ma0:
+        score_cusdec1 += 5
+        signals.append("decl_no:MA0XXXXXXXXX(+5)")
+    if has_maccs_12:
+        score_maccs += 4
+        signals.append("decl_no:12-digit(+4)")
+
+    # ── Field-level decl no check ──
+    for pr in page_results[:3]:
+        if pr.get("status") != "ok":
+            continue
+        parsed = pr.get("parsed", {}) or {}
+        for k, v in (parsed.get("fields", {}) or {}).items():
+            sv = str(v).strip().upper().replace(" ", "")
+            if _DECL_CUSDEC1_MA_RE.match(sv) or _DECL_CUSDEC1_MD_RE.match(sv):
+                score_cusdec1 += 3
+                signals.append("field_match:cusdec1_pattern(+3)")
+                break
+            if _DECL_MACCS_RE.match(sv):
+                score_maccs += 3
+                signals.append("field_match:maccs_pattern(+3)")
+                break
+
+    # ── Importer history baseline ──
+    if importer_hint:
+        try:
+            import database
+            if hasattr(database, 'get_recent_declarations_by_importer'):
+                past = database.get_recent_declarations_by_importer(importer_hint, limit=10) or []
+                fmt_counts = {"CUSDEC1": 0, "MACCS": 0}
+                for p in past:
+                    pf = (p.get("document_format") or "").upper()
+                    if pf in fmt_counts:
+                        fmt_counts[pf] += 1
+                total = sum(fmt_counts.values())
+                if total >= 2:
+                    if fmt_counts["CUSDEC1"] / total >= 0.7:
+                        score_cusdec1 += 2
+                        signals.append(f"importer_history:CUSDEC1({fmt_counts['CUSDEC1']}/{total})(+2)")
+                    elif fmt_counts["MACCS"] / total >= 0.7:
+                        score_maccs += 2
+                        signals.append(f"importer_history:MACCS({fmt_counts['MACCS']}/{total})(+2)")
+        except Exception:
+            pass
+
+    # ── Page count signal (CUSDEC1 typically shorter) ──
+    n_pages = len([p for p in page_results if p.get("status") == "ok"])
+    if n_pages <= 3:
+        score_cusdec1 += 1
+        signals.append(f"page_count:{n_pages}(CUSDEC1+1)")
+    elif n_pages >= 8:
+        score_maccs += 1
+        signals.append(f"page_count:{n_pages}(MACCS+1)")
+
+    # ── Negative: NO MACCS 12-digit anywhere is strong CUSDEC1 signal ──
+    if not has_maccs_12 and (has_md or has_ma0):
+        score_cusdec1 += 2
+        signals.append("no_12digit+has_old_pattern(CUSDEC1+2)")
+
+    # ── Decision ──
+    fmt = "CUSDEC1" if score_cusdec1 > score_maccs else "MACCS"
+    print(f"    Format scores: MACCS={score_maccs} CUSDEC1={score_cusdec1} → {fmt}")
+    print(f"    Format signals: {signals[:6]}")
+    return fmt
+
+
+_DECL_MD_FINDALL = re.compile(r'\bMD-?\d{6,8}\b', re.IGNORECASE)
+_DECL_MA_FINDALL = re.compile(r'\bMA0\d{9,10}\b', re.IGNORECASE)
+
+
+def resolve_cusdec1_decl_no(current, page_summary: str):
+    """Priority resolver for decl no: MD-XXXXXX > MA0... > registration counter.
+    Self-guarded: leaves valid patterns alone. Safe to call regardless of detected format.
+    Returns (resolved_value, was_changed)."""
+    if not page_summary:
+        return current, False
+    cur_s = str(current or "").strip().upper().replace(" ", "")
+    # Self-guard: if current is valid MACCS 12-digit, leave alone
+    if cur_s and _DECL_MACCS_RE.match(cur_s):
+        return current, False
+    # Self-guard: if current is valid MD-XXXXXX or MA0..., leave alone
+    if cur_s and (_DECL_CUSDEC1_MD_RE.match(cur_s) or _DECL_CUSDEC1_MA_RE.match(cur_s)):
+        return current, False
+    # Order-preserving dedup — first occurrence wins (typically near top of doc = actual decl no)
+    md_hits = []
+    seen_md = set()
+    for m in _DECL_MD_FINDALL.finditer(page_summary):
+        v = m.group(0).upper().replace(" ", "")
+        if v not in seen_md:
+            seen_md.add(v)
+            md_hits.append(v)
+    ma_hits = []
+    seen_ma = set()
+    for m in _DECL_MA_FINDALL.finditer(page_summary):
+        v = m.group(0).upper().replace(" ", "")
+        if v not in seen_ma:
+            seen_ma.add(v)
+            ma_hits.append(v)
+    # Prefer MD- (highest priority) — pick first found
+    if md_hits:
+        return md_hits[0], cur_s != md_hits[0]
+    # Then MA0
+    if ma_hits:
+        return ma_hits[0], cur_s != ma_hits[0]
+    return current, False
+
+
+def validate_decl_no_pattern(value, fmt: str) -> bool:
+    """Check decl_no matches expected pattern for format."""
+    if not value:
+        return False
+    s = str(value).strip().upper().replace(" ", "")
+    if fmt == "MACCS":
+        return bool(_DECL_MACCS_RE.match(s))
+    if fmt == "CUSDEC1":
+        return bool(_DECL_CUSDEC1_MA_RE.match(s) or _DECL_CUSDEC1_MD_RE.match(s))
+    return False
+
+
+_RATE_RANGES = {
+    # MMK exchange ranges 2024-2025 (per real Central Bank of Myanmar + market data)
+    "THB": (40, 110),
+    "USD": (1300, 5500),
+    "EUR": (1500, 6500),
+    "CNY": (200, 900),
+    "JPY": (10, 50),
+    "KRW": (1.0, 5.0),
+    "SGD": (1300, 4800),
+    "INR": (20, 90),
+    "GBP": (1800, 7500),
+    "AUD": (900, 3500),
+    "MYR": (300, 1500),
+    "IDR": (0.05, 0.5),
+    "VND": (0.05, 0.3),
+    "HKD": (200, 800),
+    "TWD": (40, 200),
+}
+
+
+def validate_currency_code(currency) -> bool:
+    """Currency must be valid ISO-4217 3-letter code that we know about.
+    Blocks malformed codes like 'KR' (should be KRW) — D11 cell-zoom bug."""
+    if not currency:
+        return False
+    cur = str(currency).strip().upper()
+    if not re.fullmatch(r'[A-Z]{3}', cur):
+        return False
+    # Must be in our known set OR a generic-looking 3-letter
+    return True
+
+
+def validate_currency_rate(currency, rate) -> bool:
+    """Plausibility check for currency vs MMK exchange rate.
+    Now strict: invalid currency codes (non-3-letter) treated as fail."""
+    if not currency or rate is None:
+        return True  # cannot judge
+    try:
+        r = float(rate)
+    except (ValueError, TypeError):
+        return False
+    cur = str(currency).strip().upper()
+    # Block invalid format (D11 bug: 'KR' got accepted because not in _RATE_RANGES)
+    if not re.fullmatch(r'[A-Z]{3}', cur):
+        return False  # 2-letter or malformed = invalid
+    if cur not in _RATE_RANGES:
+        return True  # unknown 3-letter code, can't judge
+    lo, hi = _RATE_RANGES[cur]
+    return lo <= r <= hi
+
+
+def validate_invoice_price_ratio(price, customs_value, exch_rate) -> bool:
+    """Check invoice price ≈ customs/exch_rate (ratio 0.1-10)."""
+    try:
+        p = float(price or 0)
+        cv = float(customs_value or 0)
+        er = float(exch_rate or 0)
+    except (ValueError, TypeError):
+        return True
+    if p <= 0 or cv <= 0 or er <= 0:
+        return True
+    expected = cv / er
+    if expected <= 0:
+        return True
+    ratio = p / expected
+    return 0.1 <= ratio <= 10
+
+
+_COMMERCIAL_INVOICE_RE = re.compile(
+    r'\b(AM-PD-\d{3,4}/\d{4}|IV\d{3,5}/\d{3,5})\b'
+)
+_LICENSE_RE = re.compile(r'^[A-Z]{4,}\d{6,}$')  # MTGBIL12324000256, MWDBIL12425002045 etc
+
+# B/L (Bill of Lading) patterns — these are NOT invoice numbers (D19 bug: IWB2024-080037 misread as inv)
+# Common ocean carrier prefixes + dated formats
+_BL_PATTERNS = [
+    re.compile(r'^[A-Z]{3,4}\d{4}-\d{6,8}$'),       # IWB2024-080037
+    re.compile(r'^(MAEU|ZIMU|ONEY|HLCU|COSU|EGLV|YMLU|EVRG|APLU|MEDU|HDMU|CSLU|CSNU)\w{6,}$'),  # carrier B/Ls
+]
+
+def looks_like_bl(value: str) -> bool:
+    if not value:
+        return False
+    upper = str(value).strip().upper()
+    return any(p.match(upper) for p in _BL_PATTERNS)
+
+
+def clean_invoice_no_commercial(value) -> str:
+    """Extract clean commercial invoice pattern. Conservative: only strip if clear pattern found."""
+    if not value:
+        return value
+    s = str(value).strip()
+    upper = s.upper()
+    # If it's a license number (MTGBIL/MWDBIL/etc), leave it alone — caller flags separately
+    if _LICENSE_RE.match(upper):
+        return s
+    # Try specific known patterns first (anchored)
+    m = _COMMERCIAL_INVOICE_RE.search(upper)
+    if m:
+        return m.group(1)
+    return s
+
+
+_EXPANDED_INVOICE_PATTERNS = [
+    re.compile(r'\b(AM-PD-\d{3,4}/\d{4})\b'),       # AM-PD-018/2024
+    re.compile(r'\b(IV\d{3,5}/\d{3,5})\b'),          # IV1234/567
+    re.compile(r'\b(INV[-]?\d{4,10})\b'),            # INV20240801
+    re.compile(r'\b(BILL?[-\s]?\d{6,10})\b'),        # BIL-123456
+    re.compile(r'\b([A-Z]{2,5}-\d{3,5}/\d{4})\b'),   # generic XX-XXX/YYYY
+    re.compile(r'\b(MTGBIL\d{6,15}|MWDBIL\d{6,15}|MIDBIL\d{6,15}|MFDBIL\d{6,15})\b'),  # license
+]
+
+
+def resolve_invoice_no_cusdec1(current_inv, page_summary: str):
+    """If current invoice looks like B/L number, search page text for actual invoice patterns.
+    Fixes D19 (IWB2024-080037 B/L confused with invoice). Returns (resolved, changed).
+    Falls back to None (with changed=True) if no real invoice found — better than keeping B/L."""
+    if not current_inv:
+        return current_inv, False
+    if not looks_like_bl(current_inv):
+        return current_inv, False
+    if not page_summary:
+        return current_inv, False
+    text_u = page_summary.upper()
+    # Try each pattern in priority order
+    for pat in _EXPANDED_INVOICE_PATTERNS:
+        m = pat.search(text_u)
+        if m:
+            candidate = m.group(1)
+            # Sanity: don't return another B/L
+            if not looks_like_bl(candidate):
+                return candidate, True
+    # Nothing found — null is more honest than wrong B/L
+    return None, True
+
+
+_ORIGIN_MAP = {
+    "NEW ZEALAND": "NZ", "NZ": "NZ",
+    "THAILAND": "TH", "TH": "TH",
+    "ITALY": "IT", "IT": "IT",
+    "AUSTRALIA": "AU", "AU": "AU",
+    "KOREA": "KR", "REPUBLIC OF KOREA": "KR", "R.KOREA": "KR",
+    "SOUTH KOREA": "KR", "KR": "KR",
+    "MYANMAR": "MM", "BURMA": "MM", "MM": "MM",
+    "CHINA": "CN", "PEOPLE'S REPUBLIC OF CHINA": "CN", "PRC": "CN", "CN": "CN",
+    "JAPAN": "JP", "JP": "JP",
+    "INDIA": "IN", "IN": "IN",
+    "SINGAPORE": "SG", "SG": "SG",
+    "USA": "US", "UNITED STATES": "US", "UNITED STATES OF AMERICA": "US",
+    "U.S.A.": "US", "US": "US", "AMERICA": "US",
+    "UNITED KINGDOM": "GB", "UK": "GB", "GREAT BRITAIN": "GB", "GB": "GB",
+    "GERMANY": "DE", "DE": "DE",
+    "FRANCE": "FR", "FR": "FR",
+    "SPAIN": "ES", "ES": "ES",
+    "NETHERLANDS": "NL", "HOLLAND": "NL", "NL": "NL",
+    "BELGIUM": "BE", "BE": "BE",
+    "SWITZERLAND": "CH", "CH": "CH",
+    "CANADA": "CA", "CA": "CA",
+    "MEXICO": "MX", "MX": "MX",
+    "BRAZIL": "BR", "BR": "BR",
+    "INDONESIA": "ID", "ID": "ID",
+    "MALAYSIA": "MY", "MY": "MY",
+    "VIETNAM": "VN", "VIET NAM": "VN", "VN": "VN",
+    "PHILIPPINES": "PH", "PH": "PH",
+    "BANGLADESH": "BD", "BD": "BD",
+    "PAKISTAN": "PK", "PK": "PK",
+    "SRI LANKA": "LK", "LK": "LK",
+    "TURKEY": "TR", "TR": "TR",
+    "RUSSIA": "RU", "RUSSIAN FEDERATION": "RU", "RU": "RU",
+    "SOUTH AFRICA": "ZA", "ZA": "ZA",
+    "UAE": "AE", "UNITED ARAB EMIRATES": "AE", "AE": "AE",
+    "SAUDI ARABIA": "SA", "SA": "SA",
+    "HONG KONG": "HK", "HK": "HK",
+    "TAIWAN": "TW", "TW": "TW",
+}
+
+
+def normalize_origin(value) -> str:
+    """Map country name to ISO 2-letter code."""
+    if not value:
+        return value
+    s = str(value).strip().upper()
+    if re.fullmatch(r'[A-Z]{2}', s):
+        return s
+    # Strip common punctuation
+    key = s.replace(".", "").replace(",", "").strip()
+    if key in _ORIGIN_MAP:
+        return _ORIGIN_MAP[key]
+    # Try without common articles
+    return _ORIGIN_MAP.get(s, value)
+
+
+def normalize_hs_code(value) -> str:
+    """Format HS code to 'XXXX.XX.XX XX' (8 digits dotted)."""
+    if not value:
+        return value
+    s = str(value)
+    digits = re.sub(r'[^\d]', '', s)
+    if len(digits) < 8:
+        return value
+    d = digits[:10]  # cap at 10 (8 + 2 suffix)
+    if len(d) >= 10:
+        return f"{d[0:4]}.{d[4:6]}.{d[6:8]} {d[8:10]}"
+    if len(d) == 8:
+        return f"{d[0:4]}.{d[4:6]}.{d[6:8]}"
+    # 9 digits — pad
+    return f"{d[0:4]}.{d[4:6]}.{d[6:8]} {d[8:].ljust(2, '0')}"
+
+
+def validate_arithmetic_closure(declaration: Dict, items: List[Dict]) -> List[str]:
+    """Both equations must close: qty×unit ≈ invoice_price AND price×exch ≈ customs_value.
+    Catches self-consistent wrong currency cases."""
+    flags = []
+    try:
+        price = float(declaration.get("Invoice Price") or 0)
+        cv = float(declaration.get("Total Customs Value") or 0)
+        er = float(declaration.get("Exchange Rate") or 0)
+    except (ValueError, TypeError):
+        return flags
+
+    # Eq 1: invoice_price × exch ≈ customs_value (foreign × rate ≈ MMK)
+    if price > 0 and er > 0 and cv > 0:
+        expected_cv = price * er
+        if expected_cv > 0:
+            ratio = cv / expected_cv
+            if ratio < 0.85 or ratio > 1.15:
+                flags.append(f"closure_eq1:HIGH:price×exch={expected_cv:.0f}_vs_cv={cv:.0f}_ratio={ratio:.2f}")
+
+    # Eq 2: Σ(qty × unit_price) ≈ invoice_price (single item only — multi-item already cross-validated)
+    if items and len(items) == 1 and price > 0:
+        try:
+            qty_str = str(items[0].get("Quantity (1)") or "0").split()[0].replace(",", "")
+            qty = float(qty_str)
+            unit = float(items[0].get("Invoice unit price") or 0)
+            if qty > 0 and unit > 0:
+                expected_price = qty * unit
+                if expected_price > 0:
+                    ratio = price / expected_price
+                    if ratio < 0.85 or ratio > 1.15:
+                        flags.append(f"closure_eq2:HIGH:qty×unit={expected_price:.0f}_vs_price={price:.0f}_ratio={ratio:.2f}")
+        except (ValueError, TypeError, IndexError):
+            pass
+    return flags
+
+
+def validate_currency_token_in_pagetext(declaration: Dict, page_summary: str) -> List[str]:
+    """Currency code claimed by pipeline must appear as literal string token in page text."""
+    flags = []
+    cur = declaration.get("Currency")
+    if not cur or not page_summary:
+        return flags
+    cur_str = str(cur).strip().upper()
+    if not re.fullmatch(r'[A-Z]{3}', cur_str):
+        return flags
+    text_upper = page_summary.upper()
+    # Must appear as standalone 3-letter token, not embedded in another word
+    if not re.search(rf'\b{cur_str}\b', text_upper):
+        flags.append(f"currency_not_in_pagetext:HIGH:{cur_str}")
+    return flags
+
+
+# Seed canonical names — ground truth for known importers (D18/D19 typo fix when DB empty).
+# Add more as new importers verified.
+KNOWN_CONSIGNORS = {
+    "PREMIUM DISTRIBUTION": [
+        "Asiatic Mart Holding Pte Ltd",
+        "Asiatic Mart Holding Pte. Ltd.",
+    ],
+}
+
+
+def get_canonical_consignors_for_importer(importer: str) -> List[str]:
+    """Look up known canonical consignor names for an importer (seed + future DB)."""
+    if not importer:
+        return []
+    key = str(importer).strip().upper().split(",")[0].strip()
+    # Match by first significant token
+    for known_key, names in KNOWN_CONSIGNORS.items():
+        if known_key in key or key.startswith(known_key.split()[0]):
+            return names
+    return []
+
+
+def normalize_consignor_name(current, past_names: List[str], threshold: float = 0.9):
+    """If current consignor name is >threshold similar to a past canonical name, use past.
+    Fixes OCR typos like 'Asiatic Malt' vs 'Asiatic Mart' (D18/D19).
+    Returns (canonical, changed)."""
+    if not current or not past_names:
+        return current, False
+    import difflib
+    cur_s = str(current).strip()
+    cur_lower = cur_s.lower()
+    best_match = None
+    best_ratio = 0.0
+    for name in past_names:
+        if not name:
+            continue
+        n_lower = str(name).strip().lower()
+        if n_lower == cur_lower:
+            return name, False  # already canonical
+        ratio = difflib.SequenceMatcher(None, cur_lower, n_lower).ratio()
+        if ratio > best_ratio and ratio >= threshold:
+            best_ratio = ratio
+            best_match = name
+    if best_match:
+        return best_match, True
+    return current, False
+
+
+def validate_duty_to_customs_ratio(declaration: Dict) -> List[str]:
+    """Duty cannot exceed 50% of customs value (legal max in Myanmar customs).
+    D18 case: extracted 1.35M customs but 18M+ duty = impossible."""
+    flags = []
+    try:
+        cv = float(declaration.get("Total Customs Value") or 0)
+        duty = float(declaration.get("Import/Export Customs Duty") or 0)
+        if cv > 0 and duty > 0:
+            ratio = duty / cv
+            if ratio > 0.5:
+                flags.append(f"duty_customs_ratio:HIGH:duty={duty:.0f}_cv={cv:.0f}_ratio={ratio:.2f}")
+    except (ValueError, TypeError):
+        pass
+    return flags
+
+
+def validate_importer_baseline(declaration: Dict) -> List[str]:
+    """Compare current extraction vs past verified extractions for same importer."""
+    flags = []
+    importer = declaration.get("Importer (Name)")
+    if not importer:
+        return flags
+    try:
+        import database
+        past = database.get_recent_declarations_by_importer(importer, limit=5) if hasattr(database, 'get_recent_declarations_by_importer') else None
+    except Exception:
+        return flags
+    if not past:
+        return flags
+
+    # Compare currency
+    cur_now = (declaration.get("Currency") or "").strip().upper()
+    cur_history = [str(p.get("currency") or "").strip().upper() for p in past if p.get("currency")]
+    if cur_now and cur_history and cur_now not in cur_history:
+        flags.append(f"importer_baseline_currency:MED:now={cur_now}_history={set(cur_history)}")
+
+    # Compare exch rate magnitude (within 50% of past median)
+    try:
+        rate_now = float(declaration.get("Exchange Rate") or 0)
+        rates = sorted([float(p.get("exchange_rate") or 0) for p in past if p.get("exchange_rate")])
+        if rate_now > 0 and rates:
+            median = rates[len(rates) // 2]
+            if median > 0 and (rate_now < median * 0.5 or rate_now > median * 2):
+                flags.append(f"importer_baseline_exch:HIGH:now={rate_now}_median={median:.2f}")
+    except (ValueError, TypeError):
+        pass
+
+    # Consignor name fuzzy match (>90% sim → flag for normalize)
+    consignor_now = declaration.get("Consignor (Name)")
+    consignor_history = [str(p.get("consignor_name") or "").strip() for p in past if p.get("consignor_name")]
+    if consignor_now and consignor_history:
+        canonical, changed = normalize_consignor_name(consignor_now, consignor_history)
+        if changed:
+            flags.append(f"consignor_name_typo:MED:now={consignor_now}_canonical={canonical}")
+    return flags
+
+
+def run_sanity_validators(declaration: Dict, fmt: str, items: List[Dict] = None,
+                           page_summary: str = "") -> List[str]:
+    """Run advisory sanity checks. Returns list of flag strings."""
+    flags = []
+    decl_no = declaration.get("Declaration No")
+    if decl_no and not validate_decl_no_pattern(decl_no, fmt):
+        flags.append(f"decl_no_pattern:{fmt}:{decl_no}")
+    cur = declaration.get("Currency")
+    rate = declaration.get("Exchange Rate")
+    if cur and rate is not None and not validate_currency_rate(cur, rate):
+        flags.append(f"currency_rate:HIGH:{cur}={rate}")
+    price = declaration.get("Invoice Price")
+    cv = declaration.get("Total Customs Value")
+    if not validate_invoice_price_ratio(price, cv, rate):
+        flags.append(f"invoice_ratio:HIGH:price={price},cv={cv},rate={rate}")
+    if items is not None:
+        flags.extend(validate_arithmetic_closure(declaration, items))
+    if page_summary:
+        flags.extend(validate_currency_token_in_pagetext(declaration, page_summary))
+    flags.extend(validate_importer_baseline(declaration))
+    flags.extend(validate_duty_to_customs_ratio(declaration))
+    return flags
+
+
 def assemble(page_results: List[Dict], model: str = None) -> Dict:
     """Master orchestrator: Declaration + Items agents + QA + cross-validation."""
     print("  Assembler: Master + Column Agent + QA + Cross-Validation")
@@ -1123,17 +1816,23 @@ def assemble(page_results: List[Dict], model: str = None) -> Dict:
     corrections = _build_corrections_prompt()
     print(f"    Page data: {len(page_summary):,} chars from {len(page_results)} pages")
 
+    # Detect document format (MACCS vs CUSDEC1)
+    fmt = detect_format(page_results)
+    print(f"    Format detected: {fmt}")
+
     # ══════════════════════════════════════════════════════
     # Phase 1: Declaration Agent
     # ══════════════════════════════════════════════════════
     print("    Phase 1: Declaration Master (16 columns)...")
-    decl_result = _call_llm(DECLARATION_PROMPT + corrections, page_summary, model, "decl_agent",
+    decl_prompt_base = CUSDEC1_DECLARATION_PROMPT if fmt == "CUSDEC1" else DECLARATION_PROMPT
+    decl_result = _call_llm(decl_prompt_base + corrections, page_summary, model, "decl_agent",
                              response_schema=DECL_SCHEMA if USE_JSON_SCHEMA else None)
     declaration = decl_result if decl_result else {}
 
     # Clean declaration numeric values (skip fields that must stay as strings)
     STRING_FIELDS = {"Declaration No", "Declaration Date", "Importer (Name)", "Consignor (Name)",
-                     "Invoice Number", "Currency", "Currency 2"}
+                     "Invoice Number", "Invoice Number (Customs Declaration)",
+                     "Invoice Number (Commercial Invoice)", "Currency", "Currency 2"}
     for field, val in declaration.items():
         if field in STRING_FIELDS:
             continue
@@ -1155,6 +1854,100 @@ def assemble(page_results: List[Dict], model: str = None) -> Dict:
 
     # ── QA: Declaration ──
     declaration = _qa_declaration(declaration, page_summary, corrections, model)
+
+    # ── Post-process: clean Commercial Invoice No (strip OCR/prefix garbage) ──
+    inv_com = declaration.get("Invoice Number (Commercial Invoice)")
+    if inv_com:
+        cleaned_inv = clean_invoice_no_commercial(inv_com)
+        if cleaned_inv != inv_com:
+            print(f"    Invoice clean: '{inv_com}' → '{cleaned_inv}'")
+            declaration["Invoice Number (Commercial Invoice)"] = cleaned_inv
+            # Also update generic Invoice Number if it equals the dirty value
+            if declaration.get("Invoice Number") == inv_com:
+                declaration["Invoice Number"] = cleaned_inv
+
+    # ── B/L vs Invoice disambiguator (D19: IWB2024-080037 B/L misread as invoice) ──
+    for inv_field in ["Invoice Number", "Invoice Number (Commercial Invoice)", "Invoice Number (Customs Declaration)"]:
+        v = declaration.get(inv_field)
+        if v:
+            resolved, changed = resolve_invoice_no_cusdec1(v, page_summary)
+            if changed:
+                print(f"    Invoice disambig ({inv_field}): B/L '{v}' → invoice '{resolved}'")
+                declaration[inv_field] = resolved
+
+    # ── Consignor name normalize (seed canonical + DB history fuzzy match) ──
+    try:
+        importer_now = declaration.get("Importer (Name)")
+        consignor_now = declaration.get("Consignor (Name)")
+        if importer_now and consignor_now:
+            # 1. Seed canonical list (works on empty DB)
+            canonical_seed = get_canonical_consignors_for_importer(importer_now)
+            # 2. Past DB records
+            past_consignors = []
+            try:
+                import database
+                if hasattr(database, 'get_recent_declarations_by_importer'):
+                    past = database.get_recent_declarations_by_importer(importer_now, limit=10) or []
+                    past_consignors = [p.get("consignor_name") for p in past if p.get("consignor_name")]
+            except Exception:
+                pass
+            # Merge: seed first (priority), then DB history
+            all_canonical = canonical_seed + past_consignors
+            if all_canonical:
+                canonical, changed = normalize_consignor_name(consignor_now, all_canonical)
+                if changed:
+                    print(f"    Consignor normalize: '{consignor_now}' → '{canonical}'")
+                    declaration["Consignor (Name)"] = canonical
+    except Exception as _e:
+        print(f"    Consignor normalize skipped: {_e}")
+
+    # ── Decl No priority resolver (MD-XXXXXX > MA0... > reg counter) ──
+    # Always run — resolver self-guards against valid MACCS/CUSDEC1 patterns.
+    # Fixes D20-class where format misclassified as MACCS but real decl no is MD-XXXXXX.
+    resolved, changed = resolve_cusdec1_decl_no(declaration.get("Declaration No"), page_summary)
+    if changed:
+        print(f"    Decl No priority: '{declaration.get('Declaration No')}' → '{resolved}'")
+        declaration["Declaration No"] = resolved
+
+    # ── Sanity validators + 1-shot retry on HIGH flags (items not extracted yet, skip closure_eq2) ──
+    sanity_flags_pre = run_sanity_validators(declaration, fmt, items=None, page_summary=page_summary)
+    needs_retry = any(
+        f.startswith("currency_rate:HIGH") or f.startswith("invoice_ratio:HIGH")
+        or f.startswith("closure_eq") or f.startswith("currency_not_in_pagetext")
+        or f.startswith("importer_baseline_exch")
+        for f in sanity_flags_pre)
+    if needs_retry:
+        print(f"    Sanity flags: {sanity_flags_pre} — retrying decl agent (1x)")
+        retry_hint = (
+            "\n\n## SANITY HINTS — your previous extraction has implausible values, fix them:\n"
+            f"- Flags: {sanity_flags_pre}\n"
+            "- Currency vs Exchange Rate must be plausible (THB:50-70, USD:1500-6000, "
+            "EUR:1500-7000, CNY:250-800, JPY:15-50, KRW:1.5-5, SGD:1500-4500, INR:20-80).\n"
+            "- Invoice Price * Exchange Rate should approximate Total Customs Value (within 10x).\n"
+            "- Re-read these fields carefully (handwritten decimals are common).\n"
+        )
+        retry_result = _call_llm(decl_prompt_base + corrections + retry_hint, page_summary,
+                                 model, "decl_agent_retry",
+                                 response_schema=DECL_SCHEMA if USE_JSON_SCHEMA else None)
+        if retry_result:
+            # Only update Currency / Exchange Rate / Invoice Price if retry produced sane values
+            retry_cur = retry_result.get("Currency")
+            retry_rate = retry_result.get("Exchange Rate")
+            try:
+                retry_rate_f = float(str(retry_rate).replace(",", "")) if retry_rate else None
+            except (ValueError, TypeError):
+                retry_rate_f = None
+            if retry_cur and retry_rate_f and validate_currency_rate(retry_cur, retry_rate_f):
+                declaration["Currency"] = retry_cur
+                declaration["Exchange Rate"] = retry_rate_f
+                if not declaration.get("Currency 2"):
+                    declaration["Currency 2"] = retry_cur
+            retry_price = retry_result.get("Invoice Price")
+            if retry_price is not None:
+                try:
+                    declaration["Invoice Price"] = float(str(retry_price).replace(",", ""))
+                except (ValueError, TypeError):
+                    pass
 
     # NOTE: Fee shift correction is NOT applied here anymore.
     # The assembler's job is to EXTRACT — correction belongs in the dedicated
@@ -1189,18 +1982,34 @@ def assemble(page_results: List[Dict], model: str = None) -> Dict:
             item["CIF unit price"] = inv_price
             print(f"    Fallback: CIF unit price missing, copied from Invoice: {inv_price}")
 
-    # Deduplicate items (same item name + same HS code = duplicate)
+    # Deduplicate items (same name + HS + pack-size + unit-price-bucket = duplicate)
+    # Pack size + price guard: prevents merging different pack variants of same product
+    # (e.g. QUADRATINI 125g vs 250g, Ferrero 62.5g vs 125g — bug seen in D13/D15/D20)
     if len(items) > 1:
+        _PACK_RE = re.compile(r'\b(\d+(?:[.,]\d+)?)\s*(g|gm|gr|kg|ml|l|lb|oz|pcs?|x)\b', re.IGNORECASE)
+        def _pack_size(name: str) -> str:
+            if not name:
+                return ""
+            m = _PACK_RE.search(name)
+            return f"{m.group(1).replace(',','.')}{m.group(2).lower()}" if m else ""
+        def _price_bucket(p) -> str:
+            try:
+                return f"{round(float(p), 2)}"
+            except (ValueError, TypeError):
+                return str(p or "")[:8]
         seen = set()
         unique_items = []
         for item in items:
-            key = (str(item.get("Item name", "")).strip()[:50].lower(),
-                   str(item.get("HS Code", "")).strip())
+            name = str(item.get("Item name", "")).strip()
+            key = (name[:50].lower(),
+                   str(item.get("HS Code", "")).strip(),
+                   _pack_size(name),
+                   _price_bucket(item.get("Invoice unit price")))
             if key not in seen:
                 seen.add(key)
                 unique_items.append(item)
             else:
-                print(f"    Dedup: removed duplicate item '{str(item.get('Item name', ''))[:40]}...'")
+                print(f"    Dedup: removed duplicate item '{name[:40]}...' (key={key[2]},{key[3]})")
         if len(unique_items) < len(items):
             print(f"    Dedup: {len(items)} → {len(unique_items)} items")
             items = unique_items
@@ -1209,6 +2018,50 @@ def assemble(page_results: List[Dict], model: str = None) -> Dict:
 
     # ── QA: Items ──
     items = _qa_items(items, declaration, page_summary, corrections, model)
+
+    # ── Normalize Origin Country + HS Code on each item ──
+    for item in items:
+        oc = item.get("Origin Country")
+        if oc:
+            new_oc = normalize_origin(oc)
+            if new_oc != oc:
+                item["Origin Country"] = new_oc
+        hs = item.get("HS Code")
+        if hs:
+            new_hs = normalize_hs_code(hs)
+            if new_hs != hs:
+                item["HS Code"] = new_hs
+
+    # ── Origin baseline check (importer + HS → most-common past origin) ──
+    # Fixes D12 case where TH was extracted but importer history shows KR for same HS
+    try:
+        importer_now = declaration.get("Importer (Name)")
+        if importer_now and items:
+            import database
+            if hasattr(database, 'get_recent_declarations_by_importer'):
+                past = database.get_recent_declarations_by_importer(importer_now, limit=20) or []
+                # Build HS → origin frequency map from past items if available
+                hs_origin_map = {}
+                for p in past:
+                    p_items = p.get("items") or []
+                    for pi in p_items:
+                        p_hs = str(pi.get("hs_code") or "").strip()
+                        p_oc = str(pi.get("origin_country") or "").strip().upper()
+                        if p_hs and p_oc:
+                            hs_origin_map.setdefault(p_hs, {}).setdefault(p_oc, 0)
+                            hs_origin_map[p_hs][p_oc] += 1
+                # Flag items whose origin disagrees with strong past majority
+                for item in items:
+                    cur_hs = str(item.get("HS Code") or "").strip()
+                    cur_oc = str(item.get("Origin Country") or "").strip().upper()
+                    if cur_hs and cur_oc and cur_hs in hs_origin_map:
+                        freq = hs_origin_map[cur_hs]
+                        total = sum(freq.values())
+                        top_oc, top_count = max(freq.items(), key=lambda kv: kv[1])
+                        if total >= 3 and top_count / total >= 0.8 and cur_oc != top_oc:
+                            print(f"    ⚠ Origin baseline: HS {cur_hs} usually {top_oc} ({top_count}/{total}), got {cur_oc}")
+    except Exception as _e:
+        print(f"    Origin baseline skipped: {_e}")
 
     # ══════════════════════════════════════════════════════
     # Phase 3: Cross-Validation (zero cost — just math)
@@ -1221,4 +2074,12 @@ def assemble(page_results: List[Dict], model: str = None) -> Dict:
     else:
         print("    Cross-validation: ALL checks passed ✓")
 
-    return {"declaration": declaration, "items": items}
+    # Final sanity flags after all fixes
+    sanity_flags = run_sanity_validators(declaration, fmt, items=items, page_summary=page_summary)
+
+    return {
+        "declaration": declaration,
+        "items": items,
+        "document_format": fmt,
+        "sanity_flags": sanity_flags,
+    }

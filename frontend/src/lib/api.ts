@@ -1,4 +1,5 @@
 import { auth } from './stores/auth.svelte';
+import { PIPELINES, type PipelineKey } from './pipelineConfig';
 
 const BASE = '/api';
 
@@ -108,3 +109,93 @@ export const api = {
   // Health
   health: () => request<any>('/health'),
 };
+
+export async function extractPDF(
+  file: File,
+  pipeline: PipelineKey = 'v11',
+  token?: string,
+  jobId?: string
+): Promise<any> {
+  const config = PIPELINES[pipeline];
+  if (!config) throw new Error(`Unknown pipeline: ${pipeline}`);
+
+  const formData = new FormData();
+  formData.append('file', file);
+  if (jobId) formData.append('job_id', jobId);
+
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const res = await fetch(config.endpoint, {
+    method: 'POST',
+    headers,
+    body: formData,
+  });
+
+  // CRITICAL (per CLAUDE.md): use res.text() not res.json() — body streaming hangs in some browsers
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`Extract failed (${res.status}): ${text.slice(0, 200)}`);
+  }
+  return JSON.parse(text);
+}
+
+/** Adapter: V7 returns title-case keys ("Declaration No"), V10/V11 return snake_case ("declaration_no").
+ * Normalize to snake_case for unified UI rendering. */
+const V7_TO_SNAKE_DECL: Record<string, string> = {
+  'Declaration No': 'declaration_no',
+  'Declaration Date': 'declaration_date',
+  'Importer (Name)': 'importer_name',
+  'Consignor (Name)': 'consignor_name',
+  'Invoice Number': 'invoice_number',
+  'Invoice Number (Customs Declaration)': 'invoice_number_customs',
+  'Invoice Number (Commercial Invoice)': 'invoice_number_commercial',
+  'Currency': 'currency',
+  'Currency 2': 'currency_2',
+  'Exchange Rate': 'exchange_rate',
+  'Invoice Price': 'invoice_price',
+  'Total Customs Value': 'total_customs_value',
+  'Country Origin': 'country_origin',
+  'Import/Export Customs Duty': 'customs_duty',
+  'Commercial Tax (CT)': 'commercial_tax',
+  'Advance Income Tax (AT)': 'advance_income_tax',
+  'Security Fee (SF)': 'security_fee',
+  'MACCS Service Fee (MF)': 'maccs_service_fee',
+  'Exemption/Reduction': 'exemption',
+};
+
+const V7_TO_SNAKE_ITEM: Record<string, string> = {
+  'Item name': 'item_name',
+  'Customs duty rate': 'customs_duty_rate',
+  'Quantity (1)': 'quantity',
+  'Invoice unit price': 'invoice_unit_price',
+  'CIF unit price': 'cif_unit_price',
+  'Currency': 'currency',
+  'Commercial tax %': 'commercial_tax_pct',
+  'Exchange Rate (1)': 'exchange_rate',
+  'HS Code': 'hs_code',
+  'Origin Country': 'origin',
+  'Customs Value (MMK)': 'customs_value_mmk',
+};
+
+export function normalizeExtractResult(raw: any): any {
+  if (!raw) return raw;
+  // If keys already snake (V10/V11), pass through
+  const declRaw = raw.declaration || {};
+  const declKeys = Object.keys(declRaw);
+  const looksTitleCase = declKeys.some(k => k.includes(' ') || k.includes('('));
+  if (!looksTitleCase) return raw;
+
+  const decl: any = {};
+  for (const [k, v] of Object.entries(declRaw)) {
+    decl[V7_TO_SNAKE_DECL[k] || k] = v;
+  }
+  const items = (raw.items || []).map((it: any) => {
+    const out: any = {};
+    for (const [k, v] of Object.entries(it)) {
+      out[V7_TO_SNAKE_ITEM[k] || k] = v;
+    }
+    return out;
+  });
+  return { ...raw, declaration: decl, items };
+}

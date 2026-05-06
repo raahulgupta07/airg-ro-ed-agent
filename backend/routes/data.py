@@ -263,6 +263,8 @@ async def download_declarations_excel(current_user: dict = Depends(get_current_u
                 "Importer": decl.get("importer_name", ""),
                 "Consignor": decl.get("consignor_name", ""),
                 "Invoice Number": decl.get("invoice_number", ""),
+                "Invoice Number (Customs Declaration)": decl.get("invoice_number_customs_declaration", ""),
+                "Invoice Number (Commercial Invoice)": decl.get("invoice_number_commercial_invoice", ""),
                 "Invoice Price": decl.get("invoice_price", ""),
                 "Currency": decl.get("currency", ""),
                 "Exchange Rate": decl.get("exchange_rate", ""),
@@ -278,7 +280,8 @@ async def download_declarations_excel(current_user: dict = Depends(get_current_u
             })
 
     all_cols = ["Job", "Declaration No", "Date", "Importer", "Consignor",
-                "Invoice Number", "Invoice Price", "Currency", "Exchange Rate", "Currency 2",
+                "Invoice Number", "Invoice Number (Customs Declaration)", "Invoice Number (Commercial Invoice)",
+                "Invoice Price", "Currency", "Exchange Rate", "Currency 2",
                 "Customs Value", "Duty", "Tax", "Income Tax", "Security", "MACCS",
                 "Exemption/Reduction", "Processed"]
     df = pd.DataFrame(all_decls) if all_decls else pd.DataFrame(columns=all_cols)

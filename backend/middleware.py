@@ -8,9 +8,40 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Optional
 
+from starlette.middleware.base import BaseHTTPMiddleware
+
 import auth
 import config
 import database
+
+
+class EventContextMiddleware(BaseHTTPMiddleware):
+    """Capture client IP + User-Agent into request.state for handlers/event_logger.
+
+    Phase 7: every request gets request.state.client_ip and request.state.user_agent
+    populated. Failures here MUST NOT break the request — they are silently ignored.
+    """
+
+    async def dispatch(self, request, call_next):
+        try:
+            request.state.client_ip = (
+                request.client.host if request.client else None
+            )
+        except Exception:
+            try:
+                request.state.client_ip = None
+            except Exception:
+                pass
+        try:
+            request.state.user_agent = (
+                request.headers.get("user-agent") or ""
+            )[:200]
+        except Exception:
+            try:
+                request.state.user_agent = ""
+            except Exception:
+                pass
+        return await call_next(request)
 
 
 security = HTTPBearer()

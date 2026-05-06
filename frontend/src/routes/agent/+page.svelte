@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { auth } from '$lib/stores/auth.svelte';
-  import { api } from '$lib/api';
+  import { api, extractPDF, normalizeExtractResult } from '$lib/api';
+  import PipelineSelector from '$lib/components/PipelineSelector.svelte';
+  import type { PipelineKey } from '$lib/pipelineConfig';
   import ChapterHeading from '$lib/components/ChapterHeading.svelte';
   import KpiCard from '$lib/components/KpiCard.svelte';
   import Button from '$lib/components/Button.svelte';
@@ -58,6 +60,34 @@
   let terminalCollapsed = $state(false);
   let agentLines = $state<{ text: string; type: string }[]>([]);
   let pipelineMode = $state('ro_ed');
+  let selectedPipeline = $state<PipelineKey>('v11');
+  const isProcessing = $derived(running);
+
+  // Route extraction through chosen pipeline. V7 keeps WebSocket flow (handled in startPipeline);
+  // V10/V11 use HTTP since they don't have WebSocket support yet.
+  async function runExtract(file: File, jobId?: string) {
+    if (selectedPipeline === 'v7') {
+      // TODO: V7 normally uses the WebSocket flow in startPipeline().
+      // This HTTP fallback is provided for parity if called directly.
+      const raw = await extractPDF(file, 'v7', auth.token);
+      return normalizeExtractResult(raw);
+    }
+    const raw = await extractPDF(file, selectedPipeline, auth.token, jobId);
+    return normalizeExtractResult(raw);
+  }
+
+  // Stable client-side job id (used to subscribe to V11 SSE stream BEFORE
+  // the HTTP /api/extract-v11 call returns). Sent as `job_id` form field so
+  // the backend uses the same id and the SSE endpoint resolves correctly.
+  function makeJobId(): string {
+    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+      return (crypto as any).randomUUID();
+    }
+    return 'v11-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+  }
+
+  // Job id of the currently-streaming V11 run (drives AgentTerminal SSE).
+  let streamingJobId = $state<string | null>(null);
 
   // Explicit view mode — bypasses derived reactivity issues
   let viewMode = $state<'idle' | 'pipeline' | 'results' | 'batch'>('idle');
@@ -189,6 +219,13 @@
     agentLines = [];
     vizSteps = [];
     vizSummary = null;
+    streamingJobId = null;
+
+    // V10/V11 don't have WebSocket support yet — use HTTP path. V7 uses WebSocket below.
+    if (selectedPipeline !== 'v7') {
+      runHttpPipeline(filesToProcess);
+      return;
+    }
 
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const socket = new WebSocket(`${protocol}//${location.host}/api/ws/batch`);
@@ -437,6 +474,58 @@
     }
   }
 
+  // ── HTTP pipeline path (V10/V11 — no WebSocket yet) ──
+  async function runHttpPipeline(filesToProcess: FileEntry[]) {
+    for (const entry of filesToProcess) {
+      const queueIdx = queue.indexOf(entry);
+      if (queueIdx < 0) continue;
+      // For V11, allocate a job id up-front and start the SSE stream so the
+      // AgentTerminal renders router decisions live while the HTTP call runs.
+      const preAllocId = selectedPipeline === 'v11' ? makeJobId() : '';
+      queue[queueIdx] = {
+        ...entry,
+        status: 'processing',
+        stepLabel: `${selectedPipeline.toUpperCase()} extracting...`,
+        progress: 30,
+        jobId: preAllocId || entry.jobId,
+      };
+      queue = [...queue];
+      selectedIndex = queueIdx;
+      if (preAllocId) streamingJobId = preAllocId;
+      try {
+        const job = await runExtract(entry.file, preAllocId || undefined);
+        const jobId = job?.job_id || preAllocId || `${selectedPipeline}-${Date.now()}`;
+        jobResults[jobId] = job;
+        jobResults = { ...jobResults };
+        queue[queueIdx] = {
+          ...queue[queueIdx],
+          status: 'done',
+          jobId,
+          accuracy: job?.accuracy_percent || 0,
+          itemsCount: job?.items?.length || 0,
+          cost: job?.cost_usd || 0,
+          duration: job?.processing_time_seconds || 0,
+          progress: 100,
+          stepLabel: '',
+        };
+        queue = [...queue];
+        viewMode = 'results';
+      } catch (e: any) {
+        queue[queueIdx] = {
+          ...queue[queueIdx],
+          status: 'error',
+          progress: 100,
+          stepLabel: e?.message?.slice(0, 80) || 'EXTRACT FAILED',
+        };
+        queue = [...queue];
+      }
+    }
+    running = false;
+    // Stop SSE stream once HTTP path resolves (DONE/FAIL events should have
+    // already closed it; this is a safety net for connections still open).
+    streamingJobId = null;
+  }
+
   // ── Stop ──
   function stopPipeline() {
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -674,6 +763,22 @@
 <!-- ═══════════════════════════════════════════════════════════ -->
 {#if queue.length === 0}
   <div class="flex flex-col items-center justify-center" style="min-height: calc(100vh - 180px);">
+    <!-- Smart Router info card (auto-routing, no choice exposed) -->
+    <div class="w-full max-w-4xl mb-4 p-4 rounded border-2 border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30">
+      <div class="flex items-start gap-3 flex-wrap">
+        <span class="text-2xl">🎼</span>
+        <div class="flex-1 min-w-[200px]">
+          <div class="font-bold text-base">Maestro Router (auto)</div>
+          <div class="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5">
+            Auto-classifies each page → PRINTED pages run Veritas, INKED pages run Scrivener, EXTRA attachments skipped. Best for any doc — printed, inked, or mixed bundles.
+          </div>
+        </div>
+        <div class="flex gap-4 text-xs font-mono">
+          <div>💰 $0.08–0.40</div>
+          <div>⏱ 60–150s</div>
+        </div>
+      </div>
+    </div>
     <!-- Big drop zone -->
     <button
       class="w-full max-w-4xl border-2 border-dashed cursor-pointer transition-colors p-16"
@@ -723,6 +828,13 @@
 
     <!-- ═══════════ LEFT PANEL ═══════════ -->
     <div class="flex flex-col">
+      <!-- Smart Router info banner (compact for left panel) -->
+      <div class="mb-3 p-2 rounded border border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 flex items-center gap-2">
+        <span>🎼</span>
+        <span class="text-xs font-semibold">Maestro Router</span>
+        <span class="text-[11px] text-zinc-600 dark:text-zinc-400 flex-1">auto: PRINTED→Veritas, INKED→Scrivener</span>
+        <span class="text-[11px] font-mono">$0.08–0.40</span>
+      </div>
       <!-- Add more / New job buttons -->
       <div class="flex gap-2 mb-3">
         <button
@@ -921,6 +1033,7 @@
           lines={agentLines}
           running={running}
           summary={terminalSummary}
+          jobId={selectedPipeline === 'v11' ? streamingJobId : null}
         />
 
       {:else if viewMode === 'results' || selectedJob || loadingResult || loadError}

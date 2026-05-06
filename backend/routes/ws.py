@@ -2,6 +2,7 @@
 """WebSocket route for RO-ED pipeline — streaming logs"""
 
 import time
+import json
 import asyncio
 from pathlib import Path
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -212,7 +213,10 @@ async def run_batch(ws: WebSocket):
                 assembled = await asyncio.to_thread(assemble, page_results)
                 declaration = assembled.get("declaration", {})
                 items = assembled.get("items", [])
+                document_format = assembled.get("document_format", "MACCS")
+                sanity_flags = list(assembled.get("sanity_flags", []) or [])
                 dur3 = time.time() - t3
+                await log(f"Document format: {document_format}", "data")
 
                 filled = sum(1 for v in declaration.values() if v is not None)
                 await log(f"Declaration assembled: {filled}/16 fields in {dur3:.1f}s", "success")
@@ -228,7 +232,9 @@ async def run_batch(ws: WebSocket):
                     await log(f"No items found in {dur3:.1f}s", "warning")
 
                 for k in ["Declaration No", "Declaration Date", "Importer (Name)", "Consignor (Name)",
-                           "Invoice Number", "Invoice Price", "Currency", "Exchange Rate",
+                           "Invoice Number", "Invoice Number (Customs Declaration)",
+                           "Invoice Number (Commercial Invoice)",
+                           "Invoice Price", "Currency", "Exchange Rate",
                            "Total Customs Value", "Import/Export Customs Duty",
                            "Commercial Tax (CT)", "Advance Income Tax (AT)",
                            "Security Fee (SF)", "MACCS Service Fee (MF)", "Exemption/Reduction"]:
@@ -251,10 +257,11 @@ async def run_batch(ws: WebSocket):
 
                 t4 = time.time()
                 from pipeline.verifier import verify
-                verified = await asyncio.to_thread(verify, declaration, items, pages)
-                declaration = verified.get("declaration", declaration)
-                items = verified.get("items", items)
-                corrections = verified.get("corrections", [])
+                verified_result = await asyncio.to_thread(verify, declaration, items, pages, None, document_format)
+                declaration = verified_result.get("declaration", declaration)
+                items = verified_result.get("items", items)
+                corrections = verified_result.get("corrections", [])
+                verified_flag = bool(verified_result.get("verified", False))
                 dur4 = time.time() - t4
 
                 if corrections:
@@ -329,6 +336,35 @@ async def run_batch(ws: WebSocket):
                 except Exception: pass
 
                 await log("Validating extraction results...")
+
+                # Cross-validation hard flag
+                cross_val_passed = True
+                try:
+                    decl_total_xv = float(declaration.get("Total Customs Value", 0) or 0)
+                    items_sum_xv = 0.0
+                    for it in items:
+                        cv = it.get("Customs Value (MMK)")
+                        if cv is not None:
+                            try:
+                                items_sum_xv += float(cv)
+                            except (ValueError, TypeError):
+                                pass
+                    if decl_total_xv > 0 and items_sum_xv > 0:
+                        diff_ratio = abs(items_sum_xv - decl_total_xv) / decl_total_xv
+                        if diff_ratio > 0.05:
+                            cross_val_passed = False
+                            sanity_flags.append(
+                                f"cross_val:items_sum={items_sum_xv:.0f},decl={decl_total_xv:.0f},diff={diff_ratio*100:.1f}%"
+                            )
+                            await log(f"Cross-validation FAILED: items vs decl diff = {diff_ratio*100:.1f}%", "warning")
+                except Exception:
+                    pass
+
+                # Attach metadata onto declaration for save_declarations to pick up
+                declaration["_document_format"] = document_format
+                declaration["_sanity_flags_json"] = json.dumps(sanity_flags) if sanity_flags else None
+                declaration["_cross_val_passed"] = cross_val_passed
+                declaration["_verified"] = verified_flag
 
                 from v2.step4_validate import validate
                 merged = {"declaration": declaration, "items": items, "page_map": [], "page_groups": {}, "cross_checks": []}

@@ -127,6 +127,8 @@ class DeclarationResponse(BaseModel):
     importer_name: Optional[str] = None
     consignor_name: Optional[str] = None
     invoice_number: Optional[str] = None
+    invoice_number_customs_declaration: Optional[str] = None
+    invoice_number_commercial_invoice: Optional[str] = None
     invoice_price: Optional[float] = None
     currency: Optional[str] = None
     exchange_rate: Optional[float] = None

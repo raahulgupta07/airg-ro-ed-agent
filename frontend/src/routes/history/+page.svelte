@@ -180,6 +180,18 @@
   });
 </script>
 
+<div class="w-full max-w-6xl mx-auto mb-4 p-4 rounded border-2 border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30">
+  <div class="flex items-start gap-3 flex-wrap">
+    <span class="text-2xl">📚</span>
+    <div class="flex-1 min-w-[200px]">
+      <div class="font-bold text-base">Job History</div>
+      <div class="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5">
+        Browse all extracted PDFs. Click any row to view full declaration, items, page routing, and pipeline trace.
+      </div>
+    </div>
+  </div>
+</div>
+
 {#if loading}
   <div class="skeleton h-64 w-full"></div>
 
@@ -228,16 +240,16 @@
       <table class="w-full text-[11px]">
         <thead>
           <tr style="background: var(--surface-container);">
-            <th class="px-3 py-2 text-left text-[9px] font-bold uppercase" style="color: var(--outline);">#</th>
-            <th class="px-3 py-2 text-left text-[9px] font-bold uppercase" style="color: var(--outline);">PDF NAME</th>
-            <th class="px-3 py-2 text-left text-[9px] font-bold uppercase" style="color: var(--outline);">USER</th>
-            <th class="px-3 py-2 text-left text-[9px] font-bold uppercase" style="color: var(--outline);">DATE</th>
-            <th class="px-3 py-2 text-right text-[9px] font-bold uppercase" style="color: var(--outline);">ITEMS</th>
-            <th class="px-3 py-2 text-right text-[9px] font-bold uppercase" style="color: var(--outline);">ACCURACY</th>
-            <th class="px-3 py-2 text-right text-[9px] font-bold uppercase" style="color: var(--outline);">PAGES</th>
-            <th class="px-3 py-2 text-right text-[9px] font-bold uppercase" style="color: var(--outline);">TIME</th>
-            <th class="px-3 py-2 text-right text-[9px] font-bold uppercase" style="color: var(--outline);">COST</th>
-            <th class="px-3 py-2 text-center text-[9px] font-bold uppercase" style="color: var(--outline);">STATUS</th>
+            <th class="px-3 py-2 text-left whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--outline); width: 40px;">#</th>
+            <th class="px-3 py-2 text-left whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--outline);">PDF NAME</th>
+            <th class="px-3 py-2 text-left whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--outline); width: 90px;">USER</th>
+            <th class="px-3 py-2 text-left whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--outline); width: 110px;">DATE</th>
+            <th class="px-3 py-2 text-right whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--outline); width: 70px;">ITEMS</th>
+            <th class="px-3 py-2 text-right whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--outline); width: 90px;">ACCURACY</th>
+            <th class="px-3 py-2 text-right whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--outline); width: 70px;">PAGES</th>
+            <th class="px-3 py-2 text-right whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--outline); width: 70px;">TIME</th>
+            <th class="px-3 py-2 text-right whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--outline); width: 80px;">COST</th>
+            <th class="px-3 py-2 text-center whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--outline); width: 80px;">STATUS</th>
           </tr>
         </thead>
         <tbody>

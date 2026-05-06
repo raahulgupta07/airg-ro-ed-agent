@@ -48,6 +48,8 @@ async def submit_correction(req: CorrectionRequest, current_user: dict = Depends
                 "Importer (Name)": "importer_name",
                 "Consignor (Name)": "consignor_name",
                 "Invoice Number": "invoice_number",
+                "Invoice Number (Customs Declaration)": "invoice_number_customs_declaration",
+                "Invoice Number (Commercial Invoice)": "invoice_number_commercial_invoice",
                 "Invoice Price": "invoice_price",
                 "Currency": "currency",
                 "Exchange Rate": "exchange_rate",

@@ -20,3 +20,15 @@ python-multipart>=0.0.18
 
 # Image Enhancement
 Pillow>=10.0.0
+
+# V9 — agentic pipeline
+agno>=2.5
+pydantic>=2.0
+openai>=1.0
+
+# LDAP authentication
+ldap3>=2.9
+cryptography>=42.0
+
+# Storage providers
+boto3>=1.35.0

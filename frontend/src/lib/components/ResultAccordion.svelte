@@ -11,6 +11,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { api } from '$lib/api';
   import { getAccuracyColor, decisionColors, getPageTypeColor } from '$lib/colors';
+  import { pipeLabel } from '$lib/utils/pipelineLabels';
 
   let {
     job = null as any,
@@ -21,7 +22,54 @@
     agentSummary = null as any,
     vizSteps = [] as any[],
     vizSummary = null as any,
+    data = null as any,
   } = $props();
+
+  // V10/V11 fields — fall back to job if `data` not explicitly passed
+  const v10 = $derived(data ?? job ?? null);
+
+  // Doc-type header card info (computed)
+  const docTypeInfo = $derived.by(() => {
+    const d = data ?? job ?? {};
+    const cls = d.page_classification ?? {};
+    const s = cls.summary ?? {};
+    const typed = s.TYPED ?? 0;
+    const hw = s.HANDWRITTEN ?? 0;
+    const att = s.ATTACHMENT ?? 0;
+    const cost = d.cost ?? d.cost_usd ?? 0;
+    const tokens_in = d.tokens_in ?? 0;
+    const tokens_out = d.tokens_out ?? 0;
+    const mode = d.mode ?? '';
+
+    let label = 'Unknown';
+    let icon = '❓';
+    let color = 'zinc';
+    let desc = '';
+    if (hw === 0 && typed > 0) {
+      label = 'Typed MACCS';
+      icon = '📝';
+      color = 'blue';
+      desc = `${typed} typed page${typed > 1 ? 's' : ''}`;
+    } else if (typed === 0 && hw > 0) {
+      label = 'Handwritten CUSDEC-1';
+      icon = '✍️';
+      color = 'purple';
+      desc = `${hw} handwritten page${hw > 1 ? 's' : ''}`;
+    } else if (typed > 0 && hw > 0) {
+      label = 'Mixed Document';
+      icon = '🔀';
+      color = 'amber';
+      desc = `${typed} typed + ${hw} handwritten`;
+    } else if (d.document_format) {
+      label = d.document_format;
+      icon = '📄';
+      color = 'zinc';
+    }
+    if (att > 0) desc += `${desc ? ' + ' : ''}${att} attachment${att > 1 ? 's' : ''}`;
+
+    return { label, icon, color, desc, cost, tokens_in, tokens_out, mode,
+             total_tokens: tokens_in + tokens_out };
+  });
 
   // ── Tabs ──
   let activeTab = $state<'results' | 'pagemap' | 'annotated' | 'log'>('results');
@@ -208,6 +256,27 @@
   const accuracy = $derived(job?.accuracy_percent ?? 0);
   const items = $derived(job?.items ?? []);
   const decl = $derived(job?.declarations?.[0] ?? null);
+
+  // ── New status fields (from backend) ──
+  const documentFormat = $derived<string | null>(decl?.document_format ?? job?.document_format ?? null);
+  const crossValPassed = $derived<boolean>(
+    (decl?.cross_val_passed ?? job?.cross_val_passed ?? true) !== false
+  );
+  const verifiedFlag = $derived<boolean>(
+    (decl?.verified ?? job?.verified ?? true) !== false
+  );
+  const sanityFlags = $derived<string[]>(() => {
+    const raw = decl?.sanity_flags_json ?? job?.sanity_flags_json ?? null;
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw as string[];
+    if (typeof raw === 'string') {
+      try { const parsed = JSON.parse(raw); return Array.isArray(parsed) ? parsed : []; }
+      catch { return []; }
+    }
+    return [];
+  });
+  let sanityOpen = $state(false);
+
   const decision = $derived(
     accuracy >= 90 ? 'ACCEPTED' : accuracy >= 60 ? 'FIXED' : accuracy >= 30 ? 'RETRY' : 'ESCALATED'
   );
@@ -266,6 +335,56 @@
 </script>
 
 {#if job}
+  {#if docTypeInfo.label !== 'Unknown' || docTypeInfo.cost > 0}
+    <div class="rounded-lg border-2 p-4 mb-4
+      {docTypeInfo.color === 'blue' ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30' :
+       docTypeInfo.color === 'purple' ? 'border-purple-500 bg-purple-50 dark:bg-purple-950/30' :
+       docTypeInfo.color === 'amber' ? 'border-amber-500 bg-amber-50 dark:bg-amber-950/30' :
+       'border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900'}">
+      <div class="flex items-center gap-3 flex-wrap">
+        <span class="text-3xl">{docTypeInfo.icon}</span>
+        <div class="flex-1">
+          <div class="font-bold text-lg">{docTypeInfo.label}</div>
+          {#if docTypeInfo.desc}
+            <div class="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5">{docTypeInfo.desc}</div>
+          {/if}
+        </div>
+        <div class="flex gap-4 text-sm">
+          {#if docTypeInfo.mode}
+            <div class="text-center">
+              <div class="text-[10px] uppercase text-zinc-500">Pipeline</div>
+              <div class="font-mono font-bold">{docTypeInfo.mode.toUpperCase()}</div>
+            </div>
+          {/if}
+          {#if docTypeInfo.cost}
+            <div class="text-center">
+              <div class="text-[10px] uppercase text-zinc-500">Cost</div>
+              <div class="font-mono font-bold">${Number(docTypeInfo.cost).toFixed(4)}</div>
+            </div>
+          {/if}
+          {#if docTypeInfo.total_tokens}
+            <div class="text-center">
+              <div class="text-[10px] uppercase text-zinc-500">Tokens</div>
+              <div class="font-mono font-bold">
+                {(docTypeInfo.tokens_in / 1000).toFixed(1)}K / {(docTypeInfo.tokens_out / 1000).toFixed(1)}K
+              </div>
+            </div>
+          {/if}
+        </div>
+      </div>
+    </div>
+  {/if}
+  {#if v10?.needs_review}
+    <div class="bg-amber-100 dark:bg-amber-950/50 border-l-4 border-amber-500 px-4 py-3 mb-4 rounded">
+      <div class="flex items-center gap-2">
+        <span class="text-amber-600 dark:text-amber-400">⚠️</span>
+        <strong class="text-sm">Needs Review</strong>
+      </div>
+      <div class="text-xs mt-1 text-zinc-600 dark:text-zinc-400">
+        Pipeline flagged this extraction — verify critical fields before approval.
+      </div>
+    </div>
+  {/if}
   <div class="border-2 mb-3" style="border-color: var(--on-surface);">
     <!-- Header (clickable) -->
     <button
@@ -318,14 +437,114 @@
               />
             {/if}
 
+            <!-- Status Badges Row -->
+            {#if documentFormat || !crossValPassed || !verifiedFlag || sanityFlags().length > 0}
+              <div class="border-2 bg-white p-2 space-y-2" style="border-color: var(--on-surface);">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="text-[9px] font-black uppercase" style="color: var(--on-surface);">STATUS</span>
+                  {#if documentFormat === 'CUSDEC1'}
+                    <span class="inline-block font-black uppercase text-white" style="padding: 2px 6px; font-size: 9px; background: #1d4ed8;">
+                      OLD FORMAT — CUSDEC-1
+                    </span>
+                  {:else if documentFormat === 'MACCS'}
+                    <Badge text="MACCS" variant="secondary" />
+                  {:else if documentFormat}
+                    <Badge text={documentFormat} variant="info" />
+                  {/if}
+                  {#if !crossValPassed}
+                    <Badge text="DATA MISMATCH — REVIEW" variant="critical" />
+                  {/if}
+                  {#if !verifiedFlag}
+                    <Badge text="UNVERIFIED" variant="warning" />
+                  {/if}
+                  {#if sanityFlags().length > 0}
+                    <button
+                      type="button"
+                      class="inline-flex items-center gap-1 cursor-pointer font-black uppercase text-white"
+                      style="padding: 2px 6px; font-size: 9px; background: #ff9d00; border: none;"
+                      onclick={() => sanityOpen = !sanityOpen}
+                    >
+                      <span class="material-symbols-outlined" style="font-size: 11px;">
+                        {sanityOpen ? 'expand_more' : 'chevron_right'}
+                      </span>
+                      {sanityFlags().length} SANITY FLAG{sanityFlags().length === 1 ? '' : 'S'}
+                    </button>
+                  {/if}
+                </div>
+                {#if sanityOpen && sanityFlags().length > 0}
+                  <ul class="text-[10px] font-mono space-y-0.5 pl-2 border-l-2" style="border-color: #ff9d00; color: var(--on-surface);">
+                    {#each sanityFlags() as flag}
+                      <li class="flex items-center gap-1">
+                        <span class="material-symbols-outlined" style="font-size: 11px; color: #ff9d00;">warning</span>
+                        <span>{flag}</span>
+                      </li>
+                    {/each}
+                  </ul>
+                {/if}
+              </div>
+            {/if}
+
+            <!-- Pipeline mode badge -->
+            {#if v10?.mode}
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] bg-zinc-200 dark:bg-zinc-800">
+                  Pipeline: <strong>{pipeLabel(v10.mode)}</strong>
+                  {#if v10.v7_used && v10.v10_used}<span>(VERITAS + SCRIVENER hybrid)</span>{/if}
+                </span>
+                {#if v10.v7_used && !v10.v10_used}
+                  <span class="inline-flex items-center px-2 py-1 rounded-full text-[11px] bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">VERITAS</span>
+                {/if}
+                {#if v10.v10_used && !v10.v7_used}
+                  <span class="inline-flex items-center px-2 py-1 rounded-full text-[11px] bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200">SCRIVENER</span>
+                {/if}
+              </div>
+            {/if}
+
             <!-- KPI Row -->
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
               <KpiCard title="ITEMS" value="{items.length}" icon="inventory_2" accent="#007518" />
               <KpiCard title="ACCURACY" value="{accuracy.toFixed(1)}%" progress={accuracy} accent={getAccuracyColor(accuracy)} />
               <KpiCard title="DECISION" value="{decision}" accent={decisionColors[decision] ?? '#007518'} />
               <KpiCard title="TIME" value="{job.processing_time_seconds?.toFixed(1) ?? '—'}s" accent="#006f7c"
-                       subtitle="Cost: ${job.cost_usd?.toFixed(3) ?? '—'} | {job.pipeline_version || 'v1'}" />
+                       subtitle="Cost: ${job.cost_usd?.toFixed(3) ?? '—'} | {pipeLabel(job.pipeline_version) || 'v1'}" />
             </div>
+
+            <!-- Page Classification (V11) -->
+            {#if v10?.page_classification?.pages?.length}
+              <details class="my-3 border border-zinc-200 dark:border-zinc-700 rounded">
+                <summary class="cursor-pointer px-3 py-2 text-sm font-semibold bg-zinc-50 dark:bg-zinc-900">
+                  Page Routing ({v10.page_classification.summary?.TYPED || 0} typed,
+                   {v10.page_classification.summary?.HANDWRITTEN || 0} handwritten,
+                   {v10.page_classification.summary?.ATTACHMENT || 0} attachments)
+                </summary>
+                <div class="p-3 space-y-1">
+                  {#each v10.page_classification.pages as p (p.page)}
+                    <div class="flex items-center gap-2 text-xs">
+                      <span class="font-mono text-zinc-500">Page {p.page}:</span>
+                      <span class="px-2 py-0.5 rounded
+                        {p.label === 'TYPED'
+                           ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
+                           : p.label === 'HANDWRITTEN'
+                              ? 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200'
+                              : 'bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-300'}">
+                        {p.label}
+                      </span>
+                      <span class="text-zinc-500 truncate flex-1">{p.reason || ''}</span>
+                    </div>
+                  {/each}
+                </div>
+              </details>
+            {/if}
+
+            <!-- Pipeline Trace (dev) -->
+            {#if v10?.trace?.length}
+              <details class="my-3 border border-zinc-200 dark:border-zinc-700 rounded">
+                <summary class="cursor-pointer px-3 py-2 text-sm font-semibold bg-zinc-50 dark:bg-zinc-900">
+                  Pipeline Trace ({v10.trace.length} phases)
+                </summary>
+                <pre class="p-3 text-[11px] overflow-x-auto bg-zinc-100 dark:bg-zinc-900">{JSON.stringify(v10.trace, null, 2)}</pre>
+              </details>
+            {/if}
 
             <!-- Confidence Summary -->
             {#if confidence?.summary}
@@ -372,8 +591,10 @@
                   <div class="text-[11px] font-bold mt-0.5" style="color: var(--on-surface);">{decl?.total_customs_value?.toLocaleString() ?? '—'}</div>
                 </div>
                 <div class="p-3 border-b" style="border-color: rgba(56,56,50,0.15);">
-                  <div class="text-[8px] font-black uppercase" style="color: var(--outline);">INVOICE {#if dc['Invoice Number']}<span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:{confDot(dc['Invoice Number'].level)};vertical-align:middle;margin-left:3px;"></span>{/if}</div>
-                  <div class="text-[11px] font-bold mt-0.5" style="color: var(--on-surface);">{decl?.invoice_number || '—'}</div>
+                  <div class="text-[8px] font-black uppercase" style="color: var(--outline);">INVOICE NO (CUSTOMS DECLARATION)</div>
+                  <div class="text-[11px] font-bold mt-0.5" style="color: var(--on-surface);">{decl?.invoice_number_customs_declaration || '—'}</div>
+                  <div class="text-[8px] font-black uppercase mt-2" style="color: var(--outline);">INVOICE NO (COMMERCIAL INVOICE)</div>
+                  <div class="text-[11px] font-bold mt-0.5" style="color: var(--on-surface);">{decl?.invoice_number_commercial_invoice || decl?.invoice_number || '—'}</div>
                 </div>
                 <div class="p-3 border-r" style="border-color: rgba(56,56,50,0.15);">
                   <div class="text-[8px] font-black uppercase" style="color: var(--outline);">INVOICE PRICE {#if dc['Invoice Price']}<span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:{confDot(dc['Invoice Price'].level)};vertical-align:middle;margin-left:3px;"></span>{/if}</div>
@@ -389,7 +610,7 @@
                 </div>
                 <div class="p-3">
                   <div class="text-[8px] font-black uppercase" style="color: var(--outline);">PROCESSED BY</div>
-                  <div class="text-[11px] font-bold mt-0.5" style="color: var(--on-surface);">{job.username || '—'} · {job.created_at?.split(' ')[0] || ''}</div>
+                  <div class="text-[11px] font-bold mt-0.5" style="color: var(--on-surface);">{job.username || job.model_used || '—'} · {(job.created_at || job.processed_at)?.split('T')[0]?.split(' ')[0] || ''}</div>
                 </div>
               {/if}
               </div>
@@ -526,7 +747,9 @@
                   {k:'declaration_date', l:'DATE', ck:'Declaration Date', def:'YYYY-MM-DD format', pg:'pg1'},
                   {k:'importer_name', l:'IMPORTER', ck:'Importer (Name)', def:'Buyer name verbatim', pg:'pg1'},
                   {k:'consignor_name', l:'CONSIGNOR', ck:'Consignor (Name)', def:'Seller/shipper verbatim', pg:'pg1'},
-                  {k:'invoice_number', l:'INVOICE NO', ck:'Invoice Number', def:'With A-/B- prefix', pg:'pg1'},
+                  {k:'invoice_number_customs_declaration', l:'INVOICE NO (CUSTOMS DECLARATION)', ck:'Invoice Number (Customs Declaration)', def:'Customs form value WITH section prefix (e.g. A - AM-PD-001/2025)', pg:'pg1'},
+                  {k:'invoice_number_commercial_invoice', l:'INVOICE NO (COMMERCIAL INVOICE)', ck:'Invoice Number (Commercial Invoice)', def:'Bare invoice ID from supplier invoice (no prefix)', pg:'inv'},
+                  {k:'invoice_number', l:'INVOICE NO (LEGACY)', ck:'Invoice Number', def:'Back-compat alias (mirrors commercial)', pg:'pg1'},
                   {k:'invoice_price', l:'INV PRICE', ck:'Invoice Price', def:'CIF amount in inv currency', pg:'pg1'},
                   {k:'currency', l:'CURRENCY', ck:'Currency', def:'Invoice currency (not MMK)', pg:'inv'},
                   {k:'exchange_rate', l:'FX RATE', ck:'Exchange Rate', def:'Conversion rate to MMK', pg:'pg2'},

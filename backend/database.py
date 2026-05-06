@@ -68,6 +68,37 @@ def init_database():
     except Exception:
         pass  # Column already exists
 
+    # Add pdf_storage column (tracks where PDF lives: 'local' or 's3:{key}' or 'gcs:{key}')
+    try:
+        cursor.execute("ALTER TABLE jobs ADD COLUMN pdf_storage TEXT DEFAULT 'local'")
+    except sqlite3.OperationalError:
+        pass
+
+    # Storage config table — S3/GCS/Azure provider configuration
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS storage_config (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            label TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            endpoint_url TEXT,
+            region_name TEXT,
+            bucket_name TEXT,
+            access_key_id TEXT,
+            secret_access_key_encrypted TEXT,
+            key_prefix TEXT DEFAULT '',
+            use_ssl INTEGER DEFAULT 1,
+            addressing_style TEXT DEFAULT 'auto',
+            signature_version TEXT DEFAULT 's3v4',
+            use_for_uploads INTEGER DEFAULT 1,
+            use_for_exports INTEGER DEFAULT 1,
+            use_for_cache INTEGER DEFAULT 0,
+            use_for_archive INTEGER DEFAULT 0,
+            active INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     # Items table - extracted data items FORMAT 1 (6 fields - linked to jobs)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS items (
@@ -99,6 +130,8 @@ def init_database():
             importer_name TEXT,
             consignor_name TEXT,
             invoice_number TEXT,
+            invoice_number_customs_declaration TEXT,
+            invoice_number_commercial_invoice TEXT,
             invoice_price REAL,
             currency TEXT,
             exchange_rate REAL,
@@ -342,6 +375,24 @@ def init_database():
     except Exception:
         pass
 
+    # Migration v3: add tokens + doc_type + pipeline_mode columns to jobs (idempotent)
+    try:
+        cursor.execute("ALTER TABLE jobs ADD COLUMN tokens_in INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass  # already exists
+    try:
+        cursor.execute("ALTER TABLE jobs ADD COLUMN tokens_out INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE jobs ADD COLUMN document_type TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE jobs ADD COLUMN pipeline_mode TEXT")
+    except sqlite3.OperationalError:
+        pass
+
     # Importer profiles — learned patterns per importer
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS importer_profiles (
@@ -441,6 +492,31 @@ def init_database():
         cursor.execute("ALTER TABLE items ADD COLUMN cif_unit_price TEXT")
     except Exception:
         pass
+    try:
+        cursor.execute("ALTER TABLE declarations ADD COLUMN invoice_number_customs_declaration TEXT")
+    except Exception:
+        pass
+    # CUSDEC-1 / handwritten-doc support: format detection + sanity + cross-val + verifier flags
+    try:
+        cursor.execute("ALTER TABLE declarations ADD COLUMN document_format TEXT")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE declarations ADD COLUMN sanity_flags_json TEXT")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE declarations ADD COLUMN cross_val_passed INTEGER")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE declarations ADD COLUMN verified INTEGER")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE declarations ADD COLUMN invoice_number_commercial_invoice TEXT")
+    except Exception:
+        pass
 
     # Corrections table — stores user corrections for self-learning
     cursor.execute("""
@@ -480,10 +556,220 @@ def init_database():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_corrections_profile ON corrections(profile_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_corrections_field ON corrections(table_key, field_key)")
 
+    # ─── Multi-LDAP support ───────────────────────────────
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS ldap_configs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        label TEXT NOT NULL,
+        host TEXT NOT NULL,
+        port INTEGER NOT NULL,
+        use_tls INTEGER DEFAULT 0,
+        validate_cert INTEGER DEFAULT 0,
+        bind_dn TEXT,
+        bind_password_encrypted TEXT,
+        search_base TEXT,
+        search_filter TEXT,
+        attr_username TEXT DEFAULT 'uid',
+        attr_mail TEXT DEFAULT 'mail',
+        attr_groups TEXT DEFAULT 'memberOf',
+        email_domain_hint TEXT,
+        priority INTEGER DEFAULT 50,
+        active INTEGER DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    # Migration: add user columns (idempotent)
+    for col_sql in (
+        "ALTER TABLE users ADD COLUMN default_ldap_id INTEGER",
+        "ALTER TABLE users ADD COLUMN ldap_dn TEXT",
+    ):
+        try:
+            cursor.execute(col_sql)
+        except sqlite3.OperationalError:
+            pass
+
+    # Activity log v2 enhancements (idempotent)
+    # Note: real table is `activity_logs` with columns username/detail/created_at;
+    # ip_address already exists. Remaining ALTERs add v2 enrichment fields.
+    for col_sql in (
+        "ALTER TABLE activity_logs ADD COLUMN ip_address TEXT",
+        "ALTER TABLE activity_logs ADD COLUMN user_agent TEXT",
+        "ALTER TABLE activity_logs ADD COLUMN auth_source TEXT",
+        "ALTER TABLE activity_logs ADD COLUMN status TEXT",
+        "ALTER TABLE activity_logs ADD COLUMN duration_ms INTEGER",
+        "ALTER TABLE activity_logs ADD COLUMN resource TEXT",
+        "ALTER TABLE activity_logs ADD COLUMN severity TEXT DEFAULT 'info'",
+        "ALTER TABLE activity_logs ADD COLUMN error_message TEXT",
+        "ALTER TABLE activity_logs ADD COLUMN payload_json TEXT",
+    ):
+        try:
+            cursor.execute(col_sql)
+        except sqlite3.OperationalError:
+            pass
+
     conn.commit()
     conn.close()
 
     print(f"✅ Database initialized: {DB_PATH}")
+
+
+def insert_activity_log_v2(timestamp, user, action, details=None,
+                            ip_address=None, user_agent=None, auth_source=None,
+                            status='OK', duration_ms=None, resource=None,
+                            severity='info', error_message=None, payload_json=None):
+    """V2 activity log insert with all enrichment fields.
+
+    Maps to real `activity_logs` columns: username, detail, created_at.
+    """
+    conn = _connect()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO activity_logs
+            (created_at, username, action, detail, ip_address, user_agent,
+             auth_source, status, duration_ms, resource, severity,
+             error_message, payload_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (timestamp, user, action, details, ip_address, user_agent,
+          auth_source, status, duration_ms, resource, severity,
+          error_message, payload_json))
+    conn.commit()
+    conn.close()
+
+
+def list_activity_log_v2(limit=100, offset=0, action=None, status=None,
+                          user=None, severity=None, date_from=None, date_to=None,
+                          search=None, action_in=None):
+    """Filtered list. action_in: list[str] | None — match if action IN list."""
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    where = []
+    params = []
+    if action:
+        where.append("action = ?")
+        params.append(action)
+    if action_in:
+        if isinstance(action_in, str):
+            action_in = [a.strip() for a in action_in.split(",") if a.strip()]
+        if action_in:
+            placeholders = ",".join(["?"] * len(action_in))
+            where.append(f"action IN ({placeholders})")
+            params += list(action_in)
+    if status:
+        where.append("status = ?")
+        params.append(status)
+    if user:
+        where.append("username = ?")
+        params.append(user)
+    if severity:
+        where.append("severity = ?")
+        params.append(severity)
+    if date_from:
+        where.append("created_at >= ?")
+        params.append(date_from)
+    if date_to:
+        where.append("created_at <= ?")
+        params.append(date_to)
+    if search:
+        where.append("(detail LIKE ? OR resource LIKE ? OR error_message LIKE ? OR username LIKE ?)")
+        s = f"%{search}%"
+        params += [s, s, s, s]
+    sql = ("SELECT id, username AS user, action, detail AS details, "
+           "ip_address, user_agent, auth_source, status, duration_ms, "
+           "resource, severity, error_message, payload_json, "
+           "created_at AS timestamp FROM activity_logs")
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+    params += [limit, offset]
+    cur.execute(sql, params)
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def count_activity_log_v2(**filters):
+    """Same filters as list, returns total count."""
+    conn = _connect()
+    cur = conn.cursor()
+    where = []
+    params = []
+    if filters.get("action"):
+        where.append("action = ?")
+        params.append(filters["action"])
+    if filters.get("action_in"):
+        ain = filters["action_in"]
+        if isinstance(ain, str):
+            ain = [a.strip() for a in ain.split(",") if a.strip()]
+        if ain:
+            placeholders = ",".join(["?"] * len(ain))
+            where.append(f"action IN ({placeholders})")
+            params += list(ain)
+    if filters.get("status"):
+        where.append("status = ?")
+        params.append(filters["status"])
+    if filters.get("user"):
+        where.append("username = ?")
+        params.append(filters["user"])
+    if filters.get("severity"):
+        where.append("severity = ?")
+        params.append(filters["severity"])
+    if filters.get("date_from"):
+        where.append("created_at >= ?")
+        params.append(filters["date_from"])
+    if filters.get("date_to"):
+        where.append("created_at <= ?")
+        params.append(filters["date_to"])
+    if filters.get("search"):
+        where.append("(detail LIKE ? OR resource LIKE ? OR error_message LIKE ? OR username LIKE ?)")
+        s = f"%{filters['search']}%"
+        params += [s, s, s, s]
+    sql = "SELECT COUNT(*) FROM activity_logs"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    cur.execute(sql, params)
+    n = cur.fetchone()[0]
+    conn.close()
+    return n
+
+
+def activity_log_stats(date_from=None, date_to=None):
+    """Aggregate stats: total, today, failed_logins, unique_users, top_action."""
+    conn = _connect()
+    cur = conn.cursor()
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    cur.execute("SELECT COUNT(*) FROM activity_logs")
+    total = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at LIKE ?", (f"{today}%",))
+    today_count = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM activity_logs WHERE action = 'LOGIN_FAILED'")
+    failed_logins = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(DISTINCT username) FROM activity_logs WHERE username IS NOT NULL")
+    unique_users = cur.fetchone()[0]
+
+    cur.execute("SELECT action, COUNT(*) c FROM activity_logs GROUP BY action ORDER BY c DESC LIMIT 1")
+    top = cur.fetchone()
+    top_action = top[0] if top else "N/A"
+
+    cur.execute("""SELECT
+                    SUM(CASE WHEN action LIKE 'JOB_%' THEN 1 ELSE 0 END) AS jobs_total,
+                    SUM(CASE WHEN action = 'JOB_FAIL' THEN 1 ELSE 0 END) AS jobs_fail
+                  FROM activity_logs""")
+    j = cur.fetchone()
+    conn.close()
+
+    return {
+        "total": total, "today": today_count,
+        "failed_logins": failed_logins, "unique_users": unique_users,
+        "top_action": top_action,
+        "jobs_total": j[0] or 0, "jobs_fail": j[1] or 0,
+    }
 
 def generate_job_id(pdf_name: str) -> str:
     """Generate unique job ID"""
@@ -521,6 +807,21 @@ def create_job(pdf_name: str, pdf_path: str, pdf_size: int, total_pages: int,
     print(f"✅ Created job: {job_id}")
     return job_id
 
+def update_job_pdf_storage(job_id: str, storage_path: str) -> bool:
+    """Update the pdf_storage reference for a job (e.g. 's3:uploads/foo.pdf' or 'local')."""
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute("UPDATE jobs SET pdf_storage = ? WHERE job_id = ?", (storage_path, job_id))
+        conn.commit()
+        n = cur.rowcount
+        conn.close()
+        return n > 0
+    except Exception as e:
+        logger.warning(f"update_job_pdf_storage failed: {e}")
+        return False
+
+
 def update_job_status(job_id: str, status: str, error_message: str = None):
     """Update job status"""
 
@@ -555,6 +856,19 @@ def update_job_metrics(job_id: str, processing_time: float, cost: float, accurac
         WHERE job_id = ?
     """, (processing_time, cost, accuracy, job_id))
 
+    conn.commit()
+    conn.close()
+
+def update_job_usage(job_id: str, tokens_in: int = 0, tokens_out: int = 0,
+                     document_type: str = None, pipeline_mode: str = None):
+    """Update token + doc-type + pipeline-mode fields on an existing job."""
+    conn = _connect()
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE jobs
+        SET tokens_in = ?, tokens_out = ?, document_type = ?, pipeline_mode = ?
+        WHERE job_id = ?
+    """, (tokens_in or 0, tokens_out or 0, document_type, pipeline_mode, job_id))
     conn.commit()
     conn.close()
 
@@ -599,18 +913,21 @@ def save_declarations(job_id: str, declarations: List[Dict]):
         cursor.execute("""
             INSERT INTO declarations (
                 job_id, declaration_no, declaration_date, importer_name, consignor_name,
-                invoice_number, invoice_price, currency, exchange_rate, currency_2,
+                invoice_number, invoice_number_customs_declaration, invoice_number_commercial_invoice,
+                invoice_price, currency, exchange_rate, currency_2,
                 total_customs_value, import_export_customs_duty, commercial_tax_ct,
                 advance_income_tax_at, security_fee_sf, maccs_service_fee_mf, exemption_reduction
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             job_id,
             decl.get('Declaration No', ''),
             decl.get('Declaration Date', ''),
             decl.get('Importer (Name)', ''),
             decl.get('Consignor (Name)', ''),
-            decl.get('Invoice Number', ''),
+            decl.get('Invoice Number', '') or decl.get('Invoice Number (Commercial Invoice)', '') or decl.get('Invoice Number (Customs Declaration)', ''),
+            decl.get('Invoice Number (Customs Declaration)', ''),
+            decl.get('Invoice Number (Commercial Invoice)', '') or decl.get('Invoice Number', ''),
             decl.get('Invoice Price', 0.0),
             decl.get('Currency', ''),
             decl.get('Exchange Rate', 0.0),
@@ -623,6 +940,21 @@ def save_declarations(job_id: str, declarations: List[Dict]):
             decl.get('MACCS Service Fee (MF)', 0.0),
             decl.get('Exemption/Reduction', 0.0)
         ))
+        new_decl_id = cursor.lastrowid
+        # Persist CUSDEC-1 metadata if present (additive — won't fail if columns missing)
+        try:
+            doc_fmt = decl.get('_document_format') or decl.get('document_format')
+            sanity_flags_json = decl.get('_sanity_flags_json')
+            cross_val_passed = decl.get('_cross_val_passed')
+            verified_flag = decl.get('_verified')
+            cv_int = None if cross_val_passed is None else (1 if cross_val_passed else 0)
+            ver_int = None if verified_flag is None else (1 if verified_flag else 0)
+            cursor.execute("""
+                UPDATE declarations SET document_format = ?, sanity_flags_json = ?,
+                    cross_val_passed = ?, verified = ? WHERE id = ?
+            """, (doc_fmt, sanity_flags_json, cv_int, ver_int, new_decl_id))
+        except Exception:
+            pass
 
     conn.commit()
     conn.close()
@@ -1849,6 +2181,26 @@ def get_weak_fields(importer_name: str, min_error_rate: float = 0.3) -> List[str
     return weak
 
 
+def get_recent_declarations_by_importer(importer_name: str, limit: int = 5) -> list:
+    """Recent declarations for same importer — for baseline cross-check."""
+    if not importer_name:
+        return []
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            """SELECT currency, exchange_rate, declaration_no, declaration_date
+               FROM declarations
+               WHERE importer_name = ?
+               ORDER BY id DESC LIMIT ?""",
+            (importer_name, limit)
+        ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
 def get_fee_baseline(importer_name: str) -> dict:
     """Get verified fee baseline for an importer.
     Returns dict like {"SF": 20000, "MF": 30000, "CT_zero_ok": True} or empty dict.
@@ -1901,6 +2253,215 @@ def save_value_audit(job_id: str, table_key: str, field_key: str,
     """, (job_id, table_key, field_key, item_index, stage, str(old_value), str(new_value), source))
     conn.commit()
     conn.close()
+
+
+# ─── Multi-LDAP CRUD helpers ─────────────────────────────
+def list_ldap_configs(only_active: bool = False) -> list:
+    conn = _connect(); cur = conn.cursor()
+    sql = "SELECT id, label, host, port, use_tls, validate_cert, bind_dn, search_base, search_filter, attr_username, attr_mail, attr_groups, email_domain_hint, priority, active, created_at FROM ldap_configs"
+    if only_active:
+        sql += " WHERE active = 1"
+    sql += " ORDER BY priority ASC, id ASC"
+    cur.execute(sql)
+    rows = cur.fetchall()
+    conn.close()
+    cols = ["id","label","host","port","use_tls","validate_cert","bind_dn","search_base","search_filter","attr_username","attr_mail","attr_groups","email_domain_hint","priority","active","created_at"]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def get_ldap_config(ldap_id: int, include_password: bool = False) -> dict:
+    conn = _connect(); cur = conn.cursor()
+    extra = ", bind_password_encrypted" if include_password else ""
+    cur.execute(f"SELECT id, label, host, port, use_tls, validate_cert, bind_dn, search_base, search_filter, attr_username, attr_mail, attr_groups, email_domain_hint, priority, active{extra} FROM ldap_configs WHERE id = ?", (ldap_id,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    cols = ["id","label","host","port","use_tls","validate_cert","bind_dn","search_base","search_filter","attr_username","attr_mail","attr_groups","email_domain_hint","priority","active"]
+    if include_password:
+        cols.append("bind_password_encrypted")
+    return dict(zip(cols, row))
+
+
+def create_ldap_config(**kwargs) -> int:
+    """kwargs: label, host, port, use_tls, validate_cert, bind_dn, bind_password_encrypted, search_base, search_filter, attr_username, attr_mail, attr_groups, email_domain_hint, priority, active"""
+    conn = _connect(); cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO ldap_configs (label, host, port, use_tls, validate_cert, bind_dn, bind_password_encrypted, search_base, search_filter, attr_username, attr_mail, attr_groups, email_domain_hint, priority, active)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    """, (
+        kwargs.get("label"), kwargs.get("host"), kwargs.get("port", 389),
+        1 if kwargs.get("use_tls") else 0,
+        1 if kwargs.get("validate_cert") else 0,
+        kwargs.get("bind_dn"), kwargs.get("bind_password_encrypted"),
+        kwargs.get("search_base"), kwargs.get("search_filter"),
+        kwargs.get("attr_username", "uid"), kwargs.get("attr_mail", "mail"),
+        kwargs.get("attr_groups", "memberOf"), kwargs.get("email_domain_hint"),
+        kwargs.get("priority", 50),
+        1 if kwargs.get("active", True) else 0,
+    ))
+    new_id = cur.lastrowid
+    conn.commit(); conn.close()
+    return new_id
+
+
+def update_ldap_config(ldap_id: int, **kwargs) -> bool:
+    """Update only provided fields. Pass bind_password_encrypted (already encrypted) to change password."""
+    if not kwargs:
+        return False
+    cols = []; vals = []
+    for k in ("label","host","port","use_tls","validate_cert","bind_dn","bind_password_encrypted","search_base","search_filter","attr_username","attr_mail","attr_groups","email_domain_hint","priority","active"):
+        if k in kwargs:
+            cols.append(f"{k} = ?")
+            v = kwargs[k]
+            if k in ("use_tls","validate_cert","active"):
+                v = 1 if v else 0
+            vals.append(v)
+    if not cols:
+        return False
+    cols.append("updated_at = CURRENT_TIMESTAMP")
+    vals.append(ldap_id)
+    conn = _connect(); cur = conn.cursor()
+    cur.execute(f"UPDATE ldap_configs SET {', '.join(cols)} WHERE id = ?", vals)
+    conn.commit(); n = cur.rowcount; conn.close()
+    return n > 0
+
+
+def delete_ldap_config(ldap_id: int) -> bool:
+    conn = _connect(); cur = conn.cursor()
+    cur.execute("DELETE FROM ldap_configs WHERE id = ?", (ldap_id,))
+    conn.commit(); n = cur.rowcount; conn.close()
+    return n > 0
+
+
+def find_ldap_by_email_domain(domain: str) -> int:
+    if not domain:
+        return None
+    conn = _connect(); cur = conn.cursor()
+    cur.execute("SELECT id FROM ldap_configs WHERE active = 1 AND email_domain_hint = ? ORDER BY priority ASC LIMIT 1", (domain.lower(),))
+    row = cur.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
+def update_user_ldap_default(username: str, ldap_id: int, ldap_dn: str = None) -> bool:
+    conn = _connect(); cur = conn.cursor()
+    cur.execute("UPDATE users SET default_ldap_id = ?, ldap_dn = ? WHERE username = ?", (ldap_id, ldap_dn, username))
+    conn.commit(); n = cur.rowcount; conn.close()
+    return n > 0
+
+
+# =============================================================================
+# Storage config CRUD (S3 / GCS / Azure / local)
+# =============================================================================
+
+def list_storage_configs() -> list:
+    conn = _connect(); conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("""SELECT id, label, provider, endpoint_url, region_name, bucket_name,
+                          access_key_id, key_prefix, use_ssl, addressing_style, signature_version,
+                          use_for_uploads, use_for_exports, use_for_cache, use_for_archive,
+                          active, created_at, updated_at
+                   FROM storage_config ORDER BY id""")
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def get_storage_config(cfg_id: int, include_secret: bool = False) -> dict:
+    conn = _connect(); conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    extra = ", secret_access_key_encrypted" if include_secret else ""
+    cur.execute(f"""SELECT id, label, provider, endpoint_url, region_name, bucket_name,
+                           access_key_id, key_prefix, use_ssl, addressing_style, signature_version,
+                           use_for_uploads, use_for_exports, use_for_cache, use_for_archive,
+                           active{extra}
+                    FROM storage_config WHERE id = ?""", (cfg_id,))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_active_storage_config(include_secret: bool = True) -> dict:
+    """Return the active storage config (only one row should be active)."""
+    conn = _connect(); conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("""SELECT id, label, provider, endpoint_url, region_name, bucket_name,
+                          access_key_id, secret_access_key_encrypted, key_prefix, use_ssl,
+                          addressing_style, signature_version,
+                          use_for_uploads, use_for_exports, use_for_cache, use_for_archive
+                   FROM storage_config WHERE active = 1 LIMIT 1""")
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def create_storage_config(**kwargs) -> int:
+    conn = _connect(); cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO storage_config (label, provider, endpoint_url, region_name, bucket_name,
+            access_key_id, secret_access_key_encrypted, key_prefix, use_ssl,
+            addressing_style, signature_version,
+            use_for_uploads, use_for_exports, use_for_cache, use_for_archive, active)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    """, (
+        kwargs.get("label"), kwargs.get("provider", "local"),
+        kwargs.get("endpoint_url"), kwargs.get("region_name"),
+        kwargs.get("bucket_name"), kwargs.get("access_key_id"),
+        kwargs.get("secret_access_key_encrypted"),
+        kwargs.get("key_prefix", ""),
+        1 if kwargs.get("use_ssl", True) else 0,
+        kwargs.get("addressing_style", "auto"),
+        kwargs.get("signature_version", "s3v4"),
+        1 if kwargs.get("use_for_uploads", True) else 0,
+        1 if kwargs.get("use_for_exports", True) else 0,
+        1 if kwargs.get("use_for_cache", False) else 0,
+        1 if kwargs.get("use_for_archive", False) else 0,
+        1 if kwargs.get("active", False) else 0,
+    ))
+    new_id = cur.lastrowid
+    conn.commit(); conn.close()
+    return new_id
+
+
+def update_storage_config(cfg_id: int, **kwargs) -> bool:
+    if not kwargs: return False
+    cols = []; vals = []
+    bool_fields = ("use_ssl", "use_for_uploads", "use_for_exports", "use_for_cache",
+                   "use_for_archive", "active")
+    allowed = ("label", "provider", "endpoint_url", "region_name", "bucket_name",
+               "access_key_id", "secret_access_key_encrypted", "key_prefix",
+               "addressing_style", "signature_version") + bool_fields
+    for k in allowed:
+        if k in kwargs:
+            cols.append(f"{k} = ?")
+            v = kwargs[k]
+            if k in bool_fields: v = 1 if v else 0
+            vals.append(v)
+    if not cols: return False
+    cols.append("updated_at = CURRENT_TIMESTAMP")
+    vals.append(cfg_id)
+    conn = _connect(); cur = conn.cursor()
+    cur.execute(f"UPDATE storage_config SET {', '.join(cols)} WHERE id = ?", vals)
+    conn.commit(); n = cur.rowcount; conn.close()
+    return n > 0
+
+
+def delete_storage_config(cfg_id: int) -> bool:
+    conn = _connect(); cur = conn.cursor()
+    cur.execute("DELETE FROM storage_config WHERE id = ?", (cfg_id,))
+    conn.commit(); n = cur.rowcount; conn.close()
+    return n > 0
+
+
+def activate_storage_config(cfg_id: int) -> bool:
+    """Atomically set this config active and deactivate all others."""
+    conn = _connect(); cur = conn.cursor()
+    cur.execute("UPDATE storage_config SET active = 0")
+    cur.execute("UPDATE storage_config SET active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (cfg_id,))
+    n = cur.rowcount
+    conn.commit(); conn.close()
+    return n > 0
 
 
 if __name__ == "__main__":

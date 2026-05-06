@@ -93,18 +93,19 @@ def _build_corrections_hint() -> str:
 
 
 def verify(declaration: Dict, items: List[Dict], pages: List[Dict],
-           model: str = None) -> Dict:
+           model: str = None, fmt: str = None) -> Dict:
     """Verify extracted results against source page images.
 
     Args:
         declaration: Extracted declaration fields
         items: Extracted items list
         pages: Original page dicts with image_b64
+        fmt: Document format ("MACCS" or "CUSDEC1") for adaptive page-count.
 
-    Returns: {"declaration": {...}, "items": [...], "corrections": [...]}
+    Returns: {"declaration": {...}, "items": [...], "corrections": [...], "verified": bool}
     """
     model = model or config.EXTRACTION_MODEL
-    print("  Verifier: Cross-checking results against source images...")
+    print(f"  Verifier: Cross-checking results against source images... (fmt={fmt})")
 
     results_json = json.dumps({
         "declaration": declaration,
@@ -117,11 +118,18 @@ def verify(declaration: Dict, items: List[Dict], pages: List[Dict],
     # Build prompt with results + corrections
     prompt_text = VERIFY_PROMPT.format(results_json=results_json) + corrections_hint
 
-    # Build message with images (max 10 pages to stay within token limits)
+    # Build message with images — adaptive count to avoid provider payload errors
     content_parts = []
 
-    # Add page images (limit to most important pages)
-    pages_to_send = pages[:10]  # First 10 pages
+    # Adaptive page count: CUSDEC1 → 3, large docs → 5, else → 10
+    if fmt == "CUSDEC1":
+        page_limit = 3
+    elif len(pages) > 8:
+        page_limit = 5
+    else:
+        page_limit = 10
+    pages_to_send = pages[:page_limit]
+    print(f"    Verifier: sending {len(pages_to_send)}/{len(pages)} page images")
     for p in pages_to_send:
         img_b64 = p.get("image_b64", "")
         if img_b64:
@@ -137,8 +145,12 @@ def verify(declaration: Dict, items: List[Dict], pages: List[Dict],
         "model": model,
         "messages": [{"role": "user", "content": content_parts}],
         "temperature": 0,
-        "max_tokens": 8000,
+        "max_tokens": 4000,
     }
+
+    fallback_model = "anthropic/claude-haiku-4-5"
+    provider_err_count = 0
+    used_fallback = False
 
     for attempt in range(3):
         try:
@@ -146,7 +158,7 @@ def verify(declaration: Dict, items: List[Dict], pages: List[Dict],
                 "https://openrouter.ai/api/v1/chat/completions",
                 headers={"Authorization": f"Bearer {config.API_KEY}", "Content-Type": "application/json"},
                 json=payload,
-                timeout=config.API_TIMEOUT,
+                timeout=90,
             )
             if resp.status_code == 200:
                 result = resp.json()
@@ -157,7 +169,14 @@ def verify(declaration: Dict, items: List[Dict], pages: List[Dict],
                     err_msg = result.get("error", {})
                     if isinstance(err_msg, dict):
                         err_msg = err_msg.get("message", str(result)[:200])
-                    print(f"    Verifier: malformed API response — {str(err_msg)[:200]}")
+                    err_str = str(err_msg)
+                    print(f"    Verifier: malformed API response — {err_str[:200]}")
+                    if "Provider returned error" in err_str:
+                        provider_err_count += 1
+                        if provider_err_count >= 2 and not used_fallback:
+                            print(f"    Verifier: provider error 2x — switching to fallback {fallback_model}")
+                            payload["model"] = fallback_model
+                            used_fallback = True
                     if attempt < 2:
                         time.sleep(2 ** (attempt + 1))
                     continue
@@ -206,6 +225,7 @@ def verify(declaration: Dict, items: List[Dict], pages: List[Dict],
                         "declaration": verified_decl,
                         "items": verified_items,
                         "corrections": corrections,
+                        "verified": True,
                     }
 
             elif resp.status_code == 429:
@@ -228,4 +248,5 @@ def verify(declaration: Dict, items: List[Dict], pages: List[Dict],
         "declaration": declaration,
         "items": items,
         "corrections": [],
+        "verified": False,
     }

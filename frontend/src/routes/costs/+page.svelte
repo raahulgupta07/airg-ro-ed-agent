@@ -16,7 +16,7 @@
   let users = $state<string[]>([]);
   let chartContainer: HTMLDivElement;
 
-  const filteredJobs = $derived(() => {
+const filteredJobs = $derived(() => {
     let result = jobs;
     if (dateFrom) {
       result = result.filter(j => (j.created_at || '').split(' ')[0] >= dateFrom);
@@ -144,12 +144,25 @@
   });
 </script>
 
+<div class="w-full max-w-6xl mx-auto mb-4 p-4 rounded border-2 border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30">
+  <div class="flex items-start gap-3 flex-wrap">
+    <span class="text-2xl">💰</span>
+    <div class="flex-1 min-w-[200px]">
+      <div class="font-bold text-base">Cost Control</div>
+      <div class="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5">
+        Track API spending: daily trends, projections, per-pipeline breakdown, per-doc detail.
+      </div>
+    </div>
+  </div>
+</div>
+
 <ChapterHeading
   icon="payments"
   title="COST_CONTROL_CENTER"
   subtitle="Monitor API spending, trends, and projections"
   question="How much are extractions costing?"
 />
+
 
 {#if loading}
   <div class="skeleton h-64 w-full"></div>

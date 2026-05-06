@@ -16,6 +16,32 @@ from schemas import JobResponse, JobDetailResponse, DuplicateCheckResponse
 router = APIRouter()
 
 
+def _mirror_to_storage(save_path: Path, job_id: Optional[str] = None) -> Optional[str]:
+    """Mirror a saved local PDF to the configured storage provider (S3/GCS).
+    Returns the storage reference (e.g. 's3:uploads/foo.pdf') if uploaded, else None.
+    Never raises — storage failure must not break the upload flow.
+    """
+    try:
+        from storage import get_provider
+        provider = get_provider()
+        if getattr(provider, "name", "local") == "local":
+            return None
+        with open(save_path, "rb") as f:
+            data = f.read()
+        key = f"uploads/{Path(save_path).name}"
+        provider.upload(key, data, content_type="application/pdf")
+        ref = f"{provider.name}:{key}"
+        if job_id:
+            try:
+                database.update_job_pdf_storage(job_id, ref)
+            except Exception as e:
+                print(f"[storage] update_job_pdf_storage failed: {e}")
+        return ref
+    except Exception as e:
+        print(f"[storage] mirror upload failed: {e}")
+        return None
+
+
 def _user_scope(current_user: dict) -> Optional[int]:
     """Return user_id for scoping based on data_scope permission."""
     scope = get_data_scope(current_user)
@@ -106,6 +132,9 @@ async def upload_pdf(
     file_size = save_path.stat().st_size
     pdf_hash = database.calculate_pdf_hash(str(save_path))
 
+    # Mirror to remote storage provider if configured (S3/GCS). Non-fatal.
+    _mirror_to_storage(save_path)
+
     # Check for duplicates
     existing = database.find_job_by_hash(pdf_hash)
     is_duplicate = existing is not None
@@ -156,6 +185,9 @@ async def upload_batch(
         file_size = save_path.stat().st_size
         pdf_hash = database.calculate_pdf_hash(str(save_path))
 
+        # Mirror to remote storage provider if configured (S3/GCS). Non-fatal.
+        _mirror_to_storage(save_path)
+
         existing = database.find_job_by_hash(pdf_hash)
         is_duplicate = existing is not None
         can_reprocess = False
@@ -199,6 +231,8 @@ async def get_job_confidence(job_id: str, current_user: dict = Depends(get_curre
             "Importer (Name)": d.get("importer_name"),
             "Consignor (Name)": d.get("consignor_name"),
             "Invoice Number": d.get("invoice_number"),
+            "Invoice Number (Customs Declaration)": d.get("invoice_number_customs_declaration"),
+            "Invoice Number (Commercial Invoice)": d.get("invoice_number_commercial_invoice"),
             "Invoice Price": d.get("invoice_price"),
             "Currency": d.get("currency"),
             "Exchange Rate": d.get("exchange_rate"),
@@ -317,6 +351,8 @@ async def serve_annotated_pdf(job_id: str, token: str = Query(...)):
         "Importer": decl.get("importer_name"),
         "Consignor": decl.get("consignor_name"),
         "Invoice No": decl.get("invoice_number"),
+        "Invoice Number (Customs Declaration)": decl.get("invoice_number_customs_declaration"),
+        "Invoice Number (Commercial Invoice)": decl.get("invoice_number_commercial_invoice"),
         "Invoice Price": decl.get("invoice_price"),
         "Exchange Rate": decl.get("exchange_rate"),
         "Customs Value": decl.get("total_customs_value"),
@@ -515,6 +551,8 @@ async def download_job_excel(job_id: str, current_user: dict = Depends(get_curre
                 'Importer (Name)': decl.get('importer_name', ''),
                 'Consignor (Name)': decl.get('consignor_name', ''),
                 'Invoice Number': decl.get('invoice_number', ''),
+                'Invoice Number (Customs Declaration)': decl.get('invoice_number_customs_declaration', ''),
+                'Invoice Number (Commercial Invoice)': decl.get('invoice_number_commercial_invoice', ''),
                 'Invoice Price': decl.get('invoice_price', ''),
                 'Currency': decl.get('currency', ''),
                 'Exchange Rate': decl.get('exchange_rate', ''),
@@ -529,7 +567,8 @@ async def download_job_excel(job_id: str, current_user: dict = Depends(get_curre
                 'Processed': decl.get('created_at', ''),
             })
         all_decl_cols = ['Job', 'Declaration No', 'Declaration Date', 'Importer (Name)', 'Consignor (Name)',
-                         'Invoice Number', 'Invoice Price', 'Currency', 'Exchange Rate', 'Currency 2',
+                         'Invoice Number', 'Invoice Number (Customs Declaration)', 'Invoice Number (Commercial Invoice)',
+                         'Invoice Price', 'Currency', 'Exchange Rate', 'Currency 2',
                          'Total Customs Value', 'Import/Export Customs Duty', 'Commercial Tax (CT)',
                          'Advance Income Tax (AT)', 'Security Fee (SF)', 'MACCS Service Fee (MF)',
                          'Exemption/Reduction', 'Processed']

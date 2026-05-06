@@ -50,6 +50,11 @@
 
     <!-- User avatar -->
     <div class="flex items-center gap-3">
+      {#if auth.user?.auth_source}
+        <span class="text-[10px] px-1.5 py-0.5 rounded bg-zinc-200 text-zinc-700 font-bold uppercase">
+          {auth.user.auth_source}
+        </span>
+      {/if}
       <button onclick={onlogout} class="text-[10px] font-black uppercase px-2 py-1 cursor-pointer"
               style="color: var(--tertiary); border: 1px solid var(--tertiary); background: transparent;">
         LOGOUT

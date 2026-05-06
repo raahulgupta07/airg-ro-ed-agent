@@ -6,7 +6,8 @@ Myanmar PDF Data Extraction Pipeline
 
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from typing import Optional
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -36,6 +37,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Phase 7: capture client IP + User-Agent into request.state for every request
+try:
+    from middleware import EventContextMiddleware
+    app.add_middleware(EventContextMiddleware)
+except Exception:
+    pass
+
 # --- API Routes ---
 from routes import auth as auth_routes
 from routes import jobs as job_routes
@@ -45,6 +53,10 @@ from routes import ws as ws_routes
 from routes import settings as settings_routes
 from routes import groups as group_routes
 from routes import corrections as correction_routes
+from routes import usage as usage_routes
+from routes import ldap as ldap_routes
+from routes import activity as activity_routes
+from routes import storage as storage_routes
 app.include_router(auth_routes.router, prefix="/api/auth", tags=["auth"])
 app.include_router(job_routes.router, prefix="/api/jobs", tags=["jobs"])
 app.include_router(user_routes.router, prefix="/api/users", tags=["users"])
@@ -53,6 +65,10 @@ app.include_router(ws_routes.router, prefix="/api/ws", tags=["pipeline"])
 app.include_router(settings_routes.router, prefix="/api/settings", tags=["settings"])
 app.include_router(group_routes.router, prefix="/api/groups", tags=["groups"])
 app.include_router(correction_routes.router, prefix="/api/corrections", tags=["corrections"])
+app.include_router(usage_routes.router, prefix="/api/usage", tags=["usage"])
+app.include_router(ldap_routes.router, prefix="/api/ldap", tags=["ldap"])
+app.include_router(activity_routes.router, prefix="/api/activity", tags=["activity"])
+app.include_router(storage_routes.router, prefix="/api/storage", tags=["storage"])
 
 
 @app.post("/api/extract")
@@ -99,6 +115,9 @@ async def extract_pdf(
             "accuracy": result.get("accuracy", 0),
             "duration": result.get("duration_seconds", 0),
             "cost": result.get("cost_usd", 0),
+            "tokens_in": result.get("tokens_in", 0),
+            "tokens_out": result.get("tokens_out", 0),
+            "cost_breakdown": result.get("cost_breakdown", []),
             "declaration": result.get("declaration", {}),
             "items": result.get("items", []),
             "cross_validation": result.get("cross_validation"),
@@ -109,6 +128,459 @@ async def extract_pdf(
             save_path.unlink(missing_ok=True)
         except Exception:
             pass
+
+
+@app.post("/api/extract-v8")
+async def extract_pdf_v8(file: UploadFile = File(...)):
+    """V8 — Claude-only 5-pass pipeline (Haiku filter → Opus → Sonnet → Opus reconciler → post-fix)."""
+    import asyncio
+    import shutil
+    import uuid
+
+    if file is None:
+        raise HTTPException(400, "No file uploaded")
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "Only PDF files accepted")
+
+    import config
+    config.UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
+    safe_name = f"{uuid.uuid4().hex[:8]}_{file.filename}"
+    save_path = config.UPLOAD_FOLDER / safe_name
+    with open(save_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    try:
+        try:
+            from v8.cc_pipeline import run_one
+        except Exception as e:
+            raise HTTPException(500, f"V8 pipeline unavailable: {e}")
+
+        try:
+            result = await asyncio.to_thread(run_one, str(save_path))
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f"V8 extraction failed: {e}")
+
+        if not result:
+            raise HTTPException(500, "V8 extraction returned no result")
+
+        return {
+            "status": "ok",
+            "filename": file.filename,
+            "mode": "v8",
+            "items_count": len(result.get("items", [])),
+            "duration": result.get("duration_seconds", 0),
+            "cost": result.get("cost_usd", 0),
+            "declaration": result.get("declaration", {}),
+            "items": result.get("items", []),
+            "document_format": result.get("document_format", ""),
+            "pages_kept": result.get("pages_kept", []),
+            "cost_breakdown": result.get("cost_breakdown", []),
+            "anomalies": result.get("anomalies", []),
+            "postfix_notes": result.get("postfix_notes", []),
+        }
+    finally:
+        try:
+            save_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+@app.post("/api/extract-v9")
+async def extract_pdf_v9(file: UploadFile = File(...)):
+    """V9 — Agno agentic pipeline (Haiku filter → Gemini-Pro reader → Sonnet verifier → post-fix)."""
+    import asyncio
+    import shutil
+    import uuid
+
+    if file is None:
+        raise HTTPException(400, "No file uploaded")
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "Only PDF files accepted")
+
+    import config
+    config.UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
+    safe_name = f"{uuid.uuid4().hex[:8]}_{file.filename}"
+    save_path = config.UPLOAD_FOLDER / safe_name
+    with open(save_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    try:
+        try:
+            from v9.workflow import run as run_v9
+        except Exception as e:
+            raise HTTPException(500, f"V9 pipeline unavailable: {e}")
+
+        try:
+            result = await asyncio.to_thread(run_v9, str(save_path))
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f"V9 extraction failed: {e}")
+
+        if not result:
+            raise HTTPException(500, "V9 extraction returned no result")
+
+        return {
+            "status": "ok",
+            "filename": file.filename,
+            "mode": "v9",
+            "items_count": len(result.get("items", [])),
+            "duration": result.get("duration_seconds", 0),
+            "cost": result.get("cost_usd", 0),
+            "declaration": result.get("declaration", {}),
+            "items": result.get("items", []),
+            "document_format": result.get("document_format", ""),
+            "pages_kept": result.get("pages_kept", []),
+            "anomalies": result.get("anomalies", []),
+            "postfix_notes": result.get("postfix_notes", []),
+            "trace": result.get("trace", []),
+        }
+    finally:
+        try:
+            save_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+@app.post("/api/extract-v9-pro")
+async def extract_pdf_v9_pro(file: UploadFile = File(...)):
+    """V9 PRO — Agno agentic pipeline (Haiku filter → Gemini-Pro reader → Sonnet verifier → post-fix)."""
+    import asyncio
+    import shutil
+    import uuid
+
+    if file is None:
+        raise HTTPException(400, "No file uploaded")
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "Only PDF files accepted")
+
+    import config
+    config.UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
+    safe_name = f"{uuid.uuid4().hex[:8]}_{file.filename}"
+    save_path = config.UPLOAD_FOLDER / safe_name
+    with open(save_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    try:
+        try:
+            from v9_pro.workflow import run as run_v9pro
+        except Exception as e:
+            raise HTTPException(500, f"V9 pipeline unavailable: {e}")
+
+        try:
+            result = await asyncio.to_thread(run_v9pro, str(save_path))
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f"V9 extraction failed: {e}")
+
+        if not result:
+            raise HTTPException(500, "V9 extraction returned no result")
+
+        return {
+            "status": "ok",
+            "filename": file.filename,
+            "mode": "v9_pro",
+            "items_count": len(result.get("items", [])),
+            "duration": result.get("duration_seconds", 0),
+            "cost": result.get("cost_usd", 0),
+            "declaration": result.get("declaration", {}),
+            "items": result.get("items", []),
+            "document_format": result.get("document_format", ""),
+            "pages_kept": result.get("pages_kept", []),
+            "anomalies": result.get("anomalies", []),
+            "postfix_notes": result.get("postfix_notes", []),
+            "trace": result.get("trace", []),
+            "needs_review": result.get("needs_review", False),
+        }
+    finally:
+        try:
+            save_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+@app.post("/api/extract-v10")
+async def extract_pdf_v10(file: UploadFile = File(...)):
+    """V10 — Handwriting Specialist (HW detect → multi-DPI 3-model vote → memory)."""
+    import asyncio
+    import shutil
+    import uuid
+
+    if file is None:
+        raise HTTPException(400, "No file uploaded")
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "Only PDF files accepted")
+
+    import config
+    config.UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
+    safe_name = f"{uuid.uuid4().hex[:8]}_{file.filename}"
+    save_path = config.UPLOAD_FOLDER / safe_name
+    with open(save_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    try:
+        try:
+            from v10.workflow import run as run_v10
+        except Exception as e:
+            raise HTTPException(500, f"V10 pipeline unavailable: {e}")
+
+        try:
+            result = await asyncio.to_thread(run_v10, str(save_path))
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f"V10 extraction failed: {e}")
+
+        if not result:
+            raise HTTPException(500, "V10 extraction returned no result")
+
+        return {
+            "status": "ok",
+            "filename": file.filename,
+            "mode": "v10",
+            "items_count": len(result.get("items", [])),
+            "duration": result.get("duration_seconds", 0),
+            "cost": result.get("cost_usd", 0),
+            "declaration": result.get("declaration", {}),
+            "items": result.get("items", []),
+            "document_format": result.get("document_format", ""),
+            "is_handwritten": result.get("is_handwritten", False),
+            "pages_kept": result.get("pages_kept", []),
+            "anomalies": result.get("anomalies", []),
+            "postfix_notes": result.get("postfix_notes", []),
+            "trace": result.get("trace", []),
+            "needs_review": result.get("needs_review", False),
+        }
+    finally:
+        try:
+            save_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+@app.post("/api/extract-v10-pro")
+async def extract_pdf_v10_pro(file: UploadFile = File(...)):
+    """V10 PRO — HW with shape-validation + memory + 800 DPI digit-list + box detection."""
+    import asyncio, shutil, uuid
+
+    if file is None:
+        raise HTTPException(400, "No file uploaded")
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "Only PDF files accepted")
+
+    import config
+    config.UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
+    safe_name = f"{uuid.uuid4().hex[:8]}_{file.filename}"
+    save_path = config.UPLOAD_FOLDER / safe_name
+    with open(save_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    try:
+        try:
+            from v10_pro.workflow import run as run_v10_pro
+        except Exception as e:
+            raise HTTPException(500, f"V10 PRO pipeline unavailable: {e}")
+        try:
+            result = await asyncio.to_thread(run_v10_pro, str(save_path))
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f"V10 PRO extraction failed: {e}")
+        if not result:
+            raise HTTPException(500, "V10 PRO returned no result")
+        return {
+            "status": "ok",
+            "filename": file.filename,
+            "mode": "v10_pro",
+            "items_count": len(result.get("items", [])),
+            "duration": result.get("duration_seconds", 0),
+            "cost": result.get("cost_usd", 0),
+            "tokens_in": result.get("tokens_in", 0),
+            "tokens_out": result.get("tokens_out", 0),
+            "cost_breakdown": result.get("cost_breakdown", []),
+            "declaration": result.get("declaration", {}),
+            "items": result.get("items", []),
+            "document_format": result.get("document_format", ""),
+            "is_handwritten": result.get("is_handwritten", False),
+            "pages_kept": result.get("pages_kept", []),
+            "anomalies": result.get("anomalies", []),
+            "postfix_notes": result.get("postfix_notes", []),
+            "trace": result.get("trace", []),
+            "needs_review": result.get("needs_review", False),
+        }
+    finally:
+        try:
+            save_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+@app.post("/api/extract-v11")
+async def extract_pdf_v11(file: UploadFile = File(...), job_id: Optional[str] = Form(None)):
+    """V11 — Master Router (per-page classifier → V7 typed + V10 HW parallel → merge)."""
+    import asyncio, shutil, uuid
+
+    if file is None:
+        raise HTTPException(400, "No file uploaded")
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "Only PDF files accepted")
+
+    import config
+    config.UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
+    safe_name = f"{uuid.uuid4().hex[:8]}_{file.filename}"
+    save_path = config.UPLOAD_FOLDER / safe_name
+    with open(save_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    try:
+        try:
+            from v11.workflow import run as run_v11
+        except Exception as e:
+            raise HTTPException(500, f"V11 pipeline unavailable: {e}")
+
+        try:
+            result = await asyncio.to_thread(run_v11, str(save_path), job_id)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f"V11 extraction failed: {e}")
+
+        if not result:
+            raise HTTPException(500, "V11 extraction returned no result")
+
+        return {
+            "status": "ok",
+            "filename": file.filename,
+            "mode": "v11",
+            "job_id": result.get("job_id"),
+            "items_count": len(result.get("items", [])),
+            "duration": result.get("duration_seconds", 0),
+            "cost": result.get("cost", 0),
+            "tokens_in": result.get("tokens_in", 0),
+            "tokens_out": result.get("tokens_out", 0),
+            "cost_breakdown": result.get("cost_breakdown", []),
+            "declaration": result.get("declaration", {}),
+            "declarations": [result["declaration"]] if result.get("declaration") else [],
+            "items": result.get("items", []),
+            "document_format": result.get("document_format", ""),
+            "page_classification": result.get("page_classification", {}),
+            "v7_used": result.get("v7_used", False),
+            "v10_used": result.get("v10_used", False),
+            "needs_review": result.get("needs_review", False),
+            "item_review_flags": result.get("item_review_flags", []),
+            "trace": result.get("trace", []),
+            "total_pages": result.get("total_pages", 0),
+            "text_pages": result.get("text_pages", 0),
+            "image_pages": result.get("image_pages", 0),
+            "attachment_pages": result.get("attachment_pages", 0),
+            "pipeline_version": result.get("pipeline_version", "v11"),
+            "model_used": result.get("model_used", "V11 Maestro"),
+            "processed_at": result.get("processed_at", ""),
+        }
+    finally:
+        try:
+            save_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+@app.get("/api/extract-v11/stream/{job_id}")
+async def extract_v11_stream(job_id: str):
+    """V11 — SSE live event stream for a router job."""
+    import asyncio, json as _json
+    from fastapi.responses import StreamingResponse
+
+    try:
+        from v11.event_bus import subscribe as _v11_subscribe
+    except Exception as _e:
+        _v11_subscribe = None
+        _import_err = str(_e)
+    else:
+        _import_err = None
+
+    _TERMINAL = {"DONE", "FAIL", "__CLOSE__"}
+    _TIMEOUT_SECONDS = 600
+
+    async def _event_gen():
+        if _v11_subscribe is None:
+            payload = _json.dumps({"error": f"v11.event_bus unavailable: {_import_err}"})
+            yield f"event: FAIL\ndata: {payload}\n\n"
+            return
+
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + _TIMEOUT_SECONDS
+
+        try:
+            source = _v11_subscribe(job_id)
+        except Exception as e:
+            payload = _json.dumps({"error": f"subscribe failed: {e}"})
+            yield f"event: FAIL\ndata: {payload}\n\n"
+            return
+
+        # Support both async iterators and sync iterables/generators.
+        if hasattr(source, "__aiter__"):
+            aiter_obj = source.__aiter__()
+            while True:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    yield f"event: __CLOSE__\ndata: {_json.dumps({'reason': 'timeout'})}\n\n"
+                    return
+                try:
+                    event = await asyncio.wait_for(aiter_obj.__anext__(), timeout=remaining)
+                except StopAsyncIteration:
+                    return
+                except asyncio.TimeoutError:
+                    yield f"event: __CLOSE__\ndata: {_json.dumps({'reason': 'timeout'})}\n\n"
+                    return
+                except Exception as e:
+                    yield f"event: FAIL\ndata: {_json.dumps({'error': str(e)})}\n\n"
+                    return
+
+                event_type, event_data = _split_event(event)
+                yield f"event: {event_type}\ndata: {_json.dumps(event_data, default=str)}\n\n"
+                if event_type in _TERMINAL:
+                    return
+        else:
+            it = iter(source)
+            while True:
+                if loop.time() >= deadline:
+                    yield f"event: __CLOSE__\ndata: {_json.dumps({'reason': 'timeout'})}\n\n"
+                    return
+                try:
+                    event = await asyncio.to_thread(next, it, _SENTINEL)
+                except Exception as e:
+                    yield f"event: FAIL\ndata: {_json.dumps({'error': str(e)})}\n\n"
+                    return
+                if event is _SENTINEL:
+                    return
+                event_type, event_data = _split_event(event)
+                yield f"event: {event_type}\ndata: {_json.dumps(event_data, default=str)}\n\n"
+                if event_type in _TERMINAL:
+                    return
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(_event_gen(), media_type="text/event-stream", headers=headers)
+
+
+_SENTINEL = object()
+
+
+def _split_event(event):
+    """Normalize an event into (event_type, event_data)."""
+    if isinstance(event, dict):
+        et = event.get("type") or event.get("event") or "message"
+        data = event.get("data", {k: v for k, v in event.items() if k not in ("type", "event")})
+        return str(et), data
+    if isinstance(event, (list, tuple)) and len(event) == 2:
+        return str(event[0]), event[1]
+    return "message", event
 
 
 @app.get("/api/health")
