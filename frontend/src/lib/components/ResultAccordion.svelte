@@ -501,9 +501,6 @@
             {/if}
 
             <!-- KPI Row -->
-            {@const _tokIn = job.tokens_in ?? job.tokens?.input_tokens ?? 0}
-            {@const _tokOut = job.tokens_out ?? job.tokens?.output_tokens ?? 0}
-            {@const _model = job.model_used || pipeLabel(job.pipeline_mode || job.pipeline_version) || 'V11'}
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
               <KpiCard title="ITEMS" value="{items.length}" icon="inventory_2" accent="#007518" />
               <KpiCard title="ACCURACY" value="{accuracy.toFixed(1)}%" progress={accuracy} accent={getAccuracyColor(accuracy)} />
@@ -514,11 +511,11 @@
             <!-- Cost & Tokens KPI Row -->
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
               <KpiCard title="COST" value="${job.cost_usd?.toFixed(3) ?? '—'}" accent="#a16207" />
-              <KpiCard title="TOKENS_IN" value="{(_tokIn / 1000).toFixed(1)}K" accent="#1d4ed8"
-                       subtitle="{_tokIn.toLocaleString()} input tokens" />
-              <KpiCard title="TOKENS_OUT" value="{(_tokOut / 1000).toFixed(1)}K" accent="#7c3aed"
-                       subtitle="{_tokOut.toLocaleString()} output tokens" />
-              <KpiCard title="MODEL" value="{_model}" accent="#7e22ce"
+              <KpiCard title="TOKENS_IN" value="{((job.tokens_in ?? 0) / 1000).toFixed(1)}K" accent="#1d4ed8"
+                       subtitle="{(job.tokens_in ?? 0).toLocaleString()} in" />
+              <KpiCard title="TOKENS_OUT" value="{((job.tokens_out ?? 0) / 1000).toFixed(1)}K" accent="#7c3aed"
+                       subtitle="{(job.tokens_out ?? 0).toLocaleString()} out" />
+              <KpiCard title="MODEL" value="{job.model_used || pipeLabel(job.pipeline_mode || job.pipeline_version) || 'V11'}" accent="#7e22ce"
                        subtitle="Pipeline: {pipeLabel(job.pipeline_mode || job.pipeline_version) || '—'}" />
             </div>
 

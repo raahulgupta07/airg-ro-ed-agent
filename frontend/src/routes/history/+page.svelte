@@ -304,6 +304,9 @@
     {@const items = selectedJob.items ?? []}
     {@const decl = selectedJob.declarations?.[0]}
     {@const decision = acc >= 90 ? 'ACCEPTED' : acc >= 60 ? 'FIXED' : 'ESCALATED'}
+    {@const _ti = selectedJob.tokens_in ?? 0}
+    {@const _to = selectedJob.tokens_out ?? 0}
+    {@const _model = selectedJob.model_used || (selectedJob.pipeline_mode || '').toUpperCase() || '—'}
 
     <!-- Header bar -->
     <div class="flex items-center justify-between mb-4 p-3 border-2 bg-white" style="border-color: var(--on-surface);">
@@ -331,9 +334,6 @@
       </div>
     </div>
 
-    {@const _ti = selectedJob.tokens_in ?? 0}
-    {@const _to = selectedJob.tokens_out ?? 0}
-    {@const _model = selectedJob.model_used || (selectedJob.pipeline_mode || '').toUpperCase() || '—'}
     <!-- KPI Row 1: 6 across -->
     <div class="grid grid-cols-6 gap-2 mb-2">
       <KpiCard title="ITEMS" value="{items.length}" accent="#007518" />
