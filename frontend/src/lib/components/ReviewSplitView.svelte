@@ -59,19 +59,24 @@
   let flags = $state<any[]>(Array.isArray(job?.item_review_flags) ? job.item_review_flags : []);
 
   // Reactively sync when parent passes a different job (e.g. /history async load)
-  let _lastJobId = $state<string | null>(null);
+  let _lastSig = $state<string>('');
   $effect(() => {
-    const jid = (job as any)?.job_id ?? null;
-    if (jid && jid !== _lastJobId) {
-      _lastJobId = jid;
-      const d = _readDecl(job);
-      workingDecl = { ...d };
-      originalDecl = { ...d };
-      const it = Array.isArray(job?.items) ? job.items.map((i: any) => ({ ...i })) : [];
-      workingItems = it;
-      originalItems = it.map((i: any) => ({ ...i }));
-      flags = Array.isArray(job?.item_review_flags) ? job.item_review_flags : [];
-    }
+    // Read job fields explicitly so Svelte tracks them as deps
+    const j = job as any;
+    const jid = j?.job_id ?? '';
+    const declCount = j?.declarations?.length ?? (j?.declaration ? 1 : 0);
+    const itemsCount = j?.items?.length ?? 0;
+    const sig = `${jid}|${declCount}|${itemsCount}`;
+    if (!jid) return;
+    if (sig === _lastSig) return;
+    _lastSig = sig;
+    const d = _readDecl(j);
+    workingDecl = { ...d };
+    originalDecl = { ...d };
+    const it = Array.isArray(j?.items) ? j.items.map((i: any) => ({ ...i })) : [];
+    workingItems = it;
+    originalItems = it.map((i: any) => ({ ...i }));
+    flags = Array.isArray(j?.item_review_flags) ? j.item_review_flags : [];
   });
 
   // Edit log (visual only — backend already persisted via PATCH per save)
@@ -649,6 +654,20 @@
     </span>
     <div class="flex-1"></div>
     <div class="flex flex-wrap gap-2">
+      <button
+        class="px-3 py-1.5 text-[10px] font-black uppercase border-2 cursor-pointer"
+        style="border-color: var(--on-surface); background: var(--primary-container); color: var(--on-surface); box-shadow: 2px 2px 0px 0px var(--on-surface);"
+        onclick={() => {
+          try {
+            localStorage.removeItem('ro_ed_agent_queue');
+            localStorage.removeItem('ro_ed_agent_sel');
+          } catch { /* ignore */ }
+          try { window.location.href = '/agent'; } catch { /* ignore */ }
+        }}
+        title="Start a new extraction job"
+      >
+        ↻ NEW JOB
+      </button>
       <button
         class="px-3 py-1.5 text-[10px] font-black uppercase border-2 cursor-pointer"
         style="border-color: var(--on-surface); color: var(--on-surface); background: var(--surface);"
