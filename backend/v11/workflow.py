@@ -579,7 +579,22 @@ def run(pdf_path: str, job_id: Optional[str] = None) -> Dict:
         current_stage = "db_save"
         db_job_id = None
         try:
-            db_job_id = _save_to_db(out, pdf_path)
+            # Retry on transient SQLite "database is locked" errors (event_logger contention).
+            _save_err = None
+            for _attempt in range(5):
+                try:
+                    db_job_id = _save_to_db(out, pdf_path)
+                    _save_err = None
+                    break
+                except Exception as _se:
+                    _save_err = _se
+                    _msg = str(_se).lower()
+                    if "locked" in _msg or "busy" in _msg:
+                        time.sleep(0.5 * (_attempt + 1))
+                        continue
+                    raise
+            if _save_err is not None:
+                raise _save_err
             out["job_id"] = db_job_id
             out["trace"].append({"phase": "db_save", "ok": True, "job_id": db_job_id})
             _emit(job_id, "DB_SAVE", {

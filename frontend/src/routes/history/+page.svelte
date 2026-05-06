@@ -9,6 +9,7 @@
   import PageMap from '$lib/components/PageMap.svelte';
   import PageDetail from '$lib/components/PageDetail.svelte';
   import ResultAccordion from '$lib/components/ResultAccordion.svelte';
+  import ReviewSplitView from '$lib/components/ReviewSplitView.svelte';
   import { getAccuracyColor, getPageTypeColor } from '$lib/colors';
 
   let jobs = $state<any[]>([]);
@@ -373,8 +374,12 @@
       </div>
     {/if}
 
-    <!-- All tables + document map + field search handled by ResultAccordion -->
-    <ResultAccordion job={selectedJob} defaultOpen={true} />
+    <!-- V11 jobs use side-by-side review; others stay on ResultAccordion -->
+    {#if selectedJob.pipeline_mode === 'v11'}
+      <ReviewSplitView jobId={selectedJob.job_id} job={selectedJob} />
+    {:else}
+      <ResultAccordion job={selectedJob} defaultOpen={true} />
+    {/if}
 
     {/if}
 
