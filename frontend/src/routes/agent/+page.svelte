@@ -539,14 +539,16 @@
               queue = [...queue];
 
               if (statusRes.status === 'finished') {
-                // Fetch the full job from DB.
-                const job = await api.getJob(dbJobId);
-                jobResults[dbJobId] = job;
+                // Worker creates a fresh DB row inside V11._save_to_db.
+                // Prefer the worker's result.job_id (real data row); fall back to pre-created dbJobId.
+                const realJobId = statusRes?.result?.job_id || dbJobId;
+                const job = await api.getJob(realJobId);
+                jobResults[realJobId] = job;
                 jobResults = { ...jobResults };
                 queue[queueIdx] = {
                   ...queue[queueIdx],
                   status: 'done',
-                  jobId: dbJobId,
+                  jobId: realJobId,
                   accuracy: job?.accuracy_percent || 0,
                   itemsCount: job?.items?.length || 0,
                   cost: job?.cost_usd || 0,

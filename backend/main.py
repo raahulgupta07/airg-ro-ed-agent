@@ -505,27 +505,14 @@ async def extract_pdf_v11(file: UploadFile = File(...), job_id: Optional[str] = 
     with open(save_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
-    # Pre-create DB job row so polling by job_id works immediately.
-    try:
-        db_job_id = database.create_job(
-            pdf_name=file.filename,
-            pdf_path=str(save_path),
-            pdf_size=save_path.stat().st_size,
-            total_pages=0,
-            text_pages=0,
-            image_pages=0,
-        )
-    except Exception as e:
-        try:
-            save_path.unlink(missing_ok=True)
-        except Exception:
-            pass
-        raise HTTPException(500, f"Failed to create job row: {e}")
+    # NOTE: do NOT pre-create a DB row here. Worker's V11._save_to_db creates the
+    # final job_id when it runs. Frontend uses status_res.result.job_id to fetch.
+    db_job_id = None  # unknown until worker finishes
 
-    # Use the frontend-provided job_id for SSE alignment if given; otherwise the DB id.
+    # SSE id: use frontend-provided job_id if given, else generate uuid.
     # RQ only allows letters/numbers/underscores/dashes — sanitize.
     import re
-    raw_sse = job_id or db_job_id
+    raw_sse = job_id or uuid.uuid4().hex
     sse_job_id = re.sub(r'[^A-Za-z0-9_\-]', '-', str(raw_sse))[:128]
 
     # Enqueue the background extraction task.
@@ -541,10 +528,6 @@ async def extract_pdf_v11(file: UploadFile = File(...), job_id: Optional[str] = 
         )
     except Exception as e:
         try:
-            database.update_job_status(db_job_id, 'FAILED')
-        except Exception:
-            pass
-        try:
             save_path.unlink(missing_ok=True)
         except Exception:
             pass
@@ -554,7 +537,7 @@ async def extract_pdf_v11(file: UploadFile = File(...), job_id: Optional[str] = 
         "status": "queued",
         "filename": file.filename,
         "mode": "v11",
-        "job_id": db_job_id,
+        "job_id": None,  # worker will create — fetch via /api/extract-v11/status/{stream_id}.result.job_id
         "stream_id": sse_job_id,
         "queue_position": _queue_position(rq_job),
         "message": f"PDF queued. Stream live router events at /api/extract-v11/stream/{sse_job_id}",
