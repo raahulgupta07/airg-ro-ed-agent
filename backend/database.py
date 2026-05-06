@@ -958,7 +958,23 @@ def save_items(job_id: str, items: List[Dict]):
     except Exception:
         has_display_order = False
 
+    def _g(it, *keys, default=''):
+        for k in keys:
+            v = it.get(k)
+            if v not in (None, ''):
+                return v
+        return default
     for idx, item in enumerate(items):
+        v_name      = _g(item, 'item_name', 'Item name')
+        v_duty_rate = _g(item, 'customs_duty_rate', 'Customs duty rate', default=0.0)
+        v_qty       = _g(item, 'quantity', 'Quantity (1)')
+        v_inv_price = _g(item, 'invoice_unit_price', 'Invoice unit price')
+        v_cif_price = _g(item, 'cif_unit_price', 'CIF unit price')
+        v_tax_pct   = _g(item, 'commercial_tax_percent', 'commercial_tax_pct', 'Commercial tax %', default=0.0)
+        v_fx        = _g(item, 'exchange_rate', 'Exchange Rate (1)')
+        v_hs        = _g(item, 'hs_code', 'HS Code')
+        v_origin    = _g(item, 'origin_country', 'origin', 'Origin Country')
+        v_mmk       = _g(item, 'customs_value_mmk', 'Customs Value (MMK)', default=0.0)
         if has_display_order:
             cursor.execute("""
                 INSERT INTO items (job_id, item_name, customs_duty_rate, quantity,
@@ -966,39 +982,16 @@ def save_items(job_id: str, items: List[Dict]):
                                  exchange_rate, hs_code, origin_country, customs_value_mmk,
                                  display_order)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                job_id,
-                item.get('Item name', ''),
-                item.get('Customs duty rate', 0.0),
-                item.get('Quantity (1)', ''),
-                item.get('Invoice unit price', ''),
-                item.get('CIF unit price', ''),
-                item.get('Commercial tax %', 0.0),
-                item.get('Exchange Rate (1)', ''),
-                item.get('HS Code', ''),
-                item.get('Origin Country', ''),
-                item.get('Customs Value (MMK)', 0.0),
-                idx,
-            ))
+            """, (job_id, v_name, v_duty_rate, v_qty, v_inv_price, v_cif_price,
+                  v_tax_pct, v_fx, v_hs, v_origin, v_mmk, idx))
         else:
             cursor.execute("""
                 INSERT INTO items (job_id, item_name, customs_duty_rate, quantity,
                                  invoice_unit_price, cif_unit_price, commercial_tax_percent,
                                  exchange_rate, hs_code, origin_country, customs_value_mmk)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                job_id,
-                item.get('Item name', ''),
-                item.get('Customs duty rate', 0.0),
-                item.get('Quantity (1)', ''),
-                item.get('Invoice unit price', ''),
-                item.get('CIF unit price', ''),
-                item.get('Commercial tax %', 0.0),
-                item.get('Exchange Rate (1)', ''),
-                item.get('HS Code', ''),
-                item.get('Origin Country', ''),
-                item.get('Customs Value (MMK)', 0.0),
-            ))
+            """, (job_id, v_name, v_duty_rate, v_qty, v_inv_price, v_cif_price,
+                  v_tax_pct, v_fx, v_hs, v_origin, v_mmk))
 
     conn.commit()
     conn.close()
@@ -1011,7 +1004,31 @@ def save_declarations(job_id: str, declarations: List[Dict]):
     conn = _connect()
     cursor = conn.cursor()
 
+    def _g(d, *keys, default=''):
+        for k in keys:
+            v = d.get(k)
+            if v not in (None, ''):
+                return v
+        return default
     for decl in declarations:
+        v_no       = _g(decl, 'declaration_no', 'Declaration No')
+        v_date     = _g(decl, 'declaration_date', 'Declaration Date')
+        v_importer = _g(decl, 'importer_name', 'Importer (Name)')
+        v_consign  = _g(decl, 'consignor_name', 'Consignor (Name)')
+        v_inv_cd   = _g(decl, 'invoice_number_customs_declaration', 'invoice_number_customs', 'Invoice Number (Customs Declaration)')
+        v_inv_ci   = _g(decl, 'invoice_number_commercial_invoice', 'invoice_number_commercial', 'Invoice Number (Commercial Invoice)')
+        v_inv_no   = _g(decl, 'invoice_number', 'Invoice Number') or v_inv_ci or v_inv_cd
+        v_price    = _g(decl, 'invoice_price', 'Invoice Price', default=0.0)
+        v_curr     = _g(decl, 'currency', 'Currency')
+        v_rate     = _g(decl, 'exchange_rate', 'Exchange Rate', default=0.0)
+        v_curr2    = _g(decl, 'currency_2', 'Currency 2', default=v_curr)
+        v_cust_val = _g(decl, 'total_customs_value', 'Total Customs Value', default=0.0)
+        v_duty     = _g(decl, 'import_export_customs_duty', 'customs_duty', 'Import/Export Customs Duty', default=0.0)
+        v_ct       = _g(decl, 'commercial_tax_ct', 'commercial_tax', 'Commercial Tax (CT)', default=0.0)
+        v_at       = _g(decl, 'advance_income_tax_at', 'advance_income_tax', 'Advance Income Tax (AT)', default=0.0)
+        v_sf       = _g(decl, 'security_fee_sf', 'security_fee', 'Security Fee (SF)', default=0.0)
+        v_mf       = _g(decl, 'maccs_service_fee_mf', 'maccs_service_fee', 'MACCS Service Fee (MF)', default=0.0)
+        v_exempt   = _g(decl, 'exemption_reduction', 'exemption', 'Exemption/Reduction', default=0.0)
         cursor.execute("""
             INSERT INTO declarations (
                 job_id, declaration_no, declaration_date, importer_name, consignor_name,
@@ -1022,25 +1039,10 @@ def save_declarations(job_id: str, declarations: List[Dict]):
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            job_id,
-            decl.get('Declaration No', ''),
-            decl.get('Declaration Date', ''),
-            decl.get('Importer (Name)', ''),
-            decl.get('Consignor (Name)', ''),
-            decl.get('Invoice Number', '') or decl.get('Invoice Number (Commercial Invoice)', '') or decl.get('Invoice Number (Customs Declaration)', ''),
-            decl.get('Invoice Number (Customs Declaration)', ''),
-            decl.get('Invoice Number (Commercial Invoice)', '') or decl.get('Invoice Number', ''),
-            decl.get('Invoice Price', 0.0),
-            decl.get('Currency', ''),
-            decl.get('Exchange Rate', 0.0),
-            decl.get('Currency 2', decl.get('Currency', '')),
-            decl.get('Total Customs Value', 0.0),
-            decl.get('Import/Export Customs Duty', 0.0),
-            decl.get('Commercial Tax (CT)', 0.0),
-            decl.get('Advance Income Tax (AT)', 0.0),
-            decl.get('Security Fee (SF)', 0.0),
-            decl.get('MACCS Service Fee (MF)', 0.0),
-            decl.get('Exemption/Reduction', 0.0)
+            job_id, v_no, v_date, v_importer, v_consign,
+            v_inv_no, v_inv_cd, v_inv_ci,
+            v_price, v_curr, v_rate, v_curr2,
+            v_cust_val, v_duty, v_ct, v_at, v_sf, v_mf, v_exempt
         ))
         new_decl_id = cursor.lastrowid
         # Persist CUSDEC-1 metadata if present (additive — won't fail if columns missing)

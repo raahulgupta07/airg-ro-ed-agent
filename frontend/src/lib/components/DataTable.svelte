@@ -23,8 +23,8 @@
   {/if}
 
   <!-- Table container -->
-  <div class="bg-white overflow-x-auto custom-scrollbar" style="max-height: {maxHeight}; overflow-y: auto;">
-    <table class="w-full border-collapse text-xs">
+  <div class="bg-white overflow-x-auto custom-scrollbar" style="max-height: {maxHeight}; overflow-y: auto; max-width: 100%;">
+    <table class="border-collapse text-xs" style="min-width: 100%;">
       <thead class="sticky top-0 z-[1]" style="background: var(--surface-container-highest);">
         <tr>
           {#each columns as col}
