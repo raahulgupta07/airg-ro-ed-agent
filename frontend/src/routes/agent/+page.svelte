@@ -606,7 +606,11 @@
   const MAX_POLL_ATTEMPTS = 20; // ~60s at 3s intervals
 
   async function pollProcessingJobs() {
-    const processingEntries = queue.filter(q => q.status === 'processing' && q.jobId);
+    // Only poll WS-pipeline jobs (V7 path) — these have DB ids prefixed with "JOB_".
+    // V11 path uses HTTP response directly + SSE; skipping prevents 404 spam on pre-allocated UUIDs.
+    const processingEntries = queue.filter(q =>
+      q.status === 'processing' && q.jobId && typeof q.jobId === 'string' && q.jobId.startsWith('JOB_')
+    );
     if (processingEntries.length === 0) {
       if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
       pollAttempts = 0;
@@ -1071,34 +1075,13 @@
           </div>
         {:else if selectedJob}
           {#if selectedPipeline === 'v11'}
-            <div class="flex gap-2 mb-2">
-              <button
-                class="px-3 py-1.5 text-[10px] font-black uppercase border-2 cursor-pointer"
-                style="border-color: var(--on-surface); background: {reviewMode === 'view' ? 'var(--on-surface)' : 'var(--surface)'}; color: {reviewMode === 'view' ? 'var(--surface)' : 'var(--on-surface)'};"
-                onclick={() => reviewMode = 'view'}>VIEW</button>
-              <button
-                class="px-3 py-1.5 text-[10px] font-black uppercase border-2 cursor-pointer"
-                style="border-color: var(--on-surface); background: {reviewMode === 'review' ? 'var(--on-surface)' : 'var(--surface)'}; color: {reviewMode === 'review' ? 'var(--surface)' : 'var(--on-surface)'};"
-                onclick={() => reviewMode = 'review'}>REVIEW + EDIT</button>
-            </div>
-            {#if reviewMode === 'review'}
-              <ReviewSplitView
-                jobId={selectedJob.job_id}
-                job={selectedJob}
-                onApprove={() => { reviewMode = 'view'; reviewToast('Approved'); }}
-                onReject={() => { reviewMode = 'view'; reviewToast('Rejected'); }}
-                onClose={() => { reviewMode = 'view'; }}
-              />
-            {:else}
-              <ResultAccordion job={selectedJob} defaultOpen={true}
-                pipelineSteps={terminalSteps}
-                bind:pipelineCollapsed={terminalCollapsed}
-                agentLines={agentLines}
-                agentSummary={terminalSummary}
-                vizSteps={vizSteps}
-                vizSummary={vizSummary}
-              />
-            {/if}
+            <ReviewSplitView
+              jobId={selectedJob.job_id}
+              job={selectedJob}
+              onApprove={() => { reviewToast('Approved'); }}
+              onReject={() => { reviewToast('Rejected'); }}
+              onClose={() => { reviewToast('Closed'); }}
+            />
           {:else}
             <ResultAccordion job={selectedJob} defaultOpen={true}
               pipelineSteps={terminalSteps}

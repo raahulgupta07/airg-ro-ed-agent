@@ -157,8 +157,8 @@
           return `[SCAN] p${p}  ${v}${showOld}  conf=${band} (${pct}%)${evStr}`;
         }
         case 'ROUTE': {
-          const v7 = d.v7 ?? d.V7 ?? d.veritas ?? [];
-          const vp = d.v10_pro ?? d.V10_PRO ?? d.v10p ?? d.scrivener ?? [];
+          const v7 = d.v7_pages ?? d.v7 ?? d.V7 ?? d.veritas ?? [];
+          const vp = d.v10_pro_pages ?? d.v10_pro ?? d.V10_PRO ?? d.v10p ?? d.scrivener ?? [];
           const dropped = d.dropped ?? d.drop ?? d.skip ?? [];
           const a = (arr: any[]) => `[${(arr as any[]).join(',')}] (${(arr as any[]).length})`;
           return `[ROUTE]  Veritas pages=${a(v7)}  Scrivener pages=${a(vp)}  SKIP=${a(dropped)}`;
@@ -249,8 +249,8 @@
   }
 
   function applyRoute(d: any) {
-    const v7: number[] = (d.v7 ?? d.V7 ?? d.veritas ?? []).map((n: any) => Number(n));
-    const vp: number[] = (d.v10_pro ?? d.V10_PRO ?? d.v10p ?? d.scrivener ?? []).map((n: any) => Number(n));
+    const v7: number[] = (d.v7_pages ?? d.v7 ?? d.V7 ?? d.veritas ?? []).map((n: any) => Number(n));
+    const vp: number[] = (d.v10_pro_pages ?? d.v10_pro ?? d.V10_PRO ?? d.v10p ?? d.scrivener ?? []).map((n: any) => Number(n));
     const dropped: number[] = (d.dropped ?? d.drop ?? d.skip ?? []).map((n: any) => Number(n));
 
     const updated = [...pageBoxes];

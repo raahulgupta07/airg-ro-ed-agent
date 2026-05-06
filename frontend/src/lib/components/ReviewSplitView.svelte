@@ -1,6 +1,32 @@
 <script lang="ts">
   import { auth } from '$lib/stores/auth.svelte';
   import Toast from './Toast.svelte';
+  import ExcelTable from './ExcelTable.svelte';
+
+  type Col = {
+    id: string;
+    header: string;
+    accessor?: string;
+    width?: number;
+    frozen?: boolean;
+    cell?: (row: any) => any;
+    align?: 'left' | 'right' | 'center';
+    enableSort?: boolean;
+  };
+
+  const ITEM_COLUMNS: Col[] = [
+    { id: 'item_name', header: 'ITEM NAME', accessor: 'item_name', width: 240 },
+    { id: 'hs_code', header: 'HS', accessor: 'hs_code', width: 110 },
+    { id: 'quantity', header: 'QTY', accessor: 'quantity', width: 90 },
+    { id: 'invoice_unit_price', header: 'UNIT PRICE', accessor: 'invoice_unit_price', width: 90, align: 'right' },
+    { id: 'cif_unit_price', header: 'CIF PRICE', accessor: 'cif_unit_price', width: 90, align: 'right' },
+    { id: 'currency', header: 'CUR', accessor: 'currency', width: 60 },
+    { id: 'customs_duty_rate', header: 'DUTY%', accessor: 'customs_duty_rate', width: 70, align: 'right' },
+    { id: 'commercial_tax_percent', header: 'TAX%', accessor: 'commercial_tax_percent', width: 70, align: 'right' },
+    { id: 'exchange_rate', header: 'FX', accessor: 'exchange_rate', width: 80, align: 'right' },
+    { id: 'origin_country', header: 'ORIGIN', accessor: 'origin_country', width: 80 },
+    { id: 'customs_value_mmk', header: 'VALUE (MMK)', accessor: 'customs_value_mmk', width: 130, align: 'right' },
+  ];
 
   let {
     jobId,
@@ -205,6 +231,10 @@
   const status: string = job?.review_status || job?.status || 'PENDING_REVIEW';
   const filename: string = job?.pdf_name || job?.filename || 'document.pdf';
   const cost: number = job?.cost_usd || 0;
+  const accuracy: number = job?.accuracy_percent || 0;
+  const decision: string = job?.gate_decision || job?.decision || (accuracy >= 90 ? 'ACCEPTED' : 'ESCALATED');
+  const duration: number = job?.processing_time_seconds || job?.duration || 0;
+  const itemsCount = $derived(workingItems.length);
   const flagCount = $derived(Array.isArray(flags) ? flags.length : 0);
   const editCount = $derived(editLog.length);
   let unsavedDirty = $state(false);
@@ -246,10 +276,10 @@
     }
   }
 
-  async function saveItemField(idx: number, field: string) {
+  async function saveItemField(idx: number, field: string, valueOverride?: any) {
     const item = workingItems[idx] || {};
     const before = item[field];
-    const after = editValue;
+    const after = valueOverride !== undefined ? valueOverride : editValue;
     if (String(before ?? '') === String(after ?? '')) {
       cancelEdit();
       return;
@@ -515,6 +545,17 @@
     }
   }
 
+  // ── ExcelTable items bridge ──
+  // Annotate items with _index so save handlers can target the right index.
+  const itemsForTable = $derived(workingItems.map((it, i) => ({ ...it, _index: i })));
+
+  function isItemCellEdited(idx: number, field: string): boolean {
+    const cur = workingItems[idx]?.[field];
+    const orig = originalItems[idx]?.[field];
+    if (cur == null || orig == null) return false;
+    return String(cur) !== String(orig);
+  }
+
   // ── Declaration field rows definition ──
   const declRows = [
     { field: 'declaration_no', label: 'DECL_NO' },
@@ -560,7 +601,7 @@
       {filename}
     </span>
     <span class="text-[10px] font-mono" style="color: var(--outline);">
-      {totalPages} pgs · ${cost.toFixed(2)} · edits={editCount} · flags={flagCount}
+      {totalPages} pg · ${cost.toFixed(3)} · ITEMS:{itemsCount} · ACC:{accuracy.toFixed(1)}% · DEC:{decision} · TIME:{duration ? duration.toFixed(0) + 's' : '—'} · EDITS:{editCount} · FLAGS:{flagCount}
     </span>
     <div class="flex-1"></div>
     <div class="flex flex-wrap gap-2">
@@ -765,14 +806,26 @@
     </div>
 
     <!-- Items -->
-    <div class="border-2 stamp-shadow"
-      style="border-color: var(--on-surface); background: var(--surface);">
-      <div class="dark-bar flex items-center justify-between text-xs">
-        <span>ITEMS ({workingItems.length})</span>
-        <button class="px-2 py-0.5 text-[9px] font-black uppercase border cursor-pointer"
-          style="border-color: var(--surface); color: var(--surface); background: transparent;"
-          onclick={addItemRow}>+ ADD</button>
-      </div>
+    <ExcelTable
+      title="PRODUCT_ITEMS"
+      columns={ITEM_COLUMNS}
+      data={itemsForTable}
+      editable={true}
+      enableRowActions={true}
+      enableAddRow={true}
+      isCellEdited={(row, col) => isItemCellEdited(row._index, col.id)}
+      onCellEdit={(row, col, val) => saveItemField(row._index, col.id, val)}
+      onPageJump={(p) => jumpPdfImmediate(p)}
+      pageRefAccessor={(row) => itemPageRef(row._index, 'item_name')}
+      onRowMoveUp={(idx) => moveItem(idx, -1)}
+      onRowMoveDown={(idx) => moveItem(idx, 1)}
+      onRowDelete={(idx) => deleteItemRow(idx)}
+      onAddRow={addItemRow}
+      exportFilename="items.csv"
+      maxHeight="400px"
+    />
+    <!-- Legacy items table (replaced by ExcelTable above) -->
+    {#if false}
       <div class="bg-white overflow-x-auto custom-scrollbar">
         <table class="w-full text-[10px] font-mono">
           <thead>
@@ -872,7 +925,7 @@
           </tbody>
         </table>
       </div>
-    </div>
+    {/if}
 
     <!-- Edit log -->
     <div class="border-2"

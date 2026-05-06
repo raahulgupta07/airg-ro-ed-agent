@@ -13,14 +13,16 @@ services:
     volumes:
       - app-data:/app/data
     restart: unless-stopped
+    mem_limit: 12g
+    cpus: 4
     deploy:
       resources:
         limits:
-          cpus: '2'
-          memory: 4G
+          cpus: '4'
+          memory: 12G
         reservations:
-          cpus: '1'
-          memory: 1G
+          cpus: '2'
+          memory: 2G
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/api/health"]
       interval: 30s
