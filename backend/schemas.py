@@ -80,6 +80,15 @@ class JobResponse(BaseModel):
     cost_usd: Optional[float] = None
     accuracy_percent: Optional[float] = None
     error_message: Optional[str] = None
+    pipeline_mode: Optional[str] = None
+    pipeline_version: Optional[str] = None
+    review_status: Optional[str] = None
+    reviewed_by: Optional[str] = None
+    reviewed_at: Optional[str] = None
+    review_notes: Optional[str] = None
+    edits_count: Optional[int] = 0
+    document_type: Optional[str] = None
+    field_bboxes: Optional[dict] = None
 
 
 class JobDetailResponse(JobResponse):

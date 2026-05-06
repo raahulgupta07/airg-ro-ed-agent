@@ -541,6 +541,7 @@ async def extract_pdf_v11(file: UploadFile = File(...), job_id: Optional[str] = 
             "pipeline_version": result.get("pipeline_version", "v11"),
             "model_used": result.get("model_used", "V11 Maestro"),
             "processed_at": result.get("processed_at", ""),
+            "field_bboxes": result.get("field_bboxes") or {},
         }
     except Exception:
         # Only delete the PDF on error (so review UI can re-show it after success).

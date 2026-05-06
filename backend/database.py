@@ -636,6 +636,7 @@ def init_database():
         ("review_notes", "TEXT"),
         ("edits_count", "INTEGER DEFAULT 0"),
         ("parent_job_id", "TEXT"),
+        ("field_bboxes_json", "TEXT"),
     )
     for col_name, col_def in _review_cols:
         if col_name not in _existing_job_cols:
@@ -685,19 +686,27 @@ def insert_activity_log_v2(timestamp, user, action, details=None,
 
     Maps to real `activity_logs` columns: username, detail, created_at.
     """
+    # Default username to '-' so NOT NULL constraint never blocks (system events).
+    if user in (None, ''):
+        user = '-'
     conn = _connect()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO activity_logs
-            (created_at, username, action, detail, ip_address, user_agent,
-             auth_source, status, duration_ms, resource, severity,
-             error_message, payload_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (timestamp, user, action, details, ip_address, user_agent,
-          auth_source, status, duration_ms, resource, severity,
-          error_message, payload_json))
-    conn.commit()
-    conn.close()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO activity_logs
+                (created_at, username, action, detail, ip_address, user_agent,
+                 auth_source, status, duration_ms, resource, severity,
+                 error_message, payload_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (timestamp, user, action, details, ip_address, user_agent,
+              auth_source, status, duration_ms, resource, severity,
+              error_message, payload_json))
+        conn.commit()
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def list_activity_log_v2(limit=100, offset=0, action=None, status=None,
@@ -1209,8 +1218,39 @@ def get_job_details(job_id: str) -> Optional[Dict]:
     else:
         job_dict['cross_validation'] = None
 
+    # Parse field_bboxes JSON if present (V11 PDF↔form linking)
+    if job_dict.get('field_bboxes_json'):
+        try:
+            job_dict['field_bboxes'] = json.loads(job_dict['field_bboxes_json'])
+        except (json.JSONDecodeError, TypeError):
+            job_dict['field_bboxes'] = {}
+    else:
+        job_dict['field_bboxes'] = {}
+
     conn.close()
     return job_dict
+
+
+def update_job_field_bboxes(job_id: str, bboxes: Dict) -> bool:
+    """Persist field bbox data on the job row (V11)."""
+    if not job_id:
+        return False
+    try:
+        payload = json.dumps(bboxes or {}, default=str)[:200000]
+    except Exception:
+        payload = "{}"
+    conn = _connect()
+    try:
+        cur = conn.cursor()
+        cur.execute("UPDATE jobs SET field_bboxes_json = ? WHERE job_id = ?",
+                    (payload, job_id))
+        conn.commit()
+        return cur.rowcount > 0
+    except Exception as e:
+        print(f"[update_job_field_bboxes] {e}")
+        return False
+    finally:
+        conn.close()
 
 def get_stats() -> Dict:
     """Get database statistics"""

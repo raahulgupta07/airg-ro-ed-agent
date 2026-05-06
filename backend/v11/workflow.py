@@ -11,6 +11,11 @@ from typing import Dict, Optional
 from v11.agents.page_classifier import classify_pages
 from v11.tools.pdf_split import split_pdf_by_labels
 from v11.agents.merger import merge_results
+try:
+    from v11.tools.field_bbox import compute_field_bboxes as _compute_field_bboxes
+except Exception:
+    def _compute_field_bboxes(_pdf, _decl, _items):
+        return {}
 
 try:
     import event_logger
@@ -192,6 +197,14 @@ def _save_to_db(out: Dict, pdf_path: str) -> str:
         database.update_review_status(job_id, "pending_review")
     except Exception as e:
         print(f"[V11 DB] update_review_status error: {e}")
+
+    # Persist field bboxes (PDF↔form highlight)
+    try:
+        bb = out.get("field_bboxes") or {}
+        if bb:
+            database.update_job_field_bboxes(job_id, bb)
+    except Exception as e:
+        print(f"[V11 DB] update_job_field_bboxes error: {e}")
 
     # Compute document_type from page_classification summary
     cls = out.get("page_classification", {}) or {}
@@ -574,6 +587,15 @@ def run(pdf_path: str, job_id: Optional[str] = None) -> Dict:
         if v10_res:
             breakdown += [{**e, "branch": "v10_pro"} for e in (v10_res.get("cost_breakdown") or [])]
         out["cost_breakdown"] = breakdown
+
+        # ─── Phase 4.5: Compute field bboxes (best-effort, fitz text search) ───
+        try:
+            out["field_bboxes"] = _compute_field_bboxes(
+                pdf_path, out.get("declaration") or {}, out.get("items") or []
+            )
+        except Exception as _bbe:
+            out["field_bboxes"] = {}
+            out["trace"].append({"phase": "bbox", "error": str(_bbe)})
 
         # ─── Phase 5: Save merged result to DB ───
         current_stage = "db_save"

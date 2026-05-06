@@ -166,23 +166,40 @@
 
   // Debounced PDF jump (200ms) to avoid rapid iframe reloads on hover.
   let _jumpTimer: ReturnType<typeof setTimeout> | null = null;
-  function jumpPdf(page: number) {
+  let pdfSearchTerm = $state<string>('');
+  function jumpPdf(page: number, searchVal?: string) {
     if (!page || page < 1) return;
     if (_jumpTimer) clearTimeout(_jumpTimer);
     _jumpTimer = setTimeout(() => {
       if (page !== currentPage) currentPage = page;
+      if (searchVal !== undefined) pdfSearchTerm = String(searchVal || '').slice(0, 80);
     }, 200);
   }
-  function jumpPdfImmediate(page: number) {
+  function jumpPdfImmediate(page: number, searchVal?: string) {
     if (!page || page < 1) return;
     if (_jumpTimer) { clearTimeout(_jumpTimer); _jumpTimer = null; }
     currentPage = page;
+    if (searchVal !== undefined) pdfSearchTerm = String(searchVal || '').slice(0, 80);
   }
 
   function jumpToPage(n: number) {
     jumpPdfImmediate(n);
   }
-  const pdfSrc = $derived(pdfBlobUrl ? `${pdfBlobUrl}#page=${currentPage}&zoom=page-fit` : '');
+
+  // Field bboxes from backend: { declaration: {field: {page,x,y,w,h}}, items: {idx: {field: {...}}} }
+  const fieldBboxes = $derived.by(() => (job as any)?.field_bboxes || {});
+  function declBbox(field: string) {
+    return fieldBboxes?.declaration?.[field] || null;
+  }
+  function itemBbox(idx: number, field: string) {
+    return fieldBboxes?.items?.[String(idx)]?.[field] || null;
+  }
+
+  const pdfSrc = $derived.by(() => {
+    if (!pdfBlobUrl) return '';
+    const search = pdfSearchTerm ? `&search=${encodeURIComponent(pdfSearchTerm)}` : '';
+    return `${pdfBlobUrl}#page=${currentPage}&zoom=page-fit${search}`;
+  });
 
   // ── Edits-by-page (red dot on page strip) ──
   const editsByPage = $derived.by(() => {
@@ -743,13 +760,15 @@
       <div class="bg-white p-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
         {#each declRows as row}
           {@const editing = editingKey === `decl:${row.field}`}
-          {@const dPage = declPageRef(row.field)}
+          {@const _bb = declBbox(row.field)}
+          {@const dPage = (_bb?.page) || declPageRef(row.field)}
+          {@const _searchVal = String((decl as any)?.[row.field] ?? '')}
           <div
             id={`field-decl-${row.field}`}
             class="border-2 p-2"
             style="border-color: {declBorder(row.field)}; background: {declBg(row.field)};"
-            onmouseenter={() => jumpPdf(dPage)}
-            onfocusin={() => jumpPdf(dPage)}
+            onmouseenter={() => jumpPdf(dPage, _searchVal)}
+            onfocusin={() => jumpPdf(dPage, _searchVal)}
             role="group"
           >
             <div class="flex items-center justify-between gap-1">
