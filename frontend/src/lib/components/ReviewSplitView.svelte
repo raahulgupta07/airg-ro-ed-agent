@@ -113,6 +113,12 @@
   let rejectNotes = $state('');
   let showApproveConfirm = $state(false);
   let approveNotes = $state('');
+  let approving = $state(false);
+  let rejecting = $state(false);
+  // Pre-mark from existing job.review_status so re-load doesn't allow double-approve.
+  const _initialStatus = (job as any)?.review_status || '';
+  let approved = $state(_initialStatus === 'approved');
+  let rejected = $state(_initialStatus === 'rejected');
 
   // ── PDF blob loading (auth-safe iframe) ──
   let pdfBlobUrl = $state<string>('');
@@ -547,6 +553,8 @@
     doApprove();
   }
   async function doApprove() {
+    if (approving || approved) return;  // guard against double-click / already approved
+    approving = true;
     try {
       const r = await fetch(`/api/review/${jobId}/approve`, {
         method: 'POST',
@@ -557,6 +565,7 @@
         body: JSON.stringify({ notes: approveNotes || undefined }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      approved = true;
       toast('✓ APPROVED — saved to HISTORY');
       showApproveConfirm = false;
       onApprove?.();
@@ -568,14 +577,17 @@
       }, 1500);
     } catch {
       toast('Approve failed', 'error');
+      approving = false;  // allow retry on real error
     }
   }
 
   async function doReject() {
+    if (rejecting || rejected || approved) return;
     if (!rejectNotes.trim()) {
       toast('Reason required', 'error');
       return;
     }
+    rejecting = true;
     try {
       const r = await fetch(`/api/review/${jobId}/reject`, {
         method: 'POST',
@@ -586,11 +598,13 @@
         body: JSON.stringify({ notes: rejectNotes }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      rejected = true;
       toast('Rejected');
       showRejectModal = false;
       onReject?.();
     } catch {
       toast('Reject failed', 'error');
+      rejecting = false;
     }
   }
 
@@ -683,18 +697,20 @@
         💾 DRAFT
       </button>
       <button
-        class="px-3 py-1.5 text-[10px] font-black uppercase border-2 cursor-pointer"
-        style="border-color: var(--on-surface); background: #ef4444; color: white;"
-        onclick={() => { showRejectModal = true; }}
+        class="px-3 py-1.5 text-[10px] font-black uppercase border-2"
+        style="border-color: var(--on-surface); background: {(approved || rejected) ? '#9ca3af' : '#ef4444'}; color: white; cursor: {(approved || rejected || rejecting) ? 'not-allowed' : 'pointer'}; opacity: {(approved || rejected) ? 0.5 : 1};"
+        disabled={approved || rejected || rejecting || approving}
+        onclick={() => { if (!approved && !rejected) showRejectModal = true; }}
       >
         ✗ REJECT
       </button>
       <button
-        class="px-3 py-1.5 text-[10px] font-black uppercase border-2 cursor-pointer"
-        style="border-color: var(--on-surface); background: #16a34a; color: white;"
+        class="px-3 py-1.5 text-[10px] font-black uppercase border-2"
+        style="border-color: var(--on-surface); background: {(approved || rejected) ? '#9ca3af' : '#16a34a'}; color: white; cursor: {(approved || approving || rejected) ? 'not-allowed' : 'pointer'}; opacity: {(approved || rejected) ? 0.5 : 1};"
+        disabled={approving || approved || rejected || rejecting}
         onclick={approveClicked}
       >
-        ✓ APPROVE
+        {approving ? '… APPROVING' : approved ? '✓ APPROVED' : '✓ APPROVE'}
       </button>
     </div>
   </div>

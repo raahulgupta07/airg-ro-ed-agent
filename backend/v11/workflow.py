@@ -261,6 +261,20 @@ def _save_to_db(out: Dict, pdf_path: str) -> str:
     except Exception as e:
         print(f"[V11 DB] update_job_usage error: {e}")
 
+    # Persist model_used + processed_at for UI display
+    try:
+        import database as _db
+        _conn = _db._connect()
+        _cur = _conn.cursor()
+        _cur.execute(
+            "UPDATE jobs SET model_used = ?, processed_at = ? WHERE job_id = ?",
+            (out.get("model_used"), out.get("processed_at"), job_id),
+        )
+        _conn.commit()
+        _conn.close()
+    except Exception as e:
+        print(f"[V11 DB] update model/processed_at error: {e}")
+
     return job_id
 
 

@@ -89,6 +89,10 @@ class JobResponse(BaseModel):
     edits_count: Optional[int] = 0
     document_type: Optional[str] = None
     field_bboxes: Optional[dict] = None
+    tokens_in: Optional[int] = 0
+    tokens_out: Optional[int] = 0
+    model_used: Optional[str] = None
+    processed_at: Optional[str] = None
 
 
 class JobDetailResponse(JobResponse):
