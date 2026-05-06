@@ -492,6 +492,22 @@ def init_database():
         cursor.execute("ALTER TABLE items ADD COLUMN cif_unit_price TEXT")
     except Exception:
         pass
+    # V11 Review UI: soft-delete + display order for items table
+    try:
+        cursor.execute("ALTER TABLE items ADD COLUMN is_deleted INTEGER DEFAULT 0")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE items ADD COLUMN display_order INTEGER DEFAULT 0")
+    except Exception:
+        pass
+    try:
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_items_job_order "
+            "ON items(job_id, is_deleted, display_order, id)"
+        )
+    except Exception:
+        pass
     try:
         cursor.execute("ALTER TABLE declarations ADD COLUMN invoice_number_customs_declaration TEXT")
     except Exception:
@@ -919,30 +935,61 @@ def update_job_usage(job_id: str, tokens_in: int = 0, tokens_out: int = 0,
     conn.close()
 
 def save_items(job_id: str, items: List[Dict]):
-    """Save extracted items to database"""
+    """Save extracted items to database (sets display_order sequentially)."""
 
     conn = _connect()
     cursor = conn.cursor()
 
-    for item in items:
-        cursor.execute("""
-            INSERT INTO items (job_id, item_name, customs_duty_rate, quantity,
-                             invoice_unit_price, cif_unit_price, commercial_tax_percent,
-                             exchange_rate, hs_code, origin_country, customs_value_mmk)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            job_id,
-            item.get('Item name', ''),
-            item.get('Customs duty rate', 0.0),
-            item.get('Quantity (1)', ''),
-            item.get('Invoice unit price', ''),
-            item.get('CIF unit price', ''),
-            item.get('Commercial tax %', 0.0),
-            item.get('Exchange Rate (1)', ''),
-            item.get('HS Code', ''),
-            item.get('Origin Country', ''),
-            item.get('Customs Value (MMK)', 0.0),
-        ))
+    # Detect if display_order column exists for forward/backward compatibility
+    has_display_order = False
+    try:
+        cursor.execute("PRAGMA table_info(items)")
+        cols = {r[1] for r in cursor.fetchall()}
+        has_display_order = 'display_order' in cols
+    except Exception:
+        has_display_order = False
+
+    for idx, item in enumerate(items):
+        if has_display_order:
+            cursor.execute("""
+                INSERT INTO items (job_id, item_name, customs_duty_rate, quantity,
+                                 invoice_unit_price, cif_unit_price, commercial_tax_percent,
+                                 exchange_rate, hs_code, origin_country, customs_value_mmk,
+                                 display_order)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                job_id,
+                item.get('Item name', ''),
+                item.get('Customs duty rate', 0.0),
+                item.get('Quantity (1)', ''),
+                item.get('Invoice unit price', ''),
+                item.get('CIF unit price', ''),
+                item.get('Commercial tax %', 0.0),
+                item.get('Exchange Rate (1)', ''),
+                item.get('HS Code', ''),
+                item.get('Origin Country', ''),
+                item.get('Customs Value (MMK)', 0.0),
+                idx,
+            ))
+        else:
+            cursor.execute("""
+                INSERT INTO items (job_id, item_name, customs_duty_rate, quantity,
+                                 invoice_unit_price, cif_unit_price, commercial_tax_percent,
+                                 exchange_rate, hs_code, origin_country, customs_value_mmk)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                job_id,
+                item.get('Item name', ''),
+                item.get('Customs duty rate', 0.0),
+                item.get('Quantity (1)', ''),
+                item.get('Invoice unit price', ''),
+                item.get('CIF unit price', ''),
+                item.get('Commercial tax %', 0.0),
+                item.get('Exchange Rate (1)', ''),
+                item.get('HS Code', ''),
+                item.get('Origin Country', ''),
+                item.get('Customs Value (MMK)', 0.0),
+            ))
 
     conn.commit()
     conn.close()
@@ -1055,7 +1102,7 @@ def get_all_jobs(limit: int = 50) -> List[Dict]:
     return jobs
 
 def get_job_items(job_id: str) -> List[Dict]:
-    """Get all items for a job"""
+    """Get all items for a job (excludes soft-deleted, ordered by display_order then id)."""
 
     conn = _connect()
     conn.row_factory = sqlite3.Row
@@ -1063,14 +1110,20 @@ def get_job_items(job_id: str) -> List[Dict]:
 
     cursor.execute("""
         SELECT * FROM items
-        WHERE job_id = ?
-        ORDER BY id
+        WHERE job_id = ? AND COALESCE(is_deleted, 0) = 0
+        ORDER BY COALESCE(display_order, 0) ASC, id ASC
     """, (job_id,))
 
     items = [dict(row) for row in cursor.fetchall()]
     conn.close()
 
     return items
+
+
+# Alias used by V11 review code paths.
+def list_items(job_id: str) -> List[Dict]:
+    """List items for a job (display-order aware, excludes soft-deleted)."""
+    return get_job_items(job_id)
 
 def get_job_declarations(job_id: str) -> List[Dict]:
     """Get all declarations for a job (Format 2)"""
@@ -1125,8 +1178,12 @@ def get_job_details(job_id: str) -> Optional[Dict]:
 
     job_dict = dict(job)
 
-    # Get items (Format 1)
-    cursor.execute("SELECT * FROM items WHERE job_id = ?", (job_id,))
+    # Get items (Format 1) — exclude soft-deleted, honor display_order
+    cursor.execute(
+        "SELECT * FROM items WHERE job_id = ? AND COALESCE(is_deleted, 0) = 0 "
+        "ORDER BY COALESCE(display_order, 0) ASC, id ASC",
+        (job_id,),
+    )
     job_dict['items'] = [dict(row) for row in cursor.fetchall()]
 
     # Get declarations (Format 2)
@@ -2682,7 +2739,11 @@ def get_item_field(job_id: str, item_index: int, field_name: str):
     conn = _connect()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
-    cur.execute("SELECT id FROM items WHERE job_id = ? ORDER BY id", (job_id,))
+    cur.execute(
+        "SELECT id FROM items WHERE job_id = ? AND COALESCE(is_deleted, 0) = 0 "
+        "ORDER BY COALESCE(display_order, 0) ASC, id ASC",
+        (job_id,),
+    )
     rows = cur.fetchall()
     if item_index >= len(rows):
         conn.close()
@@ -2701,7 +2762,11 @@ def update_item_field(job_id: str, item_index: int, field_name: str, value) -> b
         return False
     conn = _connect()
     cur = conn.cursor()
-    cur.execute("SELECT id FROM items WHERE job_id = ? ORDER BY id", (job_id,))
+    cur.execute(
+        "SELECT id FROM items WHERE job_id = ? AND COALESCE(is_deleted, 0) = 0 "
+        "ORDER BY COALESCE(display_order, 0) ASC, id ASC",
+        (job_id,),
+    )
     rows = cur.fetchall()
     if item_index >= len(rows):
         conn.close()
@@ -2726,23 +2791,230 @@ def increment_edits_count(job_id: str) -> None:
     conn.close()
 
 
-def list_review_queue(status: str = "pending_review", limit: int = 200) -> List[Dict]:
-    """List jobs in given review_status (default pending_review), most recent first."""
+def list_review_queue(status: str = "pending_review", limit: int = 200,
+                      importer: Optional[str] = None,
+                      date_from: Optional[str] = None,
+                      date_to: Optional[str] = None,
+                      min_edits: Optional[int] = None,
+                      max_edits: Optional[int] = None) -> List[Dict]:
+    """List jobs in given review_status (default pending_review), most recent first.
+
+    Optional filters:
+      - importer: substring match (case-insensitive) on declarations.importer_name
+      - date_from / date_to: ISO YYYY-MM-DD bounds on jobs.created_at
+      - min_edits / max_edits: bounds on jobs.edits_count
+    """
     conn = _connect()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
-    cur.execute("""
-        SELECT job_id, pdf_name, status, review_status, reviewed_by, reviewed_at,
-               review_notes, edits_count, created_at, completed_at, username,
-               pipeline_mode, document_type, accuracy_percent
-        FROM jobs
-        WHERE review_status = ?
-        ORDER BY created_at DESC
-        LIMIT ?
-    """, (status, limit))
+
+    sql = [
+        "SELECT j.job_id, j.pdf_name, j.status, j.review_status, j.reviewed_by, j.reviewed_at,",
+        "       j.review_notes, j.edits_count, j.created_at, j.completed_at, j.username,",
+        "       j.pipeline_mode, j.document_type, j.accuracy_percent,",
+        "       (SELECT importer_name FROM declarations WHERE job_id = j.job_id ORDER BY id LIMIT 1) AS importer_name,",
+        "       (SELECT COUNT(*) FROM items WHERE job_id = j.job_id AND COALESCE(is_deleted, 0) = 0) AS items_count",
+        "FROM jobs j",
+        "WHERE j.review_status = ?",
+    ]
+    params: List = [status]
+
+    if importer:
+        sql.append(
+            "AND LOWER(COALESCE("
+            "(SELECT importer_name FROM declarations WHERE job_id = j.job_id ORDER BY id LIMIT 1)"
+            ", '')) LIKE ?"
+        )
+        params.append(f"%{importer.lower()}%")
+    if date_from:
+        sql.append("AND DATE(j.created_at) >= DATE(?)")
+        params.append(date_from)
+    if date_to:
+        sql.append("AND DATE(j.created_at) <= DATE(?)")
+        params.append(date_to)
+    if min_edits is not None:
+        sql.append("AND COALESCE(j.edits_count, 0) >= ?")
+        params.append(int(min_edits))
+    if max_edits is not None:
+        sql.append("AND COALESCE(j.edits_count, 0) <= ?")
+        params.append(int(max_edits))
+
+    sql.append("ORDER BY j.created_at DESC LIMIT ?")
+    params.append(limit)
+
+    cur.execute(" ".join(sql), tuple(params))
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
     return rows
+
+
+def get_review_stats() -> Dict:
+    """Return counts by review_status plus auto_approved_today.
+
+    Keys: pending_review, approved, rejected, draft, auto_approved_today, total.
+    """
+    conn = _connect()
+    cur = conn.cursor()
+    out = {"pending_review": 0, "approved": 0, "rejected": 0, "draft": 0}
+    cur.execute("SELECT review_status, COUNT(*) FROM jobs GROUP BY review_status")
+    for status, count in cur.fetchall():
+        if status in out:
+            out[status] = int(count or 0)
+    cur.execute(
+        "SELECT COUNT(*) FROM jobs "
+        "WHERE review_status = 'approved' AND reviewed_by = 'SYSTEM_AUTO' "
+        "AND DATE(reviewed_at) = DATE('now')"
+    )
+    row = cur.fetchone()
+    out["auto_approved_today"] = int(row[0] or 0) if row else 0
+    cur.execute("SELECT COUNT(*) FROM jobs")
+    row = cur.fetchone()
+    out["total"] = int(row[0] or 0) if row else 0
+    conn.close()
+    return out
+
+
+# =============================================================================
+# APP SETTINGS — typed wrapper around the settings key-value store
+# =============================================================================
+
+def get_app_setting(key: str, default: Optional[str] = None) -> Optional[str]:
+    """Read a single app setting value, returning default if missing."""
+    val = get_setting(key)
+    return val if val is not None else default
+
+
+def set_app_setting(key: str, value, updated_by: str = "system") -> None:
+    """Write a single app setting value (coerced to string)."""
+    if isinstance(value, bool):
+        s = "true" if value else "false"
+    else:
+        s = str(value)
+    set_setting(key, s, updated_by=updated_by)
+
+
+# ─── Items add / delete / reorder (V11 review UI) ──────────────────
+
+# Map of accepted keys (snake_case + display labels) → DB columns for INSERT.
+_ITEM_INSERT_COLS = {
+    "item_name": "item_name",
+    "customs_duty_rate": "customs_duty_rate",
+    "quantity": "quantity",
+    "invoice_unit_price": "invoice_unit_price",
+    "cif_unit_price": "cif_unit_price",
+    "commercial_tax_percent": "commercial_tax_percent",
+    "exchange_rate": "exchange_rate",
+    "hs_code": "hs_code",
+    "origin_country": "origin_country",
+    "customs_value_mmk": "customs_value_mmk",
+    # legacy display labels
+    "Item name": "item_name",
+    "Customs duty rate": "customs_duty_rate",
+    "Quantity (1)": "quantity",
+    "Invoice unit price": "invoice_unit_price",
+    "CIF unit price": "cif_unit_price",
+    "Commercial tax %": "commercial_tax_percent",
+    "Exchange Rate (1)": "exchange_rate",
+    "HS Code": "hs_code",
+    "Origin Country": "origin_country",
+    "Customs Value (MMK)": "customs_value_mmk",
+}
+
+
+def add_item(job_id: str, item_dict: Dict) -> int:
+    """Insert a new item row for a job. Returns the new item's id (DB pk).
+    The new row is appended at the end (display_order = current max + 1)."""
+    conn = _connect()
+    cur = conn.cursor()
+
+    # Normalize incoming keys → DB columns
+    cols = {}
+    for k, v in (item_dict or {}).items():
+        target = _ITEM_INSERT_COLS.get(k)
+        if target:
+            cols[target] = v
+
+    # Append at the end of current ordering
+    cur.execute(
+        "SELECT COALESCE(MAX(display_order), -1) FROM items "
+        "WHERE job_id = ? AND COALESCE(is_deleted, 0) = 0",
+        (job_id,),
+    )
+    next_order = (cur.fetchone()[0] or -1) + 1
+
+    cols.setdefault("item_name", "")
+    cols.setdefault("hs_code", "")
+    cols.setdefault("quantity", "")
+    cols["display_order"] = next_order
+
+    keys = ["job_id"] + list(cols.keys())
+    placeholders = ",".join(["?"] * len(keys))
+    values = [job_id] + list(cols.values())
+
+    cur.execute(
+        f"INSERT INTO items ({','.join(keys)}) VALUES ({placeholders})",
+        values,
+    )
+    new_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return new_id
+
+
+def delete_item(job_id: str, item_index: int) -> Optional[Dict]:
+    """Soft-delete the item at item_index (0-based, in display order).
+    Returns the deleted row dict (so caller can log original_value) or None."""
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT * FROM items WHERE job_id = ? AND COALESCE(is_deleted, 0) = 0 "
+        "ORDER BY COALESCE(display_order, 0) ASC, id ASC",
+        (job_id,),
+    )
+    rows = cur.fetchall()
+    if item_index < 0 or item_index >= len(rows):
+        conn.close()
+        return None
+    row = dict(rows[item_index])
+    item_id = row["id"]
+    cur.execute("UPDATE items SET is_deleted = 1 WHERE id = ?", (item_id,))
+    conn.commit()
+    conn.close()
+    return row
+
+
+def reorder_items(job_id: str, order_list: List[int]) -> List[Dict]:
+    """Apply a new ordering. order_list is a permutation of current indexes;
+    e.g. [2,0,1] means: item that is currently at index 2 moves to position 0, etc.
+    Returns the items in new order."""
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id FROM items WHERE job_id = ? AND COALESCE(is_deleted, 0) = 0 "
+        "ORDER BY COALESCE(display_order, 0) ASC, id ASC",
+        (job_id,),
+    )
+    rows = cur.fetchall()
+    n = len(rows)
+    if not order_list or len(order_list) != n:
+        conn.close()
+        raise ValueError(f"order length {len(order_list) if order_list else 0} != item count {n}")
+    if sorted(order_list) != list(range(n)):
+        conn.close()
+        raise ValueError("order must be a permutation of indexes 0..n-1")
+
+    # For each new position N, the row at old_index = order_list[N] gets display_order = N
+    for new_pos, old_idx in enumerate(order_list):
+        item_id = rows[old_idx]["id"]
+        cur.execute(
+            "UPDATE items SET display_order = ? WHERE id = ?",
+            (new_pos, item_id),
+        )
+    conn.commit()
+    conn.close()
+    return get_job_items(job_id)
 
 
 if __name__ == "__main__":

@@ -11,7 +11,44 @@
   let users = $state<any[]>([]);
   let logs = $state<any[]>([]);
   let groups = $state<any[]>([]);
-  let activeTab = $state<'users' | 'logs' | 'auth' | 'groups' | 'ldap' | 'storage'>('users');
+  let activeTab = $state<'users' | 'logs' | 'auth' | 'groups' | 'ldap' | 'storage' | 'auto_approve'>('users');
+
+  // Auto-approve settings state
+  let autoApprove = $state<{ enabled: boolean; threshold: number; last_run?: string; last_count?: number }>(
+    { enabled: false, threshold: 0.95 }
+  );
+  let autoApproveSaving = $state(false);
+  let autoApproveMsg = $state<{ type: 'ok' | 'err'; msg: string } | null>(null);
+
+  async function loadAutoApprove() {
+    try {
+      const r = await api.getAutoApprove();
+      autoApprove = {
+        enabled: !!r.enabled,
+        threshold: typeof r.threshold === 'number' ? r.threshold : 0.95,
+        last_run: r.last_run,
+        last_count: r.last_count,
+      };
+    } catch (e: any) {
+      autoApproveMsg = { type: 'err', msg: e?.message || 'load failed' };
+    }
+  }
+
+  async function saveAutoApprove() {
+    autoApproveSaving = true;
+    autoApproveMsg = null;
+    try {
+      const t = Math.max(0, Math.min(1, Number(autoApprove.threshold) || 0));
+      await api.saveAutoApprove({ enabled: !!autoApprove.enabled, threshold: t });
+      autoApproveMsg = { type: 'ok', msg: 'Saved' };
+      await loadAutoApprove();
+    } catch (e: any) {
+      autoApproveMsg = { type: 'err', msg: e?.message || 'save failed' };
+    }
+    autoApproveSaving = false;
+  }
+
+  $effect(() => { if (auth.isAdmin && activeTab === 'auto_approve') loadAutoApprove(); });
 
   // Storage state
   let storageConfigs = $state<any[]>([]);
@@ -456,7 +493,7 @@
 {:else}
   <!-- Tab bar -->
   <div class="flex gap-0 mb-4 border-2" style="border-color: var(--on-surface); background: var(--surface-container-highest);">
-    {#each [['users','USERS'],['logs','ACTIVITY_LOG'],['auth','AUTHENTICATION'],['groups','GROUPS'],['ldap','LDAP'],['storage','STORAGE']] as [key, label]}
+    {#each [['users','USERS'],['logs','ACTIVITY_LOG'],['auth','AUTHENTICATION'],['groups','GROUPS'],['ldap','LDAP'],['storage','STORAGE'],['auto_approve','AUTO_APPROVE']] as [key, label]}
       <button class="px-3 py-2 text-[11px] font-bold uppercase tracking-tight cursor-pointer"
         style="{activeTab === key ? 'background: var(--on-surface); color: var(--surface);' : 'color: var(--outline);'}"
         onclick={() => activeTab = key as any}
@@ -1079,6 +1116,71 @@
         </div>
       </div>
     {/if}
+
+  {:else if activeTab === 'auto_approve'}
+    <div class="border-2 stamp-shadow" style="border-color: var(--on-surface);">
+      <div class="dark-bar text-xs">AUTO_APPROVE_SETTINGS</div>
+      <div class="bg-white p-4 space-y-4">
+        <div class="text-[10px] font-mono opacity-70">
+          When ENABLED, an hourly background task auto-approves any pending_review job whose
+          accuracy_percent is greater than or equal to (threshold × 100). Auto-approved jobs are
+          marked <code>reviewed_by = SYSTEM_AUTO</code>.
+        </div>
+
+        <div class="flex items-center gap-3">
+          <label class="text-xs font-bold uppercase w-32">ENABLED</label>
+          <button class="text-[10px] font-bold uppercase px-3 py-1.5 cursor-pointer"
+            style="border: 2px solid var(--on-surface);
+                   background: {autoApprove.enabled ? '#10b981' : 'white'};
+                   color: {autoApprove.enabled ? 'white' : 'var(--on-surface)'};"
+            onclick={() => autoApprove.enabled = !autoApprove.enabled}>
+            {autoApprove.enabled ? '☑ ON' : '☐ OFF'}
+          </button>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <label class="text-xs font-bold uppercase w-32">THRESHOLD</label>
+          <input type="number" min="0" max="1" step="0.01"
+            bind:value={autoApprove.threshold}
+            class="text-xs font-mono px-2 py-1.5 w-32"
+            style="border: 2px solid var(--on-surface); background: white;" />
+          <span class="text-[10px] font-mono opacity-60">
+            (0.0–1.0; ≥ {((autoApprove.threshold || 0) * 100).toFixed(0)}% accuracy auto-approves)
+          </span>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3 mt-2 text-[10px] font-mono">
+          <div class="border-2 p-2" style="border-color: var(--on-surface);">
+            <div class="opacity-60">SCHEDULE</div>
+            <div class="font-bold">hourly</div>
+          </div>
+          <div class="border-2 p-2" style="border-color: var(--on-surface);">
+            <div class="opacity-60">LAST_RUN</div>
+            <div class="font-bold">
+              {autoApprove.last_run || '—'}
+              {#if autoApprove.last_count !== undefined}
+                <span class="opacity-70">— approved {autoApprove.last_count}</span>
+              {/if}
+            </div>
+          </div>
+        </div>
+
+        {#if autoApproveMsg}
+          <div class="p-2 text-xs font-bold uppercase text-white"
+            style="background: {autoApproveMsg.type === 'ok' ? 'var(--primary)' : 'var(--error)'};">
+            {autoApproveMsg.msg}
+          </div>
+        {/if}
+
+        <div class="pt-2">
+          <Button variant="primary" size="md"
+            disabled={autoApproveSaving}
+            onclick={saveAutoApprove}>
+            {autoApproveSaving ? 'SAVING...' : 'SAVE_SETTINGS'}
+          </Button>
+        </div>
+      </div>
+    </div>
 
   {/if}
 {/if}

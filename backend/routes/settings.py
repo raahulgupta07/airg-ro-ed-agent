@@ -1,15 +1,55 @@
 #!/usr/bin/env python3
 """Settings routes for RO-ED AI Agent — Keycloak configuration (admin only)"""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 
 import auth
 import config
 import database
-from middleware import require_admin
+from middleware import require_admin, get_current_user
 from schemas import KeycloakSettingsRequest, KeycloakSettingsResponse, KeycloakTestResponse
 
 router = APIRouter()
+
+
+# ─── Auto-approve settings ──────────────────────────────────────
+
+class AutoApproveSettings(BaseModel):
+    enabled: bool = False
+    threshold: float = Field(0.95, ge=0.0, le=1.0)
+
+
+@router.get("/auto-approve")
+async def get_auto_approve(current_user: dict = Depends(get_current_user)):
+    """Return current auto-approve config (enabled flag + confidence threshold)."""
+    enabled = (database.get_app_setting("auto_approve_enabled", "false") or "false").lower() == "true"
+    try:
+        threshold = float(database.get_app_setting("auto_approve_threshold", "0.95") or 0.95)
+    except (TypeError, ValueError):
+        threshold = 0.95
+    last_run = database.get_app_setting("auto_approve_last_run", None)
+    last_count = database.get_app_setting("auto_approve_last_count", None)
+    return {
+        "enabled": enabled,
+        "threshold": threshold,
+        "last_run": last_run,
+        "last_count": int(last_count) if last_count and str(last_count).isdigit() else 0,
+    }
+
+
+@router.put("/auto-approve")
+async def set_auto_approve(body: AutoApproveSettings, admin: dict = Depends(require_admin)):
+    """Update auto-approve config (admin only)."""
+    if body.threshold < 0.0 or body.threshold > 1.0:
+        raise HTTPException(400, "threshold must be between 0 and 1")
+    database.set_app_setting("auto_approve_enabled", body.enabled, updated_by=admin.get("username", "admin"))
+    database.set_app_setting("auto_approve_threshold", body.threshold, updated_by=admin.get("username", "admin"))
+    database.log_activity(
+        admin["id"], admin["username"], "UPDATE_SETTINGS",
+        f"auto_approve enabled={body.enabled} threshold={body.threshold}",
+    )
+    return {"enabled": body.enabled, "threshold": body.threshold}
 
 
 @router.get("/keycloak", response_model=KeycloakSettingsResponse)

@@ -106,6 +106,30 @@ export const api = {
   submitCorrection: (data: any) =>
     request<any>('/corrections/', { method: 'POST', body: JSON.stringify(data) }),
 
+  // Review queue
+  reviewStats: () => request<any>('/review/stats'),
+  reviewQueue: (params: Record<string, string | number | undefined> = {}) => {
+    const qs = Object.entries(params)
+      .filter(([, v]) => v !== undefined && v !== null && v !== '')
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+      .join('&');
+    return request<any>(`/review/queue${qs ? `?${qs}` : ''}`);
+  },
+  reviewDetail: (jobId: string) => request<any>(`/review/${jobId}`),
+  reviewApprove: (jobId: string, notes?: string) =>
+    request<any>(`/review/${jobId}/approve`, { method: 'POST', body: JSON.stringify({ notes }) }),
+  reviewReject: (jobId: string, notes: string) =>
+    request<any>(`/review/${jobId}/reject`, { method: 'POST', body: JSON.stringify({ notes }) }),
+  reviewBulkApprove: (job_ids: string[], notes?: string) =>
+    request<any>('/review/bulk/approve', { method: 'POST', body: JSON.stringify({ job_ids, notes }) }),
+  reviewBulkReject: (job_ids: string[], notes: string) =>
+    request<any>('/review/bulk/reject', { method: 'POST', body: JSON.stringify({ job_ids, notes }) }),
+
+  // Auto-approve settings
+  getAutoApprove: () => request<any>('/settings/auto-approve'),
+  saveAutoApprove: (data: { enabled: boolean; threshold: number }) =>
+    request<any>('/settings/auto-approve', { method: 'PUT', body: JSON.stringify(data) }),
+
   // Health
   health: () => request<any>('/health'),
 };

@@ -28,7 +28,7 @@
   let flags = $state<any[]>(Array.isArray(job?.item_review_flags) ? job.item_review_flags : []);
 
   // Edit log (visual only — backend already persisted via PATCH per save)
-  type LogEntry = { ts: string; field: string; before: string; after: string; user: string };
+  type LogEntry = { ts: string; field: string; before: string; after: string; user: string; page_ref?: number };
   let editLog = $state<LogEntry[]>([]);
   let editLogCollapsed = $state(false);
 
@@ -112,15 +112,94 @@
     const t = (p?.page_type || 'PAGE').toString().slice(0, 3).toUpperCase();
     return t;
   }
+
+  // ── Per-field page reference ──
+  // Backend may provide job.declaration_field_pages: { [field]: pageNo }
+  // Or job.field_pages. Items may have it.page_ref. Defaults: decl page 1, items idx+1.
+  const declFieldPages: Record<string, number> = (
+    job?.declaration_field_pages ||
+    job?.field_pages?.declaration ||
+    {}
+  );
+  function declPageRef(field: string): number {
+    const p = declFieldPages?.[field];
+    if (typeof p === 'number' && p > 0) return p;
+    if (typeof job?.decl_page_no === 'number') return job.decl_page_no;
+    return 1;
+  }
+  function itemPageRef(idx: number, field?: string): number {
+    const it = workingItems[idx] || {};
+    if (typeof it.page_ref === 'number' && it.page_ref > 0) return it.page_ref;
+    if (it.field_pages && field && typeof it.field_pages[field] === 'number') return it.field_pages[field];
+    // Heuristic: each item often on its own page; declaration may be on page 1.
+    // Best guess: page = idx + 1, capped to totalPages.
+    const guess = idx + 1;
+    if (totalPages && guess > totalPages) return totalPages;
+    return guess || 1;
+  }
+
+  // Debounced PDF jump (200ms) to avoid rapid iframe reloads on hover.
+  let _jumpTimer: ReturnType<typeof setTimeout> | null = null;
+  function jumpPdf(page: number) {
+    if (!page || page < 1) return;
+    if (_jumpTimer) clearTimeout(_jumpTimer);
+    _jumpTimer = setTimeout(() => {
+      if (page !== currentPage) currentPage = page;
+    }, 200);
+  }
+  function jumpPdfImmediate(page: number) {
+    if (!page || page < 1) return;
+    if (_jumpTimer) { clearTimeout(_jumpTimer); _jumpTimer = null; }
+    currentPage = page;
+  }
+
   function jumpToPage(n: number) {
-    currentPage = n;
-    // PDF.js style hash navigation: #page=N
-    if (pdfBlobUrl && !pdfBlobUrl.startsWith('blob:')) {
-      // For server URLs, we can append #page= safely
-      // (blob URLs don't support page hash in all browsers; harmless either way)
-    }
+    jumpPdfImmediate(n);
   }
   const pdfSrc = $derived(pdfBlobUrl ? `${pdfBlobUrl}#page=${currentPage}&zoom=page-fit` : '');
+
+  // ── Edits-by-page (red dot on page strip) ──
+  const editsByPage = $derived.by(() => {
+    const m: Record<number, number> = {};
+    for (const e of editLog) {
+      const p = (e as any).page_ref;
+      if (typeof p === 'number' && p > 0) m[p] = (m[p] || 0) + 1;
+    }
+    return m;
+  });
+
+  // ── Jump-to-field dropdown ──
+  let showFieldJump = $state(false);
+  const fieldJumpList = $derived.by(() => {
+    const list: Array<{ id: string; label: string; page: number }> = [];
+    for (const r of declRows) {
+      list.push({
+        id: `field-decl-${r.field}`,
+        label: r.label,
+        page: declPageRef(r.field),
+      });
+    }
+    for (let i = 0; i < workingItems.length; i++) {
+      for (const c of itemCols) {
+        list.push({
+          id: `field-item-${i}-${c.field}`,
+          label: `Item ${i + 1}: ${c.label}`,
+          page: itemPageRef(i, c.field),
+        });
+      }
+    }
+    list.sort((a, b) => a.page - b.page);
+    return list;
+  });
+  function jumpToField(id: string, page: number) {
+    jumpPdfImmediate(page);
+    showFieldJump = false;
+    // Defer to next frame so any layout settles before scroll.
+    setTimeout(() => {
+      const el = document.getElementById(id);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 50);
+  }
 
   // ── Status / counters ──
   const status: string = job?.review_status || job?.status || 'PENDING_REVIEW';
@@ -157,6 +236,7 @@
         before: String(before ?? '—'),
         after: String(after ?? '—'),
         user: auth?.user?.username || 'admin',
+        page_ref: declPageRef(field),
       }];
       unsavedDirty = true;
     } catch (e) {
@@ -195,6 +275,7 @@
         before: String(before ?? '—'),
         after: String(after ?? '—'),
         user: auth?.user?.username || 'admin',
+        page_ref: itemPageRef(idx, field),
       }];
       unsavedDirty = true;
     } catch {
@@ -206,20 +287,116 @@
     }
   }
 
-  // ── Add new item row ──
-  function addItemRow() {
-    workingItems = [
-      ...workingItems,
-      {
-        item_name: '',
-        hs_code: '',
-        quantity: '',
-        invoice_unit_price: '',
-        cif_unit_price: '',
-        currency: workingDecl.currency || '',
-      },
-    ];
-    toast('Row added (saves on first edit)');
+  // ── Add new item row (persists to backend) ──
+  async function addItemRow() {
+    const newItem = {
+      item_name: '',
+      hs_code: '',
+      quantity: '',
+      invoice_unit_price: '',
+      cif_unit_price: '',
+      currency: workingDecl.currency || '',
+    };
+    try {
+      const r = await fetch(`/api/review/${jobId}/items`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${auth.token}`,
+        },
+        body: JSON.stringify({ item: newItem }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
+      const created = j?.item || newItem;
+      workingItems = [...workingItems, { ...newItem, ...created }];
+      originalItems.push({ ...newItem, ...created });
+      editLog = [...editLog, {
+        ts: new Date().toISOString().slice(11, 19),
+        field: `ITEM[${workingItems.length}].ADDED`,
+        before: '—',
+        after: 'new row',
+        user: auth?.user?.username || 'admin',
+      }];
+      unsavedDirty = true;
+      toast('Row added');
+    } catch {
+      toast('Add failed', 'error');
+    }
+  }
+
+  // ── Delete item row (soft delete on backend) ──
+  async function deleteItemRow(idx: number) {
+    if (!confirm(`Delete item ${idx + 1}? This can be undone by re-adding manually.`)) return;
+    const removed = workingItems[idx];
+    try {
+      const r = await fetch(`/api/review/${jobId}/items/${idx}`, {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: {
+          'Authorization': `Bearer ${auth.token}`,
+        },
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      // Optimistic local removal
+      workingItems = workingItems.filter((_, i) => i !== idx);
+      originalItems.splice(idx, 1);
+      editLog = [...editLog, {
+        ts: new Date().toISOString().slice(11, 19),
+        field: `ITEM[${idx + 1}].DELETED`,
+        before: String(removed?.item_name ?? '—'),
+        after: '—',
+        user: auth?.user?.username || 'admin',
+      }];
+      unsavedDirty = true;
+      toast('Row deleted');
+    } catch {
+      toast('Delete failed', 'error');
+    }
+  }
+
+  // ── Move row up / down (reorder via backend) ──
+  async function moveItem(idx: number, dir: -1 | 1) {
+    const target = idx + dir;
+    if (target < 0 || target >= workingItems.length) return;
+    // Optimistic local swap
+    const newItems = [...workingItems];
+    [newItems[idx], newItems[target]] = [newItems[target], newItems[idx]];
+    const prevItems = workingItems;
+    workingItems = newItems;
+
+    // Build full order array — start as identity, then swap
+    const order = workingItems.map((_, i) => i);
+    // Map current idx in newItems → its old position in prevItems
+    // After swap: newItems[target] = old item at idx; newItems[idx] = old item at target
+    // So order should be: positions filled by old indexes
+    const finalOrder = newItems.map((it) => prevItems.indexOf(it));
+
+    try {
+      const r = await fetch(`/api/review/${jobId}/items/reorder`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${auth.token}`,
+        },
+        body: JSON.stringify({ order: finalOrder }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      editLog = [...editLog, {
+        ts: new Date().toISOString().slice(11, 19),
+        field: `ITEM[${idx + 1}].MOVED`,
+        before: `pos ${idx + 1}`,
+        after: `pos ${target + 1}`,
+        user: auth?.user?.username || 'admin',
+      }];
+      unsavedDirty = true;
+    } catch {
+      // revert
+      workingItems = prevItems;
+      toast('Reorder failed', 'error');
+    }
   }
 
   // ── Border color rules ──
@@ -436,7 +613,32 @@
     style="border-color: var(--on-surface); background: white;">
     <div class="dark-bar flex justify-between items-center text-xs">
       <span>PDF_VIEWER</span>
-      <span class="text-[10px]">page {currentPage}/{totalPages}</span>
+      <div class="flex items-center gap-2 relative">
+        <button
+          class="px-2 py-0.5 text-[9px] font-black uppercase border cursor-pointer"
+          style="border-color: var(--surface); color: var(--surface); background: transparent;"
+          onclick={() => showFieldJump = !showFieldJump}
+          title="Jump to a field"
+        >🔍 JUMP TO FIELD ▾</button>
+        <span class="text-[10px]">page {currentPage}/{totalPages}</span>
+        {#if showFieldJump}
+          <div class="absolute right-0 top-full mt-1 z-30 border-2 stamp-shadow max-h-72 overflow-y-auto custom-scrollbar"
+            style="border-color: var(--on-surface); background: var(--surface); min-width: 220px;">
+            {#each fieldJumpList as f}
+              <button
+                class="block w-full text-left px-2 py-1 text-[10px] font-mono font-bold cursor-pointer hover:opacity-80"
+                style="border-bottom: 1px solid rgba(56,56,50,0.1); color: var(--on-surface);"
+                onclick={() => jumpToField(f.id, f.page)}
+              >
+                <span style="color: var(--outline);">p{f.page}</span> — {f.label}
+              </button>
+            {/each}
+            {#if fieldJumpList.length === 0}
+              <div class="px-2 py-2 text-[10px] font-mono uppercase" style="color: var(--outline);">No fields</div>
+            {/if}
+          </div>
+        {/if}
+      </div>
     </div>
 
     <!-- page strip -->
@@ -449,12 +651,20 @@
       <div class="flex gap-1 flex-1 overflow-x-auto custom-scrollbar">
         {#each pageList as p, i}
           {@const num = p?.page_number ?? (i + 1)}
+          {@const editsHere = editsByPage[num] || 0}
           <button
-            class="px-1.5 py-0.5 text-[8px] font-mono font-black uppercase border cursor-pointer whitespace-nowrap"
+            class="relative px-1.5 py-0.5 text-[8px] font-mono font-black uppercase border cursor-pointer whitespace-nowrap"
             style="border-color: var(--on-surface); background: {currentPage === num ? 'var(--on-surface)' : 'var(--surface)'}; color: {currentPage === num ? 'var(--surface)' : 'var(--on-surface)'};"
             onclick={() => jumpToPage(num)}
+            title={editsHere > 0 ? `${editsHere} edit${editsHere === 1 ? '' : 's'} on this page` : ''}
           >
             {num}·{pageBadge(p)}
+            {#if editsHere > 0}
+              <span
+                class="absolute"
+                style="top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%; background: #ef4444; border: 1px solid var(--surface);"
+              ></span>
+            {/if}
           </button>
         {/each}
       </div>
@@ -492,15 +702,31 @@
       <div class="bg-white p-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
         {#each declRows as row}
           {@const editing = editingKey === `decl:${row.field}`}
-          <div class="border-2 p-2"
-            style="border-color: {declBorder(row.field)}; background: {declBg(row.field)};">
-            <div class="flex items-center justify-between">
+          {@const dPage = declPageRef(row.field)}
+          <div
+            id={`field-decl-${row.field}`}
+            class="border-2 p-2"
+            style="border-color: {declBorder(row.field)}; background: {declBg(row.field)};"
+            onmouseenter={() => jumpPdf(dPage)}
+            onfocusin={() => jumpPdf(dPage)}
+            role="group"
+          >
+            <div class="flex items-center justify-between gap-1">
               <div class="text-[8px] font-black uppercase tracking-wider"
                 style="color: var(--outline);">{row.label}</div>
-              {#if !editing}
-                <button class="text-[10px] cursor-pointer"
-                  onclick={() => startEdit(`decl:${row.field}`, workingDecl[row.field])}>✏</button>
-              {/if}
+              <div class="flex items-center gap-1">
+                <button
+                  class="text-[9px] font-mono font-bold px-1 cursor-pointer border"
+                  style="border-color: var(--outline); color: var(--on-surface); background: transparent;"
+                  title="Jump PDF to page {dPage}"
+                  onclick={() => jumpPdfImmediate(dPage)}
+                >📍 p{dPage}</button>
+                {#if !editing}
+                  <button class="text-[10px] cursor-pointer"
+                    title="Edit"
+                    onclick={() => startEdit(`decl:${row.field}`, workingDecl[row.field])}>✏</button>
+                {/if}
+              </div>
             </div>
             {#if editing}
               <input
@@ -557,8 +783,12 @@
                 <th class="px-2 py-1 text-left text-[9px] font-black uppercase border-b {col.w}"
                   style="border-color: var(--on-surface);">{col.label}</th>
               {/each}
+              <th class="px-2 py-1 text-left text-[9px] font-black uppercase border-b w-12"
+                style="border-color: var(--on-surface);">⇅</th>
               <th class="px-2 py-1 text-left text-[9px] font-black uppercase border-b w-8"
                 style="border-color: var(--on-surface);">✓</th>
+              <th class="px-2 py-1 text-left text-[9px] font-black uppercase border-b w-8"
+                style="border-color: var(--on-surface);">🗑</th>
             </tr>
           </thead>
           <tbody>
@@ -568,9 +798,24 @@
                 {#each itemCols as col}
                   {@const ekey = `item:${idx}:${col.field}`}
                   {@const editing = editingKey === ekey}
+                  {@const iPage = itemPageRef(idx, col.field)}
                   <td class="px-1 py-1">
-                    <div class="border-2 px-1 py-0.5"
-                      style="border-color: {itemBorder(idx, col.field)}; background: {item[col.field] === '' || item[col.field] == null ? '#fefce8' : 'white'};">
+                    <div
+                      id={`field-item-${idx}-${col.field}`}
+                      class="border-2 px-1 py-0.5"
+                      style="border-color: {itemBorder(idx, col.field)}; background: {item[col.field] === '' || item[col.field] == null ? '#fefce8' : 'white'};"
+                      onmouseenter={() => jumpPdf(iPage)}
+                      onfocusin={() => jumpPdf(iPage)}
+                      role="group"
+                    >
+                      <div class="flex items-center justify-end gap-1" style="margin-bottom: 1px;">
+                        <button
+                          class="text-[8px] font-mono font-bold px-0.5 cursor-pointer"
+                          style="color: var(--outline); background: transparent; border: none;"
+                          title="Jump PDF to page {iPage}"
+                          onclick={(e) => { e.stopPropagation(); jumpPdfImmediate(iPage); }}
+                        >📍p{iPage}</button>
+                      </div>
                       {#if editing}
                         <input
                           class="w-full text-[10px] font-mono font-bold border px-1"
@@ -595,11 +840,33 @@
                     </div>
                   </td>
                 {/each}
+                <td class="px-1 py-1 text-center whitespace-nowrap">
+                  <button
+                    class="px-1 text-[10px] font-bold cursor-pointer disabled:opacity-30"
+                    title="Move up"
+                    disabled={idx === 0}
+                    onclick={() => moveItem(idx, -1)}
+                  >▲</button>
+                  <button
+                    class="px-1 text-[10px] font-bold cursor-pointer disabled:opacity-30"
+                    title="Move down"
+                    disabled={idx === workingItems.length - 1}
+                    onclick={() => moveItem(idx, 1)}
+                  >▼</button>
+                </td>
                 <td class="px-2 py-1 text-center" style="color: #16a34a;">✓</td>
+                <td class="px-1 py-1 text-center">
+                  <button
+                    class="px-1 text-[12px] cursor-pointer"
+                    title="Delete row"
+                    style="color: #ef4444;"
+                    onclick={() => deleteItemRow(idx)}
+                  >🗑</button>
+                </td>
               </tr>
             {/each}
             {#if workingItems.length === 0}
-              <tr><td colspan="7" class="px-2 py-4 text-center text-[10px] font-bold uppercase"
+              <tr><td colspan="9" class="px-2 py-4 text-center text-[10px] font-bold uppercase"
                 style="color: var(--outline);">NO ITEMS</td></tr>
             {/if}
           </tbody>

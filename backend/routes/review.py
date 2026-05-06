@@ -16,7 +16,8 @@ Every PATCH:
   6. For fee fields → updates importer fee_baseline (self-learning)
 """
 
-from typing import Optional, Any
+import json
+from typing import Optional, Any, Dict, List
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
@@ -50,6 +51,29 @@ class DraftRequest(BaseModel):
 
 class RerunRequest(BaseModel):
     notes: Optional[str] = None
+
+
+class ItemAddRequest(BaseModel):
+    item: Optional[Dict[str, Any]] = None
+
+
+class ItemReorderRequest(BaseModel):
+    order: List[int]
+
+
+class BulkApproveRequest(BaseModel):
+    job_ids: List[str]
+    notes: Optional[str] = None
+
+
+class BulkRejectRequest(BaseModel):
+    job_ids: List[str]
+    notes: str
+
+
+class AutoApproveRequest(BaseModel):
+    enabled: bool
+    threshold: float
 
 
 # ─── Helpers ────────────────────────────────────────────────────
@@ -174,15 +198,114 @@ def _ensure_job(job_id: str) -> dict:
 
 @router.get("/queue")
 async def review_queue(status: str = "pending_review", limit: int = 200,
+                       importer: Optional[str] = None,
+                       date_from: Optional[str] = None,
+                       date_to: Optional[str] = None,
+                       min_edits: Optional[int] = None,
+                       max_edits: Optional[int] = None,
                        current_user: dict = Depends(get_current_user)):
-    """List jobs awaiting (or matching) the given review status."""
+    """List jobs awaiting (or matching) the given review status.
+
+    Filters: importer (substring), date_from/date_to (ISO YYYY-MM-DD),
+    min_edits/max_edits (jobs.edits_count bounds).
+    """
     if status not in ("pending_review", "approved", "rejected", "draft"):
         raise HTTPException(400, "Invalid status filter")
-    return {
-        "status": status,
-        "count": None,
-        "jobs": database.list_review_queue(status=status, limit=limit),
-    }
+    jobs = database.list_review_queue(
+        status=status, limit=limit,
+        importer=importer, date_from=date_from, date_to=date_to,
+        min_edits=min_edits, max_edits=max_edits,
+    )
+    return {"status": status, "count": len(jobs), "jobs": jobs}
+
+
+@router.get("/stats")
+async def review_stats(current_user: dict = Depends(get_current_user)):
+    """KPI counts for the review queue header strip."""
+    return database.get_review_stats()
+
+
+@router.post("/bulk/approve")
+async def bulk_approve(body: BulkApproveRequest, request: Request,
+                       current_user: dict = Depends(get_current_user)):
+    """Approve a list of jobs in one call. Returns per-job success/failure."""
+    approved: List[str] = []
+    failed: List[Dict[str, str]] = []
+    for jid in body.job_ids:
+        try:
+            job = database.get_job_details(jid)
+            if not job:
+                failed.append({"job_id": jid, "error": "not found"})
+                continue
+            ok = database.update_review_status(
+                jid, "approved",
+                reviewed_by=current_user.get("username"),
+                notes=body.notes,
+            )
+            if not ok:
+                failed.append({"job_id": jid, "error": "update failed"})
+                continue
+            edits = database.list_field_edits(jid)
+            fee_edited = any(
+                e.get("entity_type") == "declaration"
+                and database.DECLARATION_FIELD_MAP.get(e.get("field_name")) in database.FEE_FIELD_KEYS
+                for e in edits
+            )
+            if fee_edited:
+                _autosave_fee_baseline(jid)
+            ctx = _request_ctx(request)
+            event_logger.log_event(
+                action="JOB_APPROVED",
+                user=current_user.get("username"),
+                status="OK",
+                resource=jid,
+                ip=ctx["ip"], user_agent=ctx["user_agent"],
+                details=f"Bulk approved with {len(edits)} edit(s)",
+                payload={"notes": body.notes, "edits_count": len(edits),
+                         "fee_edited": fee_edited, "bulk": True},
+            )
+            approved.append(jid)
+        except Exception as e:
+            failed.append({"job_id": jid, "error": str(e)})
+    return {"approved": approved, "failed": failed}
+
+
+@router.post("/bulk/reject")
+async def bulk_reject(body: BulkRejectRequest, request: Request,
+                      current_user: dict = Depends(get_current_user)):
+    """Reject a list of jobs with shared notes."""
+    if not body.notes or not body.notes.strip():
+        raise HTTPException(400, "Rejection notes are required")
+    rejected: List[str] = []
+    failed: List[Dict[str, str]] = []
+    for jid in body.job_ids:
+        try:
+            job = database.get_job_details(jid)
+            if not job:
+                failed.append({"job_id": jid, "error": "not found"})
+                continue
+            ok = database.update_review_status(
+                jid, "rejected",
+                reviewed_by=current_user.get("username"),
+                notes=body.notes,
+            )
+            if not ok:
+                failed.append({"job_id": jid, "error": "update failed"})
+                continue
+            ctx = _request_ctx(request)
+            event_logger.log_event(
+                action="JOB_REJECTED",
+                user=current_user.get("username"),
+                status="OK",
+                resource=jid,
+                ip=ctx["ip"], user_agent=ctx["user_agent"],
+                details=body.notes,
+                payload={"notes": body.notes, "bulk": True},
+            )
+            rejected.append(jid)
+        except Exception as e:
+            failed.append({"job_id": jid, "error": str(e)})
+    return {"rejected": rejected, "failed": failed}
 
 
 @router.get("/{job_id}")
@@ -409,3 +532,123 @@ async def rerun_extraction(job_id: str, body: RerunRequest, request: Request,
         "new_job_id": new_job_id,
         "review_status": "pending_review",
     }
+
+
+# ─── Item add / delete / reorder (V11 review UI) ────────────────────
+
+@router.post("/{job_id}/items")
+async def add_item_endpoint(job_id: str, body: ItemAddRequest, request: Request,
+                            current_user: dict = Depends(get_current_user)):
+    """Append a new item row to a job. Body: { item: { item_name?, hs_code?, ... } }."""
+    _ensure_job(job_id)
+    incoming = body.item or {}
+    new_id = database.add_item(job_id, incoming)
+
+    items_after = database.list_items(job_id)
+    new_index = next(
+        (i for i, it in enumerate(items_after) if it.get("id") == new_id),
+        len(items_after) - 1,
+    )
+    new_row = items_after[new_index] if items_after else {}
+
+    # Audit: synthetic field_edit row
+    try:
+        database.log_field_edit(
+            job_id=job_id,
+            entity_type="item",
+            entity_index=new_index,
+            field_name="__added__",
+            original=None,
+            corrected=json.dumps(new_row, default=str),
+            edited_by=current_user.get("username"),
+        )
+    except Exception:
+        pass
+    database.increment_edits_count(job_id)
+
+    ctx = _request_ctx(request)
+    event_logger.log_event(
+        action="ITEM_ADDED",
+        user=current_user.get("username"),
+        status="OK",
+        resource=job_id,
+        ip=ctx["ip"], user_agent=ctx["user_agent"],
+        details=f"Added item at index {new_index}",
+        payload={"item_index": new_index, "item": new_row},
+    )
+
+    return {
+        "status": "ok",
+        "item": {**new_row, "_index": new_index},
+        "total_items": len(items_after),
+    }
+
+
+@router.delete("/{job_id}/items/{item_index}")
+async def delete_item_endpoint(job_id: str, item_index: int, request: Request,
+                               current_user: dict = Depends(get_current_user)):
+    """Soft-delete the item at item_index (0-based, display-order)."""
+    if item_index < 0:
+        raise HTTPException(400, "item_index must be >= 0")
+    _ensure_job(job_id)
+
+    removed = database.delete_item(job_id, item_index)
+    if removed is None:
+        raise HTTPException(404, f"Item index {item_index} not found for job {job_id}")
+
+    try:
+        database.log_field_edit(
+            job_id=job_id,
+            entity_type="item",
+            entity_index=item_index,
+            field_name="__deleted__",
+            original=json.dumps(removed, default=str),
+            corrected=None,
+            edited_by=current_user.get("username"),
+        )
+    except Exception:
+        pass
+    database.increment_edits_count(job_id)
+
+    items_after = database.list_items(job_id)
+
+    ctx = _request_ctx(request)
+    event_logger.log_event(
+        action="ITEM_DELETED",
+        user=current_user.get("username"),
+        status="OK",
+        resource=job_id,
+        ip=ctx["ip"], user_agent=ctx["user_agent"],
+        details=f"Deleted item at index {item_index}",
+        payload={"item_index": item_index, "removed": removed},
+    )
+
+    return {
+        "status": "ok",
+        "deleted": True,
+        "total_items": len(items_after),
+    }
+
+
+@router.post("/{job_id}/items/reorder")
+async def reorder_items_endpoint(job_id: str, body: ItemReorderRequest, request: Request,
+                                 current_user: dict = Depends(get_current_user)):
+    """Reorder items. Body: { order: [old_index, ...] } — a permutation."""
+    _ensure_job(job_id)
+    try:
+        items_after = database.reorder_items(job_id, body.order)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    ctx = _request_ctx(request)
+    event_logger.log_event(
+        action="ITEMS_REORDERED",
+        user=current_user.get("username"),
+        status="OK",
+        resource=job_id,
+        ip=ctx["ip"], user_agent=ctx["user_agent"],
+        details=f"Reordered {len(body.order)} items",
+        payload={"order": body.order},
+    )
+
+    return {"status": "ok", "items": items_after}

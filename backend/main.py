@@ -4,7 +4,9 @@ RO-ED AI Agent — FastAPI Backend
 Myanmar PDF Data Extraction Pipeline
 """
 
+import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from typing import Optional
@@ -13,13 +15,71 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 import database
+import event_logger
+
+
+async def _auto_approve_loop():
+    """Periodic task: auto-approve high-confidence pending jobs.
+
+    Runs hourly. Only acts when settings flag enabled. A job is approved if its
+    accuracy_percent >= threshold * 100. Marked reviewed_by='SYSTEM_AUTO'.
+    """
+    while True:
+        try:
+            enabled = (database.get_app_setting("auto_approve_enabled", "false") or "false").lower() == "true"
+            if enabled:
+                try:
+                    threshold = float(database.get_app_setting("auto_approve_threshold", "0.95") or 0.95)
+                except (TypeError, ValueError):
+                    threshold = 0.95
+                cutoff = threshold * 100.0
+                jobs = database.list_review_queue(status="pending_review", limit=500)
+                approved = 0
+                for j in jobs:
+                    acc = j.get("accuracy_percent") or 0
+                    if acc >= cutoff:
+                        try:
+                            ok = database.update_review_status(
+                                j["job_id"], "approved",
+                                reviewed_by="SYSTEM_AUTO",
+                                notes=f"Auto-approved at threshold {threshold}",
+                            )
+                            if ok:
+                                approved += 1
+                                event_logger.log_event(
+                                    action="JOB_AUTO_APPROVED",
+                                    user="SYSTEM_AUTO",
+                                    status="OK",
+                                    resource=j["job_id"],
+                                    details=f"accuracy={acc} threshold={cutoff}",
+                                    payload={"threshold": threshold, "accuracy_percent": acc},
+                                )
+                        except Exception as e:
+                            print(f"[auto_approve] job {j.get('job_id')} error: {e}")
+                database.set_app_setting(
+                    "auto_approve_last_run",
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                )
+                database.set_app_setting("auto_approve_last_count", approved)
+                print(f"[auto_approve] swept {len(jobs)} pending — approved {approved} (threshold={threshold})")
+        except Exception as e:
+            print(f"[auto_approve] error: {e}")
+        await asyncio.sleep(3600)  # hourly
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize database on startup."""
+    """Initialize database + spawn auto-approve background task."""
     database.init_database()
-    yield
+    task = asyncio.create_task(_auto_approve_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
 
 
 app = FastAPI(
