@@ -59,7 +59,7 @@ services:
       timeout: 10s
       retries: 3
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "9000",
-              "--workers", "4",
+              "--workers", "2",
               "--limit-concurrency", "50",
               "--timeout-keep-alive", "300"]
 

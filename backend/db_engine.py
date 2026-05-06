@@ -245,6 +245,18 @@ class _CursorWrapper:
     def _wrap(self, row):
         if row is None:
             return None
+        # Convert datetime → str for SQLite-compat (Pydantic schemas expect str).
+        import datetime as _dt
+        def _conv(v):
+            if isinstance(v, _dt.datetime):
+                return v.strftime('%Y-%m-%d %H:%M:%S')
+            if isinstance(v, _dt.date):
+                return v.isoformat()
+            return v
+        if isinstance(row, dict):
+            row = {k: _conv(v) for k, v in row.items()}
+        elif isinstance(row, (tuple, list)):
+            row = type(row)(_conv(v) for v in row)
         if self._dict_rows and self._cur.description is not None:
             cols = [d.name for d in self._cur.description]
             if isinstance(row, dict):

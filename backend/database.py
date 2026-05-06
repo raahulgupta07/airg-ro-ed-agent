@@ -56,21 +56,32 @@ def _connect():
     """
     return db_engine.get_conn()
 
-def init_database():
-    """Initialize Postgres schema (idempotent).
+_INIT_DONE = False
 
-    Postgres supports `CREATE TABLE IF NOT EXISTS` and `ALTER TABLE ... ADD
-    COLUMN IF NOT EXISTS` (9.6+), so we don't need the try/except dance the
-    SQLite version used. Schema is also captured in alembic/versions/ for
-    formal migrations — `init_database()` is kept so existing call sites
-    (pipeline.py, main.py) continue to work without changes.
+def init_database():
+    """Initialize Postgres schema (idempotent + per-process guard + advisory lock).
+
+    Multiple uvicorn workers can call this in parallel; we use a Postgres advisory
+    lock so only one runs Alembic+DDL at a time, others wait then no-op.
     """
+    global _INIT_DONE
+    if _INIT_DONE:
+        return
 
     # Ensure local data dir still exists for non-DB artefacts (PDFs, exports).
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-    # Best-effort: run alembic to head if a config is present. Skipped silently
-    # otherwise so we can keep using inline DDL during dev.
+    # Acquire a Postgres advisory lock — serializes init across workers.
+    _lock_conn = None
+    try:
+        _lock_conn = _connect()
+        _lc = _lock_conn.cursor()
+        _lc.execute("SELECT pg_advisory_lock(823651749)")  # arbitrary 64-bit key
+        _lock_conn.commit()
+    except Exception as exc:
+        logger.debug("init advisory lock skipped: %s", exc)
+        _lock_conn = None
+
     try:
         db_engine.run_alembic_upgrade()
     except Exception as exc:  # pragma: no cover — non-fatal
@@ -615,6 +626,16 @@ def init_database():
     conn.commit()
     conn.close()
 
+    # Release advisory lock + mark initialized
+    if _lock_conn is not None:
+        try:
+            _lc = _lock_conn.cursor()
+            _lc.execute("SELECT pg_advisory_unlock(823651749)")
+            _lock_conn.commit()
+            _lock_conn.close()
+        except Exception:
+            pass
+    _INIT_DONE = True
     print(f"✅ Database initialized (postgres) — DSN: {db_engine.DATABASE_URL}")
 
 
@@ -1128,6 +1149,11 @@ def get_job_details(job_id: str) -> Optional[Dict]:
         return None
 
     job_dict = dict(job)
+    # Postgres returns datetime objects; serialize to strings for Pydantic compat
+    import datetime as _dt
+    for _k, _v in list(job_dict.items()):
+        if isinstance(_v, (_dt.datetime, _dt.date)):
+            job_dict[_k] = _v.strftime('%Y-%m-%d %H:%M:%S') if isinstance(_v, _dt.datetime) else _v.isoformat()
 
     # Get items (Format 1) — exclude soft-deleted, honor display_order
     cursor.execute(
