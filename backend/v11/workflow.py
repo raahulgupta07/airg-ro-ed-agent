@@ -187,6 +187,12 @@ def _save_to_db(out: Dict, pdf_path: str) -> str:
     except Exception as e:
         print(f"[V11 DB] update_job error: {e}")
 
+    # Mark for human review (V11 → side-by-side approve UI)
+    try:
+        database.update_review_status(job_id, "pending_review")
+    except Exception as e:
+        print(f"[V11 DB] update_review_status error: {e}")
+
     # Compute document_type from page_classification summary
     cls = out.get("page_classification", {}) or {}
     summary = cls.get("summary", {}) or {}

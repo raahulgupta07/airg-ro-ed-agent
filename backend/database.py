@@ -609,6 +609,52 @@ def init_database():
         except sqlite3.OperationalError:
             pass
 
+    # ─── Review/Approve workflow (V11 Maestro) ───────────────────
+    # Add review columns to jobs table (idempotent: check PRAGMA before ALTER)
+    cursor.execute("PRAGMA table_info(jobs)")
+    _existing_job_cols = {r[1] for r in cursor.fetchall()}
+    _review_cols = (
+        ("review_status", "TEXT DEFAULT 'pending_review'"),
+        ("reviewed_by", "TEXT"),
+        ("reviewed_at", "TEXT"),
+        ("review_notes", "TEXT"),
+        ("edits_count", "INTEGER DEFAULT 0"),
+        ("parent_job_id", "TEXT"),
+    )
+    for col_name, col_def in _review_cols:
+        if col_name not in _existing_job_cols:
+            try:
+                cursor.execute(f"ALTER TABLE jobs ADD COLUMN {col_name} {col_def}")
+            except sqlite3.OperationalError:
+                pass
+
+    # Backfill review_status='pending_review' for existing COMPLETED jobs
+    try:
+        cursor.execute("""
+            UPDATE jobs SET review_status = 'pending_review'
+            WHERE status = 'COMPLETED' AND (review_status IS NULL OR review_status = '')
+        """)
+    except sqlite3.OperationalError:
+        pass
+
+    # field_edits table — audit trail per field edit (review workflow)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS field_edits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id TEXT NOT NULL,
+            entity_type TEXT NOT NULL,
+            entity_index INTEGER DEFAULT 0,
+            field_name TEXT NOT NULL,
+            original_value TEXT,
+            corrected_value TEXT,
+            edited_by TEXT,
+            edited_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            pdf_page_ref INTEGER,
+            reason TEXT
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_field_edits_job ON field_edits(job_id)")
+
     conn.commit()
     conn.close()
 
@@ -2462,6 +2508,241 @@ def activate_storage_config(cfg_id: int) -> bool:
     n = cur.rowcount
     conn.commit(); conn.close()
     return n > 0
+
+
+# ─── Review/Approve workflow helpers ────────────────────────────
+
+# Field name → declarations column map (used by review PATCH endpoints)
+DECLARATION_FIELD_MAP = {
+    "declaration_no": "declaration_no",
+    "declaration_date": "declaration_date",
+    "importer_name": "importer_name",
+    "consignor_name": "consignor_name",
+    "invoice_number": "invoice_number",
+    "invoice_number_customs_declaration": "invoice_number_customs_declaration",
+    "invoice_number_commercial_invoice": "invoice_number_commercial_invoice",
+    "invoice_price": "invoice_price",
+    "currency": "currency",
+    "exchange_rate": "exchange_rate",
+    "currency_2": "currency_2",
+    "total_customs_value": "total_customs_value",
+    "import_export_customs_duty": "import_export_customs_duty",
+    "commercial_tax_ct": "commercial_tax_ct",
+    "advance_income_tax_at": "advance_income_tax_at",
+    "security_fee_sf": "security_fee_sf",
+    "maccs_service_fee_mf": "maccs_service_fee_mf",
+    "exemption_reduction": "exemption_reduction",
+    # Legacy display labels (frontend may send these)
+    "Declaration No": "declaration_no",
+    "Declaration Date": "declaration_date",
+    "Importer (Name)": "importer_name",
+    "Consignor (Name)": "consignor_name",
+    "Invoice Number": "invoice_number",
+    "Invoice Price": "invoice_price",
+    "Currency": "currency",
+    "Exchange Rate": "exchange_rate",
+    "Total Customs Value": "total_customs_value",
+    "Import/Export Customs Duty": "import_export_customs_duty",
+    "Commercial Tax (CT)": "commercial_tax_ct",
+    "Advance Income Tax (AT)": "advance_income_tax_at",
+    "Security Fee (SF)": "security_fee_sf",
+    "MACCS Service Fee (MF)": "maccs_service_fee_mf",
+    "Exemption/Reduction": "exemption_reduction",
+}
+
+ITEM_FIELD_MAP = {
+    "item_name": "item_name",
+    "customs_duty_rate": "customs_duty_rate",
+    "quantity": "quantity",
+    "invoice_unit_price": "invoice_unit_price",
+    "cif_unit_price": "cif_unit_price",
+    "commercial_tax_percent": "commercial_tax_percent",
+    "exchange_rate": "exchange_rate",
+    "hs_code": "hs_code",
+    "origin_country": "origin_country",
+    "customs_value_mmk": "customs_value_mmk",
+    # Legacy display labels
+    "Item name": "item_name",
+    "Customs duty rate": "customs_duty_rate",
+    "Quantity (1)": "quantity",
+    "Invoice unit price": "invoice_unit_price",
+    "CIF unit price": "cif_unit_price",
+    "Commercial tax %": "commercial_tax_percent",
+    "Exchange Rate (1)": "exchange_rate",
+    "HS Code": "hs_code",
+    "Origin Country": "origin_country",
+    "Customs Value (MMK)": "customs_value_mmk",
+}
+
+FEE_FIELD_KEYS = {
+    "commercial_tax_ct", "advance_income_tax_at", "security_fee_sf",
+    "maccs_service_fee_mf", "exemption_reduction",
+}
+
+
+def update_review_status(job_id: str, status: str,
+                         reviewed_by: str = None, notes: str = None) -> bool:
+    """Update jobs.review_status. Sets reviewed_by/reviewed_at when status is approved/rejected."""
+    if status not in ("pending_review", "approved", "rejected", "draft"):
+        raise ValueError(f"invalid review_status: {status}")
+    conn = _connect()
+    cur = conn.cursor()
+    if status in ("approved", "rejected"):
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cur.execute("""
+            UPDATE jobs SET review_status = ?, reviewed_by = ?, reviewed_at = ?,
+                review_notes = COALESCE(?, review_notes)
+            WHERE job_id = ?
+        """, (status, reviewed_by, ts, notes, job_id))
+    else:
+        cur.execute("""
+            UPDATE jobs SET review_status = ?,
+                review_notes = COALESCE(?, review_notes)
+            WHERE job_id = ?
+        """, (status, notes, job_id))
+    n = cur.rowcount
+    conn.commit()
+    conn.close()
+    return n > 0
+
+
+def log_field_edit(job_id: str, entity_type: str, entity_index: int,
+                   field_name: str, original, corrected,
+                   edited_by: str = None, page_ref: int = None,
+                   reason: str = None) -> int:
+    """Insert a row into field_edits audit trail. Returns new row id."""
+    conn = _connect()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO field_edits
+            (job_id, entity_type, entity_index, field_name,
+             original_value, corrected_value, edited_by, pdf_page_ref, reason)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (job_id, entity_type, entity_index or 0, field_name,
+          None if original is None else str(original),
+          None if corrected is None else str(corrected),
+          edited_by, page_ref, reason))
+    new_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return new_id
+
+
+def list_field_edits(job_id: str) -> List[Dict]:
+    """Return field_edits rows for a job, oldest first."""
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT * FROM field_edits WHERE job_id = ?
+        ORDER BY id ASC
+    """, (job_id,))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def get_declaration_field(job_id: str, field_name: str):
+    """Read current declaration field value for a job. Returns None if not found."""
+    col = DECLARATION_FIELD_MAP.get(field_name)
+    if not col:
+        return None
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute(f"SELECT {col} AS v FROM declarations WHERE job_id = ? ORDER BY id LIMIT 1",
+                (job_id,))
+    row = cur.fetchone()
+    conn.close()
+    return row["v"] if row else None
+
+
+def update_declaration_field(job_id: str, field_name: str, value) -> bool:
+    """Update a single declaration field for a job (first declaration row)."""
+    col = DECLARATION_FIELD_MAP.get(field_name)
+    if not col:
+        return False
+    conn = _connect()
+    cur = conn.cursor()
+    cur.execute(f"""
+        UPDATE declarations SET {col} = ?
+        WHERE id = (SELECT id FROM declarations WHERE job_id = ? ORDER BY id LIMIT 1)
+    """, (value, job_id))
+    n = cur.rowcount
+    conn.commit()
+    conn.close()
+    return n > 0
+
+
+def get_item_field(job_id: str, item_index: int, field_name: str):
+    """Read current item field value at item_index (0-based)."""
+    col = ITEM_FIELD_MAP.get(field_name)
+    if not col:
+        return None
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM items WHERE job_id = ? ORDER BY id", (job_id,))
+    rows = cur.fetchall()
+    if item_index >= len(rows):
+        conn.close()
+        return None
+    item_id = rows[item_index]["id"]
+    cur.execute(f"SELECT {col} AS v FROM items WHERE id = ?", (item_id,))
+    row = cur.fetchone()
+    conn.close()
+    return row["v"] if row else None
+
+
+def update_item_field(job_id: str, item_index: int, field_name: str, value) -> bool:
+    """Update a single item field by 0-based index for a job."""
+    col = ITEM_FIELD_MAP.get(field_name)
+    if not col:
+        return False
+    conn = _connect()
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM items WHERE job_id = ? ORDER BY id", (job_id,))
+    rows = cur.fetchall()
+    if item_index >= len(rows):
+        conn.close()
+        return False
+    item_id = rows[item_index][0]
+    cur.execute(f"UPDATE items SET {col} = ? WHERE id = ?", (value, item_id))
+    n = cur.rowcount
+    conn.commit()
+    conn.close()
+    return n > 0
+
+
+def increment_edits_count(job_id: str) -> None:
+    """Bump jobs.edits_count by 1."""
+    conn = _connect()
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE jobs SET edits_count = COALESCE(edits_count, 0) + 1
+        WHERE job_id = ?
+    """, (job_id,))
+    conn.commit()
+    conn.close()
+
+
+def list_review_queue(status: str = "pending_review", limit: int = 200) -> List[Dict]:
+    """List jobs in given review_status (default pending_review), most recent first."""
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT job_id, pdf_name, status, review_status, reviewed_by, reviewed_at,
+               review_notes, edits_count, created_at, completed_at, username,
+               pipeline_mode, document_type, accuracy_percent
+        FROM jobs
+        WHERE review_status = ?
+        ORDER BY created_at DESC
+        LIMIT ?
+    """, (status, limit))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@
   import QueueItem from '$lib/components/QueueItem.svelte';
   import RecentJobs from '$lib/components/RecentJobs.svelte';
   import ResultAccordion from '$lib/components/ResultAccordion.svelte';
+  import ReviewSplitView from '$lib/components/ReviewSplitView.svelte';
   import PipelineTerminal from '$lib/components/PipelineTerminal.svelte';
   import PipelineVisualizer from '$lib/components/PipelineVisualizer.svelte';
   import AgentTerminal from '$lib/components/AgentTerminal.svelte';
@@ -61,6 +62,12 @@
   let agentLines = $state<{ text: string; type: string }[]>([]);
   let pipelineMode = $state('ro_ed');
   let selectedPipeline = $state<PipelineKey>('v11');
+  // V11 review mode toggle: VIEW (read-only ResultAccordion) | REVIEW (editable split view)
+  let reviewMode = $state<'view' | 'review'>('view');
+  function reviewToast(msg: string) {
+    // ReviewSplitView shows its own toast; this is just a no-op safety hook
+    void msg;
+  }
   const isProcessing = $derived(running);
 
   // Route extraction through chosen pipeline. V7 keeps WebSocket flow (handled in startPipeline);
@@ -1063,14 +1070,45 @@
             <span class="text-sm font-bold uppercase" style="color: var(--on-surface);">LOADING RESULTS...</span>
           </div>
         {:else if selectedJob}
-          <ResultAccordion job={selectedJob} defaultOpen={true}
-            pipelineSteps={terminalSteps}
-            bind:pipelineCollapsed={terminalCollapsed}
-            agentLines={agentLines}
-            agentSummary={terminalSummary}
-            vizSteps={vizSteps}
-            vizSummary={vizSummary}
-          />
+          {#if selectedPipeline === 'v11'}
+            <div class="flex gap-2 mb-2">
+              <button
+                class="px-3 py-1.5 text-[10px] font-black uppercase border-2 cursor-pointer"
+                style="border-color: var(--on-surface); background: {reviewMode === 'view' ? 'var(--on-surface)' : 'var(--surface)'}; color: {reviewMode === 'view' ? 'var(--surface)' : 'var(--on-surface)'};"
+                onclick={() => reviewMode = 'view'}>VIEW</button>
+              <button
+                class="px-3 py-1.5 text-[10px] font-black uppercase border-2 cursor-pointer"
+                style="border-color: var(--on-surface); background: {reviewMode === 'review' ? 'var(--on-surface)' : 'var(--surface)'}; color: {reviewMode === 'review' ? 'var(--surface)' : 'var(--on-surface)'};"
+                onclick={() => reviewMode = 'review'}>REVIEW + EDIT</button>
+            </div>
+            {#if reviewMode === 'review'}
+              <ReviewSplitView
+                jobId={selectedJob.job_id}
+                job={selectedJob}
+                onApprove={() => { reviewMode = 'view'; reviewToast('Approved'); }}
+                onReject={() => { reviewMode = 'view'; reviewToast('Rejected'); }}
+                onClose={() => { reviewMode = 'view'; }}
+              />
+            {:else}
+              <ResultAccordion job={selectedJob} defaultOpen={true}
+                pipelineSteps={terminalSteps}
+                bind:pipelineCollapsed={terminalCollapsed}
+                agentLines={agentLines}
+                agentSummary={terminalSummary}
+                vizSteps={vizSteps}
+                vizSummary={vizSummary}
+              />
+            {/if}
+          {:else}
+            <ResultAccordion job={selectedJob} defaultOpen={true}
+              pipelineSteps={terminalSteps}
+              bind:pipelineCollapsed={terminalCollapsed}
+              agentLines={agentLines}
+              agentSummary={terminalSummary}
+              vizSteps={vizSteps}
+              vizSummary={vizSummary}
+            />
+          {/if}
         {/if}
 
       {:else if batchSummary}
