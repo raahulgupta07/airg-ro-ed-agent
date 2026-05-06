@@ -301,20 +301,34 @@ def init_database():
         "ON users(keycloak_id) WHERE keycloak_id IS NOT NULL"
     )
     cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT")
+    cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password INTEGER DEFAULT 0")
     conn.commit()
 
     # Create default admin if no users exist
     cursor.execute("SELECT COUNT(*) FROM users")
     if cursor.fetchone()[0] == 0:
-        import os
+        import os, secrets
         default_user = os.getenv("ADMIN_DEFAULT_USERNAME", "admin")
-        default_pw = os.getenv("ADMIN_DEFAULT_PASSWORD", "admin123")
+        env_pw = os.getenv("ADMIN_INITIAL_PASSWORD") or os.getenv("ADMIN_DEFAULT_PASSWORD")
+        if env_pw:
+            default_pw = env_pw
+            must_change = 0
+        else:
+            # Generate random password + force change on first login
+            default_pw = secrets.token_urlsafe(16)
+            must_change = 1
+            print("=" * 70)
+            print("⚠  INITIAL ADMIN PASSWORD (write this down — shown only once):")
+            print(f"     Username: {default_user}")
+            print(f"     Password: {default_pw}")
+            print("     You will be required to change it on first login.")
+            print("=" * 70)
         admin_hash = bcrypt.hashpw(default_pw.encode(), bcrypt.gensalt()).decode()
         cursor.execute("""
-            INSERT INTO users (username, password_hash, display_name, role)
-            VALUES (?, ?, 'Administrator', 'admin')
-        """, (default_user, admin_hash))
-        logger.info(f"Created default admin user: {default_user}")
+            INSERT INTO users (username, password_hash, display_name, role, must_change_password)
+            VALUES (?, ?, 'Administrator', 'admin', ?)
+        """, (default_user, admin_hash, must_change))
+        logger.info(f"Created default admin user: {default_user} (must_change={must_change})")
 
     # Groups table — RBAC permission groups
     cursor.execute("""

@@ -21,7 +21,21 @@ logger = logging.getLogger(__name__)
 # LOCAL AUTH (HS256 — used when Keycloak is disabled)
 # =============================================================================
 
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "ro-ed-dev-secret-change-in-production")
+_DEV_FALLBACK = "ro-ed-dev-secret-change-in-production"
+SECRET_KEY = os.getenv("JWT_SECRET_KEY") or ""
+if not SECRET_KEY:
+    if os.getenv("DEV_MODE", "").lower() in ("1", "true", "yes"):
+        import warnings
+        warnings.warn("JWT_SECRET_KEY missing — using dev fallback. Set in .env for production.")
+        SECRET_KEY = _DEV_FALLBACK
+    else:
+        raise RuntimeError(
+            "JWT_SECRET_KEY env var is REQUIRED. Generate one with:\n"
+            "  python3 -c 'import secrets; print(secrets.token_urlsafe(64))'\n"
+            "Or set DEV_MODE=1 to allow the insecure dev fallback."
+        )
+if SECRET_KEY != _DEV_FALLBACK and len(SECRET_KEY) < 32:
+    raise RuntimeError(f"JWT_SECRET_KEY too short ({len(SECRET_KEY)} chars). Use ≥32.")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 REFRESH_TOKEN_EXPIRE_DAYS = 7

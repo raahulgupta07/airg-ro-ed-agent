@@ -36,8 +36,8 @@ services:
       dockerfile: Dockerfile
     image: ro-ed-lang-app:latest
     container_name: ro-ed-api
-    ports:
-      - "9000:9000"
+    expose:
+      - "9000"
     env_file: ./.env
     environment:
       PYTHONUNBUFFERED: "1"
@@ -86,7 +86,43 @@ services:
     deploy:
       replicas: 2
 
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: ro-ed-nginx
+    ports:
+      - "9080:80"
+      - "9443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./nginx/logs:/var/log/nginx
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  pg-backup:
+    image: postgres:16-alpine
+    container_name: ro-ed-pg-backup
+    environment:
+      PGPASSWORD: ${PG_PASSWORD:-ro_ed_dev_pass}
+      RETENTION_DAYS: "14"
+    volumes:
+      - pg-backups:/backups
+      - ./scripts:/scripts:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    entrypoint: ["sh", "/scripts/pg_backup_loop.sh"]
+
 volumes:
   pg-data:
   redis-data:
   app-data:
+  pg-backups:

@@ -27,5 +27,10 @@ backend/frontend-build/
 # Backup
 *-BACKUP-*/
 .jwt_secret
+
+# Nginx (per-machine TLS material + runtime logs)
+nginx/ssl/*.pem
+nginx/logs/
+backups/
 backend/data/extraction_history.db-shm
 backend/data/extraction_history.db-wal
