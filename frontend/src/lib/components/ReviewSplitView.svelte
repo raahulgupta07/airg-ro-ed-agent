@@ -552,9 +552,15 @@
         body: JSON.stringify({ notes: approveNotes || undefined }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      toast('Approved');
+      toast('✓ APPROVED — saved to HISTORY');
       showApproveConfirm = false;
       onApprove?.();
+      // Auto-navigate to history page after 1.5s so user sees the saved job
+      setTimeout(() => {
+        try {
+          window.location.href = `/history?job=${encodeURIComponent(jobId)}`;
+        } catch { /* ignore */ }
+      }, 1500);
     } catch {
       toast('Approve failed', 'error');
     }
