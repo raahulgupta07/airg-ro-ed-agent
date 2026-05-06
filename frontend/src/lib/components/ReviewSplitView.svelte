@@ -43,15 +43,36 @@
   } = $props();
 
   // ── Local working copy (optimistic edits) ──
-  let workingDecl = $state<Record<string, any>>({ ...(job?.declaration ?? {}) });
+  // Accept both shapes: V11 response has `declaration` (singular).
+  // /api/jobs/{id} (history endpoint) returns `declarations: [decl]` array.
+  function _readDecl(j: any): Record<string, any> {
+    return (j?.declaration ?? j?.declarations?.[0]) ?? {};
+  }
+  let workingDecl = $state<Record<string, any>>({ ..._readDecl(job) });
   let workingItems = $state<any[]>(Array.isArray(job?.items) ? job.items.map((i: any) => ({ ...i })) : []);
 
   // Track originals so we can detect user-edited fields (border-blue)
-  const originalDecl: Record<string, any> = { ...(job?.declaration ?? {}) };
-  const originalItems: any[] = Array.isArray(job?.items) ? job.items.map((i: any) => ({ ...i })) : [];
+  let originalDecl = $state<Record<string, any>>({ ..._readDecl(job) });
+  let originalItems = $state<any[]>(Array.isArray(job?.items) ? job.items.map((i: any) => ({ ...i })) : []);
 
   // Item review flags from job (yellow border on flagged fields)
   let flags = $state<any[]>(Array.isArray(job?.item_review_flags) ? job.item_review_flags : []);
+
+  // Reactively sync when parent passes a different job (e.g. /history async load)
+  let _lastJobId = $state<string | null>(null);
+  $effect(() => {
+    const jid = (job as any)?.job_id ?? null;
+    if (jid && jid !== _lastJobId) {
+      _lastJobId = jid;
+      const d = _readDecl(job);
+      workingDecl = { ...d };
+      originalDecl = { ...d };
+      const it = Array.isArray(job?.items) ? job.items.map((i: any) => ({ ...i })) : [];
+      workingItems = it;
+      originalItems = it.map((i: any) => ({ ...i }));
+      flags = Array.isArray(job?.item_review_flags) ? job.item_review_flags : [];
+    }
+  });
 
   // Edit log (visual only — backend already persisted via PATCH per save)
   type LogEntry = { ts: string; field: string; before: string; after: string; user: string; page_ref?: number };
@@ -762,7 +783,7 @@
           {@const editing = editingKey === `decl:${row.field}`}
           {@const _bb = declBbox(row.field)}
           {@const dPage = (_bb?.page) || declPageRef(row.field)}
-          {@const _searchVal = String((decl as any)?.[row.field] ?? '')}
+          {@const _searchVal = String((workingDecl as any)?.[row.field] ?? '')}
           <div
             id={`field-decl-${row.field}`}
             class="border-2 p-2"
