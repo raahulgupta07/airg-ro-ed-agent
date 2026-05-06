@@ -47,8 +47,11 @@ const filteredJobs = $derived(() => {
     { key: 'created_at_short', label: 'Date' },
     { key: 'pdf_name', label: 'PDF Name' },
     { key: 'username', label: 'User' },
+    { key: 'pipeline_mode', label: 'Pipeline' },
     { key: 'total_pages', label: 'Pages', align: 'right' as const },
     { key: 'items_display', label: 'Items', align: 'right' as const },
+    { key: 'tokens_in_display', label: 'Tokens In', align: 'right' as const },
+    { key: 'tokens_out_display', label: 'Tokens Out', align: 'right' as const },
     { key: 'processing_time_display', label: 'Time', align: 'right' as const },
     { key: 'accuracy_display', label: 'Accuracy', align: 'right' as const },
     { key: 'cost_display', label: 'Cost', align: 'right' as const },
@@ -58,63 +61,131 @@ const filteredJobs = $derived(() => {
     return filteredJobs().map(j => ({
       ...j,
       created_at_short: (j.created_at || '').split(' ')[0],
+      pipeline_mode: (j.pipeline_mode || j.pipeline_version || '—').toUpperCase(),
       items_display: j.items_count ?? '—',
+      tokens_in_display: (j.tokens_in ?? 0).toLocaleString(),
+      tokens_out_display: (j.tokens_out ?? 0).toLocaleString(),
       processing_time_display: j.processing_time_seconds ? j.processing_time_seconds.toFixed(0) + 's' : '—',
       accuracy_display: j.accuracy_percent != null ? j.accuracy_percent.toFixed(1) + '%' : '—',
       cost_display: '$' + (j.cost_usd || 0).toFixed(4),
     }));
   });
 
+  function downloadCsv() {
+    const rows = tableRows();
+    if (!rows.length) return;
+    const cols = ['Date','PDF Name','User','Pipeline','Pages','Items','Tokens In','Tokens Out','Time','Accuracy','Cost'];
+    const fields = ['created_at_short','pdf_name','username','pipeline_mode','total_pages','items_display','tokens_in_display','tokens_out_display','processing_time_display','accuracy_display','cost_display'];
+    const lines = [cols.join(',')];
+    for (const r of rows) {
+      lines.push(fields.map(f => {
+        const v = (r as any)[f] ?? '';
+        const s = String(v).replace(/"/g, '""');
+        return `"${s}"`;
+      }).join(','));
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `costs_${new Date().toISOString().slice(0,10)}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function downloadXlsx() {
+    try {
+      const res = await fetch('/api/data/jobs/excel', {
+        headers: { 'Authorization': `Bearer ${auth.token}` },
+      });
+      if (!res.ok) { downloadCsv(); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `costs_${new Date().toISOString().slice(0,10)}.xlsx`; a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      downloadCsv();
+    }
+  }
+
   async function initChart() {
     if (!chartContainer || !costStats?.daily_breakdown) return;
     const echarts = await import('echarts');
 
-    const daily = costStats.daily_breakdown;
-    const dates = Object.keys(daily).sort();
-    const values = dates.map(d => daily[d]);
+    const dailyCost = costStats.daily_breakdown || {};
+    const dailyDocs = costStats.daily_docs || {};
+    const dailyTokIn = costStats.daily_tokens_in || {};
+    const dailyTokOut = costStats.daily_tokens_out || {};
+    const dates = [...new Set([
+      ...Object.keys(dailyCost),
+      ...Object.keys(dailyDocs),
+      ...Object.keys(dailyTokIn),
+    ])].sort();
+
+    const costSeries = dates.map(d => +(dailyCost[d] || 0).toFixed(4));
+    const docSeries = dates.map(d => dailyDocs[d] || 0);
+    const tokSeries = dates.map(d => (dailyTokIn[d] || 0) + (dailyTokOut[d] || 0));
 
     const chart = echarts.init(chartContainer);
     chart.setOption({
       backgroundColor: 'transparent',
-      grid: { top: 20, right: 20, bottom: 40, left: 60 },
+      grid: { top: 40, right: 80, bottom: 40, left: 70 },
+      legend: {
+        data: ['COST ($)', 'DOCS', 'TOKENS'],
+        textStyle: { color: '#383832', fontSize: 10, fontFamily: 'Space Grotesk', fontWeight: 700 },
+        top: 0,
+      },
       xAxis: {
         type: 'category',
         data: dates.map(d => d.slice(5)),
         axisLabel: { color: '#65655e', fontSize: 10, fontFamily: 'Space Grotesk' },
         axisLine: { lineStyle: { color: '#383832' } },
       },
-      yAxis: {
-        type: 'value',
-        axisLabel: {
-          color: '#65655e', fontSize: 10, fontFamily: 'Space Grotesk',
-          formatter: (v: number) => '$' + v.toFixed(3),
+      yAxis: [
+        { type: 'value', name: 'COST', position: 'left',
+          axisLabel: { color: '#fbbf24', fontSize: 9, formatter: (v:number) => '$' + v.toFixed(3) },
+          splitLine: { lineStyle: { color: 'rgba(56,56,50,0.1)' } },
+          axisLine: { lineStyle: { color: '#fbbf24' } },
         },
-        splitLine: { lineStyle: { color: 'rgba(56,56,50,0.15)' } },
-        axisLine: { lineStyle: { color: '#383832' } },
-      },
+        { type: 'value', name: 'DOCS / TOKENS', position: 'right',
+          axisLabel: { color: '#65655e', fontSize: 9, formatter: (v:number) => v >= 1000 ? (v/1000).toFixed(1)+'K' : String(v) },
+          splitLine: { show: false },
+          axisLine: { lineStyle: { color: '#383832' } },
+        },
+      ],
       tooltip: {
         trigger: 'axis',
-        formatter: (params: any) => {
-          const p = params[0];
-          return `<b>${p.name}</b><br/>Cost: $${p.value.toFixed(4)}`;
+        formatter: (params: any[]) => {
+          const lines = [`<b>${params[0]?.name ?? ''}</b>`];
+          for (const p of params) {
+            let v = p.value;
+            if (p.seriesName === 'COST ($)') v = '$' + (+v).toFixed(4);
+            else if (p.seriesName === 'TOKENS') v = (+v).toLocaleString();
+            lines.push(`${p.marker} ${p.seriesName}: ${v}`);
+          }
+          return lines.join('<br/>');
         },
       },
-      series: [{
-        type: 'bar',
-        data: values,
-        itemStyle: {
-          color: {
-            type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
-            colorStops: [
-              { offset: 0, color: '#fbbf24' },
-              { offset: 1, color: '#f59e0b' },
-            ],
-          },
-          borderColor: '#383832',
-          borderWidth: 1,
+      series: [
+        { name: 'COST ($)', type: 'line', smooth: true, yAxisIndex: 0,
+          data: costSeries,
+          symbol: 'circle', symbolSize: 6,
+          lineStyle: { color: '#fbbf24', width: 2 },
+          itemStyle: { color: '#fbbf24', borderColor: '#383832', borderWidth: 1 },
+          areaStyle: { color: 'rgba(251,191,36,0.15)' },
         },
-        barWidth: '60%',
-      }],
+        { name: 'DOCS', type: 'line', smooth: true, yAxisIndex: 1,
+          data: docSeries,
+          symbol: 'rect', symbolSize: 6,
+          lineStyle: { color: '#007518', width: 2 },
+          itemStyle: { color: '#007518' },
+        },
+        { name: 'TOKENS', type: 'line', smooth: true, yAxisIndex: 1,
+          data: tokSeries,
+          symbol: 'triangle', symbolSize: 6,
+          lineStyle: { color: '#1d4ed8', width: 2, type: 'dashed' },
+          itemStyle: { color: '#1d4ed8' },
+        },
+      ],
     });
 
     const observer = new ResizeObserver(() => chart.resize());
@@ -192,11 +263,21 @@ const filteredJobs = $derived(() => {
         FILTERED: ${filteredTotalCost().toFixed(4)} ({filteredJobs().length} PDFs)
       </div>
     {/if}
+    <button
+      class="text-[10px] font-black uppercase px-3 py-1.5 cursor-pointer border-2 press-effect"
+      style="border-color: var(--on-surface); background: var(--primary-container); color: var(--on-surface); box-shadow: 2px 2px 0px 0px var(--on-surface);"
+      onclick={downloadXlsx}
+    >↓ DOWNLOAD XLSX</button>
+    <button
+      class="text-[10px] font-black uppercase px-3 py-1.5 cursor-pointer border-2"
+      style="border-color: var(--on-surface); background: var(--surface); color: var(--on-surface);"
+      onclick={downloadCsv}
+    >↓ CSV</button>
   </div>
 
-  <!-- KPI Row -->
+  <!-- KPI Row 1: cost -->
   {#if costStats}
-    <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
       <KpiCard title="TOTAL_SPENT" value="${costStats.total_cost.toFixed(3)}" icon="payments" accent="#fbbf24"
                subtitle="{costStats.total_jobs} PDFs total" />
       <KpiCard title="AVG_PER_PDF" value="${costStats.avg_per_pdf.toFixed(4)}" icon="calculate" accent="#006f7c"
@@ -207,6 +288,19 @@ const filteredJobs = $derived(() => {
                subtitle="{costStats.today_jobs} PDFs today" />
       <KpiCard title="PROJECTED" value="${(costStats.avg_per_pdf * 100).toFixed(2)}" icon="trending_up" accent="#ff9d00"
                subtitle="per 100 PDFs/month" />
+    </div>
+    <!-- KPI Row 2: tokens -->
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+      <KpiCard title="TOTAL_TOKENS_IN" value="{((costStats.total_tokens_in||0)/1000).toFixed(1)}K" accent="#1d4ed8"
+               subtitle="{(costStats.total_tokens_in||0).toLocaleString()} input" />
+      <KpiCard title="TOTAL_TOKENS_OUT" value="{((costStats.total_tokens_out||0)/1000).toFixed(1)}K" accent="#7c3aed"
+               subtitle="{(costStats.total_tokens_out||0).toLocaleString()} output" />
+      <KpiCard title="TOTAL_TOKENS" value="{((costStats.total_tokens||0)/1000).toFixed(1)}K" accent="#6d28d9"
+               subtitle="{(costStats.total_tokens||0).toLocaleString()} all" />
+      <KpiCard title="AVG_TOKENS/PDF" value="{((costStats.avg_tokens_per_pdf||0)/1000).toFixed(1)}K" accent="#0e7490"
+               subtitle="per extraction" />
+      <KpiCard title="$/1K_TOKENS" value="${(costStats.cost_per_1k_tokens||0).toFixed(5)}" accent="#a16207"
+               subtitle="effective rate" />
     </div>
   {/if}
 

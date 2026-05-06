@@ -126,12 +126,23 @@ async def get_cost_stats(current_user: dict = Depends(get_current_user)):
     month_jobs = [j for j in jobs if (j.get('created_at') or '').startswith(month_prefix)]
     month_cost = sum(j.get('cost_usd', 0) or 0 for j in month_jobs)
 
-    # Daily breakdown (last 30 days)
-    daily = {}
+    # Daily breakdown — cost / docs / tokens (3 metrics for line chart)
+    daily_cost: dict = {}
+    daily_docs: dict = {}
+    daily_tokens_in: dict = {}
+    daily_tokens_out: dict = {}
     for j in jobs:
         d = (j.get('created_at') or '')[:10]
-        if d:
-            daily[d] = daily.get(d, 0) + (j.get('cost_usd', 0) or 0)
+        if not d:
+            continue
+        daily_cost[d] = daily_cost.get(d, 0) + (j.get('cost_usd', 0) or 0)
+        daily_docs[d] = daily_docs.get(d, 0) + 1
+        daily_tokens_in[d]  = daily_tokens_in.get(d, 0)  + (j.get('tokens_in', 0) or 0)
+        daily_tokens_out[d] = daily_tokens_out.get(d, 0) + (j.get('tokens_out', 0) or 0)
+
+    total_tokens_in = sum(j.get('tokens_in', 0) or 0 for j in jobs)
+    total_tokens_out = sum(j.get('tokens_out', 0) or 0 for j in jobs)
+    avg_tokens_per_pdf = (total_tokens_in + total_tokens_out) // total_jobs if total_jobs else 0
 
     return {
         "total_cost": round(total_cost, 4),
@@ -141,7 +152,15 @@ async def get_cost_stats(current_user: dict = Depends(get_current_user)):
         "today_jobs": len(today_jobs),
         "month_cost": round(month_cost, 4),
         "month_jobs": len(month_jobs),
-        "daily_breakdown": daily,
+        "total_tokens_in": total_tokens_in,
+        "total_tokens_out": total_tokens_out,
+        "total_tokens": total_tokens_in + total_tokens_out,
+        "avg_tokens_per_pdf": avg_tokens_per_pdf,
+        "cost_per_1k_tokens": round((total_cost * 1000) / max(1, total_tokens_in + total_tokens_out), 5),
+        "daily_breakdown": daily_cost,
+        "daily_docs": daily_docs,
+        "daily_tokens_in": daily_tokens_in,
+        "daily_tokens_out": daily_tokens_out,
     }
 
 
