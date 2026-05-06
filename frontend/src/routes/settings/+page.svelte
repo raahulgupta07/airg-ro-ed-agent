@@ -474,17 +474,6 @@
   }
 </script>
 
-<div class="w-full max-w-6xl mx-auto mb-4 p-4 rounded border-2 border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30">
-  <div class="flex items-start gap-3 flex-wrap">
-    <span class="text-2xl">⚙️</span>
-    <div class="flex-1 min-w-[200px]">
-      <div class="font-bold text-base">Settings</div>
-      <div class="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5">
-        Manage users, authentication, groups, and system configuration.
-      </div>
-    </div>
-  </div>
-</div>
 
 <ChapterHeading icon="settings" title="ADMIN_PANEL" subtitle="System settings, user management, and authentication" question="Configure the system" />
 

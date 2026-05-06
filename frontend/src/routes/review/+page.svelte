@@ -186,18 +186,6 @@
   onMount(refresh);
 </script>
 
-<div class="w-full max-w-6xl mx-auto mb-4 p-4 rounded border-2 border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30">
-  <div class="flex items-start gap-3 flex-wrap">
-    <span class="text-2xl">⚠️</span>
-    <div class="flex-1 min-w-[200px]">
-      <div class="font-bold text-base">Review Queue</div>
-      <div class="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5">
-        Triage extracted jobs. Approve, reject, or open a single job for side-by-side correction.
-        Hold ⌘/Ctrl + click rows to multi-select.
-      </div>
-    </div>
-  </div>
-</div>
 
 <ChapterHeading icon="checklist" title="REVIEW_QUEUE" subtitle="Triage extractions, bulk approve, and route exceptions" />
 
