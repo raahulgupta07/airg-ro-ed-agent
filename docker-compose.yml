@@ -35,6 +35,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: ro-ed-lang-app:latest
+    pull_policy: never
     container_name: ro-ed-api
     expose:
       - "9000"
@@ -64,7 +65,11 @@ services:
               "--timeout-keep-alive", "300"]
 
   worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: ro-ed-lang-app:latest
+    pull_policy: never
     env_file: ./.env
     environment:
       PYTHONUNBUFFERED: "1"
