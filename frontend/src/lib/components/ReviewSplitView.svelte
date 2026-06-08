@@ -15,6 +15,7 @@
   };
 
   const ITEM_COLUMNS: Col[] = [
+    { id: '_serial', header: '#', cell: (row) => row._serial, width: 40, align: 'right', enableSort: false },
     { id: 'item_name', header: 'ITEM NAME', accessor: 'item_name', width: 240 },
     { id: 'hs_code', header: 'HS', accessor: 'hs_code', width: 110 },
     { id: 'quantity', header: 'QTY', accessor: 'quantity', width: 90 },
@@ -610,7 +611,24 @@
 
   // ── ExcelTable items bridge ──
   // Annotate items with _index so save handlers can target the right index.
-  const itemsForTable = $derived(workingItems.map((it, i) => ({ ...it, _index: i })));
+  // Also inject a 1-based serial (#) and fall back currency to the declaration
+  // currency (currency is a declaration-level field; items share it).
+  const itemsForTable = $derived(workingItems.map((it, i) => ({
+    ...it,
+    _index: i,
+    _serial: i + 1,
+    currency: it.currency || workingDecl.currency || workingDecl.currency_2 || '',
+  })));
+
+  // Totals strip — validate extracted items against the declared customs total.
+  const declaredTotal = $derived(Number(workingDecl.total_customs_value) || 0);
+  const itemsValueSum = $derived(
+    workingItems.reduce((s, it) => s + (Number(it.customs_value_mmk) || 0), 0)
+  );
+  const valueGap = $derived(declaredTotal ? declaredTotal - itemsValueSum : 0);
+  const valueBalanced = $derived(
+    declaredTotal > 0 && Math.abs(valueGap) / declaredTotal <= 0.05
+  );
 
   function isItemCellEdited(idx: number, field: string): boolean {
     const cur = workingItems[idx]?.[field];
@@ -905,108 +923,23 @@
       exportFilename="items.csv"
       maxHeight="400px"
     />
-    <!-- Legacy items table (replaced by ExcelTable above) -->
-    {#if false}
-      <div class="bg-white overflow-x-auto custom-scrollbar">
-        <table class="w-full text-[10px] font-mono">
-          <thead>
-            <tr style="background: var(--surface-container);">
-              <th class="px-2 py-1 text-left text-[9px] font-medium uppercase border-b"
-                style="border-color: var(--on-surface);">#</th>
-              {#each itemCols as col}
-                <th class="px-2 py-1 text-left text-[9px] font-medium uppercase border-b {col.w}"
-                  style="border-color: var(--on-surface);">{col.label}</th>
-              {/each}
-              <th class="px-2 py-1 text-left text-[9px] font-medium uppercase border-b w-12"
-                style="border-color: var(--on-surface);">⇅</th>
-              <th class="px-2 py-1 text-left text-[9px] font-medium uppercase border-b w-8"
-                style="border-color: var(--on-surface);">✓</th>
-              <th class="px-2 py-1 text-left text-[9px] font-medium uppercase border-b w-8"
-                style="border-color: var(--on-surface);">🗑</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each workingItems as item, idx}
-              <tr class="border-b" style="border-color: rgba(56,56,50,0.1);">
-                <td class="px-2 py-1 font-bold">{idx + 1}</td>
-                {#each itemCols as col}
-                  {@const ekey = `item:${idx}:${col.field}`}
-                  {@const editing = editingKey === ekey}
-                  {@const iPage = itemPageRef(idx, col.field)}
-                  <td class="px-1 py-1">
-                    <div
-                      id={`field-item-${idx}-${col.field}`}
-                      class="border-2 px-1 py-0.5"
-                      style="border-color: {itemBorder(idx, col.field)}; background: {item[col.field] === '' || item[col.field] == null ? '#fefce8' : 'white'};"
-                      onmouseenter={() => jumpPdf(iPage)}
-                      onfocusin={() => jumpPdf(iPage)}
-                      role="group"
-                    >
-                      <div class="flex items-center justify-end gap-1" style="margin-bottom: 1px;">
-                        <button
-                          class="text-[8px] font-mono font-bold px-0.5 cursor-pointer"
-                          style="color: var(--outline); background: transparent; border: none;"
-                          title="Jump PDF to page {iPage}"
-                          onclick={(e) => { e.stopPropagation(); jumpPdfImmediate(iPage); }}
-                        >📍p{iPage}</button>
-                      </div>
-                      {#if editing}
-                        <input
-                          class="w-full text-[10px] font-mono font-bold border px-1"
-                          style="border-color: var(--on-surface);"
-                          bind:value={editValue}
-                          autofocus
-                          onkeydown={(e) => {
-                            if (e.key === 'Enter') saveItemField(idx, col.field);
-                            else if (e.key === 'Escape') cancelEdit();
-                          }}
-                          onblur={() => saveItemField(idx, col.field)}
-                        />
-                      {:else}
-                        <button
-                          class="text-left w-full cursor-pointer truncate font-bold"
-                          onclick={() => startEdit(ekey, item[col.field])}
-                          title={String(item[col.field] ?? '')}
-                        >
-                          ✏ {item[col.field] || '—'}
-                        </button>
-                      {/if}
-                    </div>
-                  </td>
-                {/each}
-                <td class="px-1 py-1 text-center whitespace-nowrap">
-                  <button
-                    class="px-1 text-[10px] font-bold cursor-pointer disabled:opacity-30"
-                    title="Move up"
-                    disabled={idx === 0}
-                    onclick={() => moveItem(idx, -1)}
-                  >▲</button>
-                  <button
-                    class="px-1 text-[10px] font-bold cursor-pointer disabled:opacity-30"
-                    title="Move down"
-                    disabled={idx === workingItems.length - 1}
-                    onclick={() => moveItem(idx, 1)}
-                  >▼</button>
-                </td>
-                <td class="px-2 py-1 text-center" style="color: #16a34a;">✓</td>
-                <td class="px-1 py-1 text-center">
-                  <button
-                    class="px-1 text-[12px] cursor-pointer"
-                    title="Delete row"
-                    style="color: #ef4444;"
-                    onclick={() => deleteItemRow(idx)}
-                  >🗑</button>
-                </td>
-              </tr>
-            {/each}
-            {#if workingItems.length === 0}
-              <tr><td colspan="9" class="px-2 py-4 text-center text-[10px] font-bold uppercase"
-                style="color: var(--outline);">NO ITEMS</td></tr>
-            {/if}
-          </tbody>
-        </table>
-      </div>
-    {/if}
+
+    <!-- ═══ ITEMS VALIDATION STRIP ═══ -->
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 mt-1 border-2 text-[10px] font-mono uppercase tracking-wider stamp-shadow"
+      style="border-color: var(--on-surface); background: var(--surface);">
+      <span class="font-bold">TOTAL PRODUCTS: {itemsCount}</span>
+      <span style="color: var(--on-surface-muted);">|</span>
+      <span>Σ VALUE: {itemsValueSum.toLocaleString(undefined, { maximumFractionDigits: 2 })} MMK</span>
+      <span style="color: var(--on-surface-muted);">|</span>
+      <span>DECLARED: {declaredTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })} MMK</span>
+      <span class="ml-auto px-2 py-0.5 font-bold border"
+        style={valueBalanced
+          ? 'color:#16a34a;border-color:#16a34a;'
+          : 'color:var(--error);border-color:var(--error);'}>
+        {#if !declaredTotal}NO TOTAL{:else if valueBalanced}✓ BALANCED{:else}⚠ GAP {(Math.abs(valueGap)).toLocaleString(undefined, { maximumFractionDigits: 0 })} MMK ({(declaredTotal ? Math.abs(valueGap) / declaredTotal * 100 : 0).toFixed(1)}%){/if}
+      </span>
+    </div>
+
 
     <!-- Edit log -->
     <div class="border-2"
