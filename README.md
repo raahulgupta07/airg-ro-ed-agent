@@ -94,6 +94,44 @@ docker compose up -d --build         # rebuild image (after Dockerfile / require
 docker compose ps                    # service status + healthchecks
 ```
 
+### Deploying updates ⚠️ rebuild required (or you'll see the old UI)
+
+**The frontend is compiled into the app Docker image at build time** (`npm run build`
+in the Dockerfile). A `git pull` / `git push` alone does **not** change what a running
+container serves — you must **rebuild the image** after pulling new code. Forgetting
+this is the #1 cause of "I deployed but still see the old UI."
+
+On the server, after every code update:
+
+```bash
+git pull origin main                      # get the latest code
+git rev-parse --short HEAD                # note the commit you're deploying
+
+docker compose build app worker           # rebake frontend + backend into the image
+docker compose up -d                      # recreate containers
+```
+
+Then **hard-refresh** the browser (`Cmd/Ctrl+Shift+R`) to drop cached assets.
+
+**Verify the new frontend is actually in the running image:**
+
+```bash
+# Prints the deployed commit baked into the build (>0 = new UI present)
+docker exec ro-ed-api sh -c 'ls /app/frontend-build/_app/immutable/assets/*.css' | head
+```
+
+If you deploy from a **container registry** (ECR / Docker Hub) instead of building on
+the host, `git push` won't rebuild the image — rebuild and push it from CI/a build
+host, then `docker compose pull && docker compose up -d` on the server:
+
+```bash
+docker compose build app worker
+docker tag ro-ed-lang-app:latest <registry>/ro-ed-lang-app:latest
+docker push <registry>/ro-ed-lang-app:latest
+# on the server:
+docker compose pull && docker compose up -d
+```
+
 ---
 
 ## Architecture
