@@ -111,22 +111,22 @@
     <input type="text" placeholder="Search any column..."
            bind:value={searchQuery}
            class="w-full text-xs font-bold uppercase px-3 py-2 focus:outline-none"
-           style="border: 2px solid var(--on-surface); background: white; color: var(--on-surface);" />
+           style="border: 1px solid var(--on-surface); background: white; color: var(--on-surface);" />
   </div>
   <div>
     <div class="tag-label mb-1 text-[8px]">FROM</div>
     <input type="date" bind:value={dateFrom}
            class="text-[10px] font-mono px-2 py-1.5 focus:outline-none"
-           style="border: 2px solid var(--on-surface); background: white; color: var(--on-surface);" />
+           style="border: 1px solid var(--on-surface); background: white; color: var(--on-surface);" />
   </div>
   <div>
     <div class="tag-label mb-1 text-[8px]">TO</div>
     <input type="date" bind:value={dateTo}
            class="text-[10px] font-mono px-2 py-1.5 focus:outline-none"
-           style="border: 2px solid var(--on-surface); background: white; color: var(--on-surface);" />
+           style="border: 1px solid var(--on-surface); background: white; color: var(--on-surface);" />
   </div>
   {#if searchQuery || dateFrom || dateTo}
-    <button class="text-[8px] font-black uppercase px-2 py-1.5 cursor-pointer"
+    <button class="text-[8px] font-medium uppercase px-2 py-1.5 cursor-pointer"
             style="border: 1px solid var(--outline); color: var(--outline); background: transparent;"
             onclick={clearFilters}>CLEAR</button>
   {/if}

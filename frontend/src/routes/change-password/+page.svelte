@@ -48,24 +48,24 @@
       </div>
 
       <div>
-        <div class="text-[8px] font-black uppercase mb-1" style="color: var(--outline);">CURRENT PASSWORD</div>
+        <div class="text-[8px] font-medium uppercase mb-1" style="color: var(--outline);">CURRENT PASSWORD</div>
         <input type="password" bind:value={current} required autofocus
                class="w-full text-xs font-mono px-3 py-2 focus:outline-none"
-               style="border: 2px solid var(--on-surface); background: white;" />
+               style="border: 1px solid var(--on-surface); background: white;" />
       </div>
 
       <div>
-        <div class="text-[8px] font-black uppercase mb-1" style="color: var(--outline);">NEW PASSWORD (≥8 chars)</div>
+        <div class="text-[8px] font-medium uppercase mb-1" style="color: var(--outline);">NEW PASSWORD (≥8 chars)</div>
         <input type="password" bind:value={newPw} required minlength="8"
                class="w-full text-xs font-mono px-3 py-2 focus:outline-none"
-               style="border: 2px solid var(--on-surface); background: white;" />
+               style="border: 1px solid var(--on-surface); background: white;" />
       </div>
 
       <div>
-        <div class="text-[8px] font-black uppercase mb-1" style="color: var(--outline);">CONFIRM NEW PASSWORD</div>
+        <div class="text-[8px] font-medium uppercase mb-1" style="color: var(--outline);">CONFIRM NEW PASSWORD</div>
         <input type="password" bind:value={confirm} required
                class="w-full text-xs font-mono px-3 py-2 focus:outline-none"
-               style="border: 2px solid var(--on-surface); background: white;" />
+               style="border: 1px solid var(--on-surface); background: white;" />
       </div>
 
       {#if error}
@@ -75,8 +75,8 @@
       {/if}
 
       <button type="submit" disabled={busy}
-              class="w-full px-3 py-2.5 text-[11px] font-black uppercase border-2 cursor-pointer"
-              style="border-color: var(--on-surface); background: {busy ? '#9ca3af' : 'var(--primary-container)'}; box-shadow: 2px 2px 0px 0px var(--on-surface);">
+              class="w-full px-3 py-2.5 text-[11px] font-medium uppercase border-2 cursor-pointer"
+              style="border-color: var(--on-surface); background: {busy ? '#9ca3af' : 'var(--primary-container)'}; box-shadow: var(--shadow-sm);">
         {busy ? '… SAVING' : 'CHANGE_PASSWORD'}
       </button>
     </form>

@@ -15,12 +15,12 @@
   const sizeMB = $derived((size / 1024 / 1024).toFixed(1));
 
   const statusConfig: Record<string, { color: string; label: string; icon: string }> = {
-    queued: { color: '#65655e', label: 'QUEUED', icon: 'schedule' },
-    processing: { color: '#006f7c', label: 'PROCESSING', icon: '' },
-    done: { color: '#007518', label: 'DONE', icon: 'check_circle' },
-    error: { color: '#be2d06', label: 'ERROR', icon: 'error' },
-    stopped: { color: '#ff9d00', label: 'STOPPED', icon: 'stop_circle' },
-    duplicate: { color: '#ff9d00', label: 'DUPLICATE', icon: 'content_copy' },
+    queued: { color: 'var(--on-surface-muted)', label: 'QUEUED', icon: 'schedule' },
+    processing: { color: 'var(--info)', label: 'PROCESSING', icon: '' },
+    done: { color: 'var(--success)', label: 'DONE', icon: 'check_circle' },
+    error: { color: 'var(--error)', label: 'ERROR', icon: 'error' },
+    stopped: { color: 'var(--warning)', label: 'STOPPED', icon: 'stop_circle' },
+    duplicate: { color: 'var(--warning)', label: 'DUPLICATE', icon: 'content_copy' },
   };
 
   const cfg = $derived(statusConfig[status] || statusConfig.queued);
@@ -31,7 +31,7 @@
   style="
     border-color: rgba(56,56,50,0.15);
     background: {selected ? 'var(--surface-container)' : 'white'};
-    {selected ? 'border-left: 3px solid var(--secondary);' : 'border-left: 3px solid transparent;'}
+    {selected ? 'border-left: 1px solid var(--secondary);' : 'border-left: 1px solid transparent;'}
   "
   onclick={onclick}
 >
@@ -51,7 +51,7 @@
       {:else if cfg.icon}
         <span class="material-symbols-outlined text-sm" style="color: {cfg.color};">{cfg.icon}</span>
       {/if}
-      <span class="text-[8px] font-black uppercase" style="color: {cfg.color};">{cfg.label}</span>
+      <span class="text-[8px] font-medium uppercase" style="color: {cfg.color};">{cfg.label}</span>
     </div>
   </div>
 

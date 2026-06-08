@@ -495,7 +495,7 @@
     if (cur != null && orig != null && String(cur) !== String(orig)) return '#3b82f6'; // blue (edited)
     if (cur === '' || cur == null) return '#eab308'; // yellow (empty)
     if (isFlagged('decl', field)) return '#eab308';
-    return '#22c55e'; // green
+    return 'var(--success)'; // green
   }
   function declBg(field: string): string {
     const cur = workingDecl[field];
@@ -508,7 +508,7 @@
     if (cur != null && orig != null && String(cur) !== String(orig)) return '#3b82f6';
     if (cur === '' || cur == null) return '#eab308';
     if (isFlagged('item', field, idx)) return '#eab308';
-    return '#22c55e';
+    return 'var(--success)';
   }
 
   // ── Action handlers ──
@@ -656,7 +656,7 @@
 <div class="border-2 stamp-shadow mb-2"
   style="border-color: var(--on-surface); background: var(--surface);">
   <div class="flex flex-wrap items-center gap-3 px-3 py-2">
-    <span class="px-2 py-0.5 text-[10px] font-black uppercase tracking-wider"
+    <span class="px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider"
       style="background: #b45309; color: white;">
       ⚠ {status}
     </span>
@@ -669,8 +669,8 @@
     <div class="flex-1"></div>
     <div class="flex flex-wrap gap-2">
       <button
-        class="px-3 py-1.5 text-[10px] font-black uppercase border-2 cursor-pointer"
-        style="border-color: var(--on-surface); background: var(--primary-container); color: var(--on-surface); box-shadow: 2px 2px 0px 0px var(--on-surface);"
+        class="px-3 py-1.5 text-[10px] font-medium uppercase border-2 cursor-pointer"
+        style="border-color: var(--on-surface); background: var(--primary-container); color: var(--on-surface); box-shadow: var(--shadow-sm);"
         onclick={() => {
           try {
             localStorage.removeItem('ro_ed_agent_queue');
@@ -683,21 +683,21 @@
         ↻ NEW JOB
       </button>
       <button
-        class="px-3 py-1.5 text-[10px] font-black uppercase border-2 cursor-pointer"
+        class="px-3 py-1.5 text-[10px] font-medium uppercase border-2 cursor-pointer"
         style="border-color: var(--on-surface); color: var(--on-surface); background: var(--surface);"
         onclick={discardClicked}
       >
         ↩ DISCARD
       </button>
       <button
-        class="px-3 py-1.5 text-[10px] font-black uppercase border-2 cursor-pointer"
+        class="px-3 py-1.5 text-[10px] font-medium uppercase border-2 cursor-pointer"
         style="border-color: var(--on-surface); color: var(--on-surface); background: var(--surface);"
         onclick={saveDraft}
       >
         💾 DRAFT
       </button>
       <button
-        class="px-3 py-1.5 text-[10px] font-black uppercase border-2"
+        class="px-3 py-1.5 text-[10px] font-medium uppercase border-2"
         style="border-color: var(--on-surface); background: {(approved || rejected) ? '#9ca3af' : '#ef4444'}; color: white; cursor: {(approved || rejected || rejecting) ? 'not-allowed' : 'pointer'}; opacity: {(approved || rejected) ? 0.5 : 1};"
         disabled={approved || rejected || rejecting || approving}
         onclick={() => { if (!approved && !rejected) showRejectModal = true; }}
@@ -705,7 +705,7 @@
         ✗ REJECT
       </button>
       <button
-        class="px-3 py-1.5 text-[10px] font-black uppercase border-2"
+        class="px-3 py-1.5 text-[10px] font-medium uppercase border-2"
         style="border-color: var(--on-surface); background: {(approved || rejected) ? '#9ca3af' : '#16a34a'}; color: white; cursor: {(approved || approving || rejected) ? 'not-allowed' : 'pointer'}; opacity: {(approved || rejected) ? 0.5 : 1};"
         disabled={approving || approved || rejected || rejecting}
         onclick={approveClicked}
@@ -718,10 +718,10 @@
 
 <!-- Mobile tab toggle -->
 <div class="flex md:hidden gap-2 mb-2">
-  <button class="flex-1 px-2 py-1 text-[10px] font-black uppercase border-2"
+  <button class="flex-1 px-2 py-1 text-[10px] font-medium uppercase border-2"
     style="border-color: var(--on-surface); background: {mobileTab === 'pdf' ? 'var(--on-surface)' : 'var(--surface)'}; color: {mobileTab === 'pdf' ? 'var(--surface)' : 'var(--on-surface)'};"
     onclick={() => mobileTab = 'pdf'}>PDF</button>
-  <button class="flex-1 px-2 py-1 text-[10px] font-black uppercase border-2"
+  <button class="flex-1 px-2 py-1 text-[10px] font-medium uppercase border-2"
     style="border-color: var(--on-surface); background: {mobileTab === 'data' ? 'var(--on-surface)' : 'var(--surface)'}; color: {mobileTab === 'data' ? 'var(--surface)' : 'var(--on-surface)'};"
     onclick={() => mobileTab = 'data'}>DATA</button>
 </div>
@@ -735,7 +735,7 @@
       <span>PDF_VIEWER</span>
       <div class="flex items-center gap-2 relative">
         <button
-          class="px-2 py-0.5 text-[9px] font-black uppercase border cursor-pointer"
+          class="px-2 py-0.5 text-[9px] font-medium uppercase border cursor-pointer"
           style="border-color: var(--surface); color: var(--surface); background: transparent;"
           onclick={() => showFieldJump = !showFieldJump}
           title="Jump to a field"
@@ -773,7 +773,7 @@
           {@const num = p?.page_number ?? (i + 1)}
           {@const editsHere = editsByPage[num] || 0}
           <button
-            class="relative px-1.5 py-0.5 text-[8px] font-mono font-black uppercase border cursor-pointer whitespace-nowrap"
+            class="relative px-1.5 py-0.5 text-[8px] font-mono font-medium uppercase border cursor-pointer whitespace-nowrap"
             style="border-color: var(--on-surface); background: {currentPage === num ? 'var(--on-surface)' : 'var(--surface)'}; color: {currentPage === num ? 'var(--surface)' : 'var(--on-surface)'};"
             onclick={() => jumpToPage(num)}
             title={editsHere > 0 ? `${editsHere} edit${editsHere === 1 ? '' : 's'} on this page` : ''}
@@ -834,7 +834,7 @@
             role="group"
           >
             <div class="flex items-center justify-between gap-1">
-              <div class="text-[8px] font-black uppercase tracking-wider"
+              <div class="text-[8px] font-medium uppercase tracking-wider"
                 style="color: var(--outline);">{row.label}</div>
               <div class="flex items-center gap-1">
                 <button
@@ -862,10 +862,10 @@
                 }}
               />
               <div class="flex items-center gap-1 mt-1">
-                <button class="px-2 py-0.5 text-[9px] font-black uppercase border cursor-pointer"
+                <button class="px-2 py-0.5 text-[9px] font-medium uppercase border cursor-pointer"
                   style="border-color: var(--on-surface); background: #16a34a; color: white;"
                   onclick={() => saveDeclField(row.field)}>✓ SAVE</button>
-                <button class="px-2 py-0.5 text-[9px] font-black uppercase border cursor-pointer"
+                <button class="px-2 py-0.5 text-[9px] font-medium uppercase border cursor-pointer"
                   style="border-color: var(--on-surface); background: var(--surface);"
                   onclick={cancelEdit}>✗ CANCEL</button>
                 <span class="text-[8px] font-mono ml-auto" style="color: var(--outline);">
@@ -911,17 +911,17 @@
         <table class="w-full text-[10px] font-mono">
           <thead>
             <tr style="background: var(--surface-container);">
-              <th class="px-2 py-1 text-left text-[9px] font-black uppercase border-b"
+              <th class="px-2 py-1 text-left text-[9px] font-medium uppercase border-b"
                 style="border-color: var(--on-surface);">#</th>
               {#each itemCols as col}
-                <th class="px-2 py-1 text-left text-[9px] font-black uppercase border-b {col.w}"
+                <th class="px-2 py-1 text-left text-[9px] font-medium uppercase border-b {col.w}"
                   style="border-color: var(--on-surface);">{col.label}</th>
               {/each}
-              <th class="px-2 py-1 text-left text-[9px] font-black uppercase border-b w-12"
+              <th class="px-2 py-1 text-left text-[9px] font-medium uppercase border-b w-12"
                 style="border-color: var(--on-surface);">⇅</th>
-              <th class="px-2 py-1 text-left text-[9px] font-black uppercase border-b w-8"
+              <th class="px-2 py-1 text-left text-[9px] font-medium uppercase border-b w-8"
                 style="border-color: var(--on-surface);">✓</th>
-              <th class="px-2 py-1 text-left text-[9px] font-black uppercase border-b w-8"
+              <th class="px-2 py-1 text-left text-[9px] font-medium uppercase border-b w-8"
                 style="border-color: var(--on-surface);">🗑</th>
             </tr>
           </thead>
@@ -1028,7 +1028,7 @@
             {#each editLog as e}
               <div class="text-[10px] font-mono py-0.5 flex gap-2">
                 <span style="color: var(--outline);">{e.ts}</span>
-                <span class="font-black" style="color: var(--on-surface);">{e.field}</span>
+                <span class="font-medium" style="color: var(--on-surface);">{e.field}</span>
                 <span style="color: var(--outline);">{e.before} → </span>
                 <span class="font-bold" style="color: #16a34a;">{e.after}</span>
                 <span class="ml-auto" style="color: var(--outline);">{e.user}</span>
@@ -1049,7 +1049,7 @@
       style="border-color: var(--on-surface); background: var(--surface);">
       <div class="dark-bar text-xs">REJECT_DOCUMENT</div>
       <div class="bg-white p-4">
-        <div class="text-[10px] font-black uppercase mb-2" style="color: var(--on-surface);">
+        <div class="text-[10px] font-medium uppercase mb-2" style="color: var(--on-surface);">
           REASON FOR REJECTION (required)
         </div>
         <textarea
@@ -1059,10 +1059,10 @@
           placeholder="e.g. Wrong document type — not a customs declaration"
         ></textarea>
         <div class="flex gap-2 mt-3 justify-end">
-          <button class="px-3 py-1.5 text-[10px] font-black uppercase border-2 cursor-pointer"
+          <button class="px-3 py-1.5 text-[10px] font-medium uppercase border-2 cursor-pointer"
             style="border-color: var(--on-surface); background: var(--surface); color: var(--on-surface);"
             onclick={() => showRejectModal = false}>CANCEL</button>
-          <button class="px-3 py-1.5 text-[10px] font-black uppercase border-2 cursor-pointer"
+          <button class="px-3 py-1.5 text-[10px] font-medium uppercase border-2 cursor-pointer"
             style="border-color: var(--on-surface); background: #ef4444; color: white;"
             onclick={doReject}>✗ CONFIRM REJECT</button>
         </div>
@@ -1089,10 +1089,10 @@
           placeholder="Optional notes"
         ></textarea>
         <div class="flex gap-2 mt-3 justify-end">
-          <button class="px-3 py-1.5 text-[10px] font-black uppercase border-2 cursor-pointer"
+          <button class="px-3 py-1.5 text-[10px] font-medium uppercase border-2 cursor-pointer"
             style="border-color: var(--on-surface); background: var(--surface); color: var(--on-surface);"
             onclick={() => showApproveConfirm = false}>CANCEL</button>
-          <button class="px-3 py-1.5 text-[10px] font-black uppercase border-2 cursor-pointer"
+          <button class="px-3 py-1.5 text-[10px] font-medium uppercase border-2 cursor-pointer"
             style="border-color: var(--on-surface); background: #16a34a; color: white;"
             onclick={doApprove}>✓ APPROVE ANYWAY</button>
         </div>

@@ -68,7 +68,7 @@ EXTRACTION_MODEL = "google/gemini-3-flash-preview"
 # Per-step model override (None = use EXTRACTION_MODEL)
 VISION_MODEL = None                      # Uses EXTRACTION_MODEL (gemini-3-flash)
 ASSEMBLER_MODEL = None                   # Uses EXTRACTION_MODEL (gemini-3-flash)
-VERIFIER_MODEL = "anthropic/claude-sonnet-4-6"  # Premium — checks results against page images
+VERIFIER_MODEL = "google/gemini-3-flash-preview"  # Same as extractor; ~60% cheaper than Sonnet on confirm/correct task
 
 # ============================================================================
 # OUTPUT CONFIGURATION

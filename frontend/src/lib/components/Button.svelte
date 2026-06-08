@@ -16,25 +16,25 @@
   } = $props();
 
   const styles = $derived({
-    primary: 'background: #00fc40; color: #383832; border: 2px solid #383832; box-shadow: 4px 4px 0px 0px #383832;',
-    secondary: 'background: #007518; color: white; border: 2px solid #383832; box-shadow: 4px 4px 0px 0px #383832;',
-    danger: 'background: #be2d06; color: #feffd6; border: 2px solid #383832; box-shadow: 4px 4px 0px 0px #383832;',
-    ghost: 'background: transparent; color: #feffd6; border: 1px solid #65655e;',
-    dark: 'background: #383832; color: #feffd6; border: 2px solid #383832; box-shadow: 4px 4px 0px 0px #383832;',
+    primary:   'background: var(--primary); color: var(--on-primary); border: 1px solid var(--primary);',
+    secondary: 'background: var(--surface-container-lowest); color: var(--on-surface); border: 1px solid var(--outline);',
+    danger:    'background: var(--error); color: #fff; border: 1px solid var(--error);',
+    ghost:     'background: transparent; color: var(--on-surface); border: 1px solid transparent;',
+    dark:      'background: var(--secondary); color: #fff; border: 1px solid var(--secondary);',
   }[variant]);
 
   const padding = $derived({
-    sm: 'padding: 6px 12px; font-size: 10px;',
-    md: 'padding: 8px 16px; font-size: 0.75rem;',
-    lg: 'padding: 12px 32px; font-size: 0.875rem;',
+    sm: 'padding: 6px 12px; font-size: 12px; border-radius: var(--radius-sm);',
+    md: 'padding: 8px 16px; font-size: 13px; border-radius: var(--radius-md);',
+    lg: 'padding: 11px 22px; font-size: 14px; border-radius: var(--radius-md);',
   }[size]);
 </script>
 
 <button
-  class="press-effect font-black uppercase tracking-wider cursor-pointer transition-colors"
+  class="press-effect font-medium cursor-pointer transition-all duration-150 hover:opacity-90"
   class:opacity-50={disabled}
   class:cursor-not-allowed={disabled}
-  style="{styles} {padding}"
+  style="{styles} {padding} box-shadow: var(--shadow-xs);"
   {disabled}
   onclick={onclick}
 >

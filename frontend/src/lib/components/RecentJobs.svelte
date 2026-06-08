@@ -15,9 +15,9 @@
   });
 
   const decisionColor: Record<string, string> = {
-    COMPLETED: '#007518',
-    FAILED: '#be2d06',
-    PROCESSING: '#006f7c',
+    COMPLETED: 'var(--success)',
+    FAILED: 'var(--error)',
+    PROCESSING: 'var(--info)',
   };
 </script>
 
@@ -36,12 +36,12 @@
           </span>
           <div class="flex items-center gap-2 ml-2">
             {#if job.accuracy_percent != null}
-              <span class="text-[9px] font-mono font-bold" style="color: {job.accuracy_percent >= 90 ? '#007518' : job.accuracy_percent >= 60 ? '#ff9d00' : '#be2d06'};">
+              <span class="text-[9px] font-mono font-bold" style="color: {job.accuracy_percent >= 90 ? 'var(--success)' : job.accuracy_percent >= 60 ? 'var(--warning)' : 'var(--error)'};">
                 {job.accuracy_percent.toFixed(1)}%
               </span>
             {/if}
-            <span class="text-[8px] font-black uppercase px-1 py-0.5 text-white"
-                  style="background: {decisionColor[job.status] || '#65655e'};">
+            <span class="text-[8px] font-medium uppercase px-1 py-0.5 text-white"
+                  style="background: {decisionColor[job.status] || 'var(--on-surface-muted)'};">
               {job.status === 'COMPLETED' ? '✓' : job.status === 'FAILED' ? '✗' : '◉'}
             </span>
           </div>

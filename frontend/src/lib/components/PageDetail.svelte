@@ -11,9 +11,9 @@
   } = $props();
 
   const typeColors: Record<string, string> = {
-    customs_declaration: '#006f7c',
-    item_detail: '#007518',
-    invoice: '#9d4867',
+    customs_declaration: 'var(--info)',
+    item_detail: 'var(--success)',
+    invoice: 'var(--tertiary)',
     packing_list: '#5b4f8a',
     bill_of_lading: '#8b6914',
     delivery_order: '#4a7c59',
@@ -54,7 +54,7 @@
       <div class="overflow-y-auto p-4 space-y-3" style="max-height: 600px;">
         <!-- Type + confidence -->
         <div class="flex items-center gap-2">
-          <span class="px-2 py-1 text-[9px] font-black uppercase text-white" style="background: {color};">
+          <span class="px-2 py-1 text-[9px] font-medium uppercase text-white" style="background: {color};">
             {page.page_type?.replace(/_/g, ' ')}
           </span>
           <span class="text-[10px] font-mono" style="color: var(--outline);">
@@ -75,12 +75,12 @@
         <!-- Document info -->
         {#if page.doc_title || page.doc_issuer}
           <div class="border" style="border-color: rgba(56,56,50,0.15);">
-            <div class="px-2 py-1 text-[8px] font-black uppercase" style="background: var(--surface-container); color: var(--outline);">DOCUMENT</div>
+            <div class="px-2 py-1 text-[8px] font-medium uppercase" style="background: var(--surface-container); color: var(--outline);">DOCUMENT</div>
             <div class="grid grid-cols-2 gap-0">
               {#each [['Title', page.doc_title], ['Issuer', page.doc_issuer], ['Date', page.doc_date], ['Reference', page.doc_reference], ['Country', page.doc_country]] as [label, value]}
                 {#if value}
                   <div class="px-2 py-1 border-b border-r" style="border-color: rgba(56,56,50,0.08);">
-                    <div class="text-[7px] font-black uppercase" style="color: var(--outline);">{label}</div>
+                    <div class="text-[7px] font-medium uppercase" style="color: var(--outline);">{label}</div>
                     <div class="text-[10px] font-bold" style="color: var(--on-surface);">{value}</div>
                   </div>
                 {/if}
@@ -92,7 +92,7 @@
         <!-- Fields -->
         {#if Object.keys(fields).length > 0}
           <div class="border" style="border-color: rgba(56,56,50,0.15);">
-            <div class="px-2 py-1 text-[8px] font-black uppercase" style="background: var(--surface-container); color: var(--outline);">
+            <div class="px-2 py-1 text-[8px] font-medium uppercase" style="background: var(--surface-container); color: var(--outline);">
               FIELDS ({Object.keys(fields).length})
             </div>
             <div class="overflow-y-auto" style="max-height: 200px;">
@@ -110,7 +110,7 @@
         {#if tables.length > 0}
           {#each tables as tbl, ti}
             <div class="border" style="border-color: rgba(56,56,50,0.15);">
-              <div class="px-2 py-1 text-[8px] font-black uppercase" style="background: var(--surface-container); color: var(--outline);">
+              <div class="px-2 py-1 text-[8px] font-medium uppercase" style="background: var(--surface-container); color: var(--outline);">
                 {tbl.title || `TABLE ${ti+1}`} ({tbl.rows?.length || 0} rows)
               </div>
               <div class="overflow-x-auto">
@@ -142,7 +142,7 @@
         <!-- Legacy items (backward compat for old extractions) -->
         {#if items.length > 0 && tables.length === 0}
           <div class="border" style="border-color: rgba(56,56,50,0.15);">
-            <div class="px-2 py-1 text-[8px] font-black uppercase" style="background: var(--surface-container); color: var(--outline);">
+            <div class="px-2 py-1 text-[8px] font-medium uppercase" style="background: var(--surface-container); color: var(--outline);">
               ITEMS ({items.length})
             </div>
             <div class="overflow-x-auto">
@@ -173,7 +173,7 @@
         <!-- Amounts -->
         {#if amounts.length > 0}
           <div class="border" style="border-color: rgba(56,56,50,0.15);">
-            <div class="px-2 py-1 text-[8px] font-black uppercase" style="background: var(--surface-container); color: var(--outline);">
+            <div class="px-2 py-1 text-[8px] font-medium uppercase" style="background: var(--surface-container); color: var(--outline);">
               AMOUNTS ({amounts.length})
             </div>
             {#each amounts as amt}

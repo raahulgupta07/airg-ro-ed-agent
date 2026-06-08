@@ -86,29 +86,44 @@ def merge_results(v7_result: Optional[Dict], v10_result: Optional[Dict]) -> Dict
 
     # Merge items: V7 first, then V10 items merged into matching V7 entries
     import re
+    _PACK_RE = re.compile(
+        r'\b(\d+(?:[.,]\d+)?)\s*(gms?|gm|grams?|gr|kgs?|kg|mls?|ml|ltr?|l|lbs?|lb|oz|pcs?|pieces?|x)\b\.?',
+        re.IGNORECASE,
+    )
+
     def _norm_name(it):
-        return str(it.get("item_name") or "").strip().upper()[:30]
+        return str(it.get("item_name") or "").strip().upper()
 
     def _norm_hs(it):
         """HS code: digits only — handles '0406.10.10 00' vs '0406101000'."""
         return re.sub(r"\D", "", str(it.get("hs_code") or ""))
 
+    def _pack(it):
+        m = _PACK_RE.search(str(it.get("item_name") or ""))
+        return f"{m.group(1).replace(',','.')}{m.group(2).lower()}" if m else ""
+
+    def _qty(it):
+        return str(it.get("quantity") or "").strip()
+
     def _dedup_match(a, b):
-        """Same item if normalized name fuzzy-matches AND HS codes don't conflict.
-           Multiple items can share the same HS code (e.g. all chicken products
-           under 1601.00.90), so HS alone is NEVER sufficient — name must match too."""
+        """Strict: same item only if normalized names match exactly (after upper+strip)
+           AND HS codes agree (or one missing) AND pack-size matches AND quantity matches.
+           Avoids collapsing pack variants (100g vs 200g) and quantity splits."""
         na = _norm_name(a)
         nb = _norm_name(b)
-        if not na or not nb:
+        if not na or not nb or na != nb:
             return False
-        # Names must overlap (substring or equal) — handles minor LLM phrasing diffs
-        name_match = (na == nb) or (na in nb) or (nb in na)
-        if not name_match:
-            return False
-        # HS must agree (or one missing)
         ha = _norm_hs(a)
         hb = _norm_hs(b)
         if ha and hb and ha != hb:
+            return False
+        # Pack-size must match when both present (prevents 100g vs 200g collapse)
+        pa, pb = _pack(a), _pack(b)
+        if pa and pb and pa != pb:
+            return False
+        # Quantity must match when both present
+        qa, qb = _qty(a), _qty(b)
+        if qa and qb and qa != qb:
             return False
         return True
 
@@ -139,6 +154,11 @@ def merge_results(v7_result: Optional[Dict], v10_result: Optional[Dict]) -> Dict
     if not duration:
         duration = (v7.get("duration_seconds") or 0) + (v10.get("duration_seconds") or 0)
 
+    sanity_flags = list(v7.get("sanity_flags") or []) + list(v10.get("sanity_flags") or [])
+    has_count_mismatch = any(f.startswith("item_count_mismatch") for f in sanity_flags)
+    needs_review = (bool(v10) or bool(v7.get("needs_review"))
+                    or bool(v10.get("needs_review")) or has_count_mismatch)
+
     return {
         "declaration": merged_decl,
         "items": merged_items,
@@ -146,7 +166,8 @@ def merge_results(v7_result: Optional[Dict], v10_result: Optional[Dict]) -> Dict
                             or v10.get("document_format") or "MIXED",
         "cost": round(cost, 4),
         "duration": round(duration, 1),
-        "needs_review": bool(v10) or bool(v7.get("needs_review")) or bool(v10.get("needs_review")),
+        "needs_review": needs_review,
+        "sanity_flags": sanity_flags,
         "v7_result": {"used": bool(v7), "items_count": len(v7_items)},
         "v10_result": {"used": bool(v10), "items_count": len(v10_items)},
     }

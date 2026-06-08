@@ -528,39 +528,42 @@
 {#if queue.length === 0}
   <div class="flex flex-col items-center justify-center" style="min-height: calc(100vh - 180px);">
     <!-- Smart Router info card (auto-routing, no choice exposed) -->
-    <div class="w-full max-w-4xl mb-4 p-4 rounded border-2 border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30">
+    <div class="w-full max-w-4xl mb-5 p-4"
+         style="background: var(--primary-container); border: 1px solid var(--primary); border-radius: var(--radius-lg); box-shadow: var(--shadow-xs);">
       <div class="flex items-start gap-3 flex-wrap">
-        <span class="text-2xl">🎼</span>
+        <span class="material-symbols-outlined" style="color: var(--primary); font-size: 22px;">auto_awesome</span>
         <div class="flex-1 min-w-[200px]">
-          <div class="font-bold text-base">Maestro Router (auto)</div>
-          <div class="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5">
-            Auto-classifies each page → PRINTED pages run Veritas, INKED pages run Scrivener, EXTRA attachments skipped. Best for any doc — printed, inked, or mixed bundles.
+          <div class="font-serif text-base" style="color: var(--on-surface); font-weight: 500;">Maestro Router <span style="color: var(--on-surface-muted); font-weight: 400;">· auto</span></div>
+          <div class="text-sm mt-1" style="color: var(--on-surface-muted); line-height: 1.5;">
+            Auto-classifies each page → PRINTED runs Veritas, INKED runs Scrivener, EXTRA attachments skipped. Best for any doc — printed, inked, or mixed.
           </div>
         </div>
-        <div class="flex gap-4 text-xs font-mono">
-          <div>💰 $0.08–0.40</div>
-          <div>⏱ 60–150s</div>
+        <div class="flex gap-4 text-xs" style="color: var(--on-surface-muted);">
+          <div class="flex items-center gap-1"><span class="material-symbols-outlined text-sm" style="color: var(--primary);">payments</span>$0.08–0.40</div>
+          <div class="flex items-center gap-1"><span class="material-symbols-outlined text-sm" style="color: var(--primary);">schedule</span>60–150s</div>
         </div>
       </div>
     </div>
     <!-- Big drop zone -->
     <button
-      class="w-full max-w-4xl border-2 border-dashed cursor-pointer transition-colors p-16"
-      style="border-color: var(--on-surface); background: transparent;"
+      class="w-full max-w-4xl cursor-pointer transition-all p-16 group"
+      style="border: 1.5px dashed var(--outline); background: var(--surface-container-lowest); border-radius: var(--radius-xl);"
+      onmouseenter={(e) => { e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.background = 'var(--primary-container)'; }}
+      onmouseleave={(e) => { e.currentTarget.style.borderColor = 'var(--outline)'; e.currentTarget.style.background = 'var(--surface-container-lowest)'; }}
       onclick={() => fileInput.click()}
     >
       <div class="text-center">
-        <span class="material-symbols-outlined" style="font-size: 4rem; color: var(--on-surface); opacity: 0.4;">cloud_upload</span>
-        <div class="mt-4 text-xl font-black uppercase tracking-tight" style="color: var(--on-surface);">
-          DROP CUSTOMS PDFs HERE
+        <span class="material-symbols-outlined" style="font-size: 4rem; color: var(--primary);">cloud_upload</span>
+        <div class="mt-4 font-serif text-2xl" style="color: var(--on-surface); font-weight: 500; letter-spacing: -0.01em;">
+          Drop customs PDFs here
         </div>
-        <div class="mt-2 text-sm font-bold uppercase" style="color: var(--outline);">
+        <div class="mt-1.5 text-sm" style="color: var(--on-surface-muted);">
           or click to browse
         </div>
-        <div class="mt-4 flex items-center justify-center gap-6 text-[10px] font-mono uppercase" style="color: var(--outline);">
+        <div class="mt-5 flex items-center justify-center gap-3 text-xs" style="color: var(--on-surface-subtle);">
           <span>Single or multiple files</span>
           <span>·</span>
-          <span>.pdf up to 50MB each</span>
+          <span>.pdf up to 50 MB each</span>
           <span>·</span>
           <span>Batch processing supported</span>
         </div>
@@ -595,32 +598,35 @@
     {#if !_hideQueueForReview}
     <div class="flex flex-col">
       <!-- Smart Router info banner (compact for left panel) -->
-      <div class="mb-3 p-2 rounded border border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 flex items-center gap-2">
-        <span>🎼</span>
-        <span class="text-xs font-semibold">Maestro Router</span>
-        <span class="text-[11px] text-zinc-600 dark:text-zinc-400 flex-1">auto: PRINTED→Veritas, INKED→Scrivener</span>
-        <span class="text-[11px] font-mono">$0.08–0.40</span>
+      <div class="mb-3 px-3 py-2 flex items-center gap-2"
+           style="background: var(--primary-container); border: 1px solid var(--primary); border-radius: var(--radius-md);">
+        <span class="material-symbols-outlined text-sm" style="color: var(--primary);">auto_awesome</span>
+        <span class="text-xs font-medium" style="color: var(--on-surface);">Maestro Router</span>
+        <span class="text-[11px] flex-1" style="color: var(--on-surface-muted);">auto · PRINTED→Veritas · INKED→Scrivener</span>
+        <span class="text-[11px]" style="color: var(--on-surface-muted);">$0.08–0.40</span>
       </div>
       <!-- Add more / New job buttons -->
       <div class="flex gap-2 mb-3">
         <button
-          class="flex-1 p-3 border-2 border-dashed cursor-pointer transition-colors"
-          style="border-color: var(--on-surface); background: transparent;"
+          class="flex-1 px-3 py-2.5 cursor-pointer transition-colors"
+          style="border: 1.5px dashed var(--outline); background: var(--surface-container-lowest); border-radius: var(--radius-md);"
+          onmouseenter={(e) => { e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.background = 'var(--primary-container)'; }}
+          onmouseleave={(e) => { e.currentTarget.style.borderColor = 'var(--outline)'; e.currentTarget.style.background = 'var(--surface-container-lowest)'; }}
           onclick={() => fileInput.click()}
         >
-          <div class="flex items-center justify-center gap-2">
-            <span class="material-symbols-outlined text-base" style="color: var(--on-surface);">add_circle</span>
-            <span class="text-[10px] font-black uppercase" style="color: var(--on-surface);">ADD MORE PDFs</span>
+          <div class="flex items-center justify-center gap-1.5">
+            <span class="material-symbols-outlined text-base" style="color: var(--primary);">add_circle</span>
+            <span class="text-xs font-medium" style="color: var(--on-surface);">Add more PDFs</span>
           </div>
         </button>
         <button
-          class="p-3 border-2 cursor-pointer press-effect"
-          style="border-color: var(--on-surface); background: var(--primary-container); box-shadow: 2px 2px 0px 0px var(--on-surface);"
+          class="px-3 py-2.5 cursor-pointer press-effect transition-colors"
+          style="background: var(--primary); color: #fff; border-radius: var(--radius-md); box-shadow: var(--shadow-xs);"
           onclick={clearAll}
         >
-          <div class="flex items-center justify-center gap-2">
-            <span class="material-symbols-outlined text-base" style="color: var(--on-surface);">restart_alt</span>
-            <span class="text-[10px] font-black uppercase" style="color: var(--on-surface);">NEW JOB</span>
+          <div class="flex items-center justify-center gap-1.5">
+            <span class="material-symbols-outlined text-base">restart_alt</span>
+            <span class="text-xs font-medium">New job</span>
           </div>
         </button>
       </div>
@@ -653,7 +659,7 @@
 
         <!-- Pipeline Mode -->
         <div class="px-2 pt-2 flex items-center gap-2" style="border-top: 1px solid rgba(56,56,50,0.15);">
-          <span class="px-2 py-1 text-[9px] font-black uppercase" style="background: #007518; color: white;">RO-ED AI</span>
+          <span class="px-2 py-1 text-[9px] font-medium uppercase" style="background: var(--success); color: white;">RO-ED AI</span>
           <span class="text-[7px] font-mono" style="color: var(--outline);">SMART EXTRACTION · HD VISION</span>
         </div>
 
@@ -692,7 +698,7 @@
               <div class="mt-1 grid grid-cols-3 gap-2 text-[10px]" style="color: var(--on-surface);">
                 <div>Processed: <span class="font-bold">{ej?.created_at?.split(' ')[0] ?? '—'}</span></div>
                 <div>By: <span class="font-bold">{ej?.username ?? '—'}</span></div>
-                <div>Accuracy: <span class="font-bold" style="color: #22c55e;">{ej?.accuracy_percent?.toFixed(1) ?? '—'}%</span></div>
+                <div>Accuracy: <span class="font-bold" style="color: var(--success);">{ej?.accuracy_percent?.toFixed(1) ?? '—'}%</span></div>
                 <div>Items: <span class="font-bold">{ej?.items?.length ?? '—'}</span></div>
                 <div>Pages: <span class="font-bold">{ej?.total_pages ?? '—'}</span></div>
                 <div>Cost: <span class="font-bold" style="color: #eab308;">${ej?.cost_usd?.toFixed(3) ?? '—'}</span></div>
@@ -703,7 +709,7 @@
             <div class="text-[10px] font-bold uppercase" style="color: var(--on-surface);">What would you like to do?</div>
             <div class="flex gap-2">
               <button class="flex items-center gap-1 px-3 py-2 text-[10px] font-bold uppercase cursor-pointer border-2"
-                style="border-color: var(--on-surface); background: var(--on-surface); color: var(--surface);"
+                style="border-color: var(--on-surface); background: var(--surface-container); color: var(--on-surface);"
                 onclick={() => viewDuplicateResult(selectedIndex)}>
                 <span class="material-symbols-outlined text-xs">visibility</span> VIEW RESULTS (free)
               </button>
@@ -753,7 +759,7 @@
           <div class="space-y-1 text-[10px] font-mono">
             <div>COMPLETED: {batchSummary.completed}/{batchSummary.total}</div>
             <div>FAILED: {batchSummary.failed}</div>
-            {#if batchSummary.stopped > 0}<div style="color: #ff9d00;">STOPPED: {batchSummary.stopped}</div>{/if}
+            {#if batchSummary.stopped > 0}<div style="color: var(--warning);">STOPPED: {batchSummary.stopped}</div>{/if}
             <div>AVG ACCURACY: {batchSummary.avg_accuracy}%</div>
             <div>TOTAL ITEMS: {batchSummary.total_items}</div>
             <div>TOTAL COST: ${batchSummary.total_cost}</div>
@@ -854,10 +860,10 @@
         <!-- Batch complete: show all results as accordions -->
         <div class="mb-4">
           <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-            <KpiCard title="TOTAL" value="{batchSummary.total}" icon="folder" accent="#006f7c" subtitle="PDFs processed" />
+            <KpiCard title="TOTAL" value="{batchSummary.total}" icon="folder" accent="var(--info)" subtitle="PDFs processed" />
             <KpiCard title="AVG ACCURACY" value="{batchSummary.avg_accuracy}%" progress={batchSummary.avg_accuracy} accent={getAccuracyColor(batchSummary.avg_accuracy)} />
-            <KpiCard title="TOTAL ITEMS" value="{batchSummary.total_items}" icon="inventory_2" accent="#007518" />
-            <KpiCard title="TOTAL COST" value="${batchSummary.total_cost}" icon="payments" accent="#006f7c" />
+            <KpiCard title="TOTAL ITEMS" value="{batchSummary.total_items}" icon="inventory_2" accent="var(--success)" />
+            <KpiCard title="TOTAL COST" value="${batchSummary.total_cost}" icon="payments" accent="var(--info)" />
           </div>
         </div>
 

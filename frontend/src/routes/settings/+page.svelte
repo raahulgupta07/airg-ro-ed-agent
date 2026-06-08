@@ -520,7 +520,7 @@
   <div class="flex gap-0 mb-4 border-2" style="border-color: var(--on-surface); background: var(--surface-container-highest);">
     {#each [['users','USERS'],['logs','ACTIVITY_LOG'],['auth','AUTHENTICATION'],['groups','GROUPS'],['ldap','LDAP'],['storage','STORAGE'],['auto_approve','AUTO_APPROVE']] as [key, label]}
       <button class="px-3 py-2 text-[11px] font-bold uppercase tracking-tight cursor-pointer"
-        style="{activeTab === key ? 'background: var(--on-surface); color: var(--surface);' : 'color: var(--outline);'}"
+        style="{activeTab === key ? 'background: var(--surface-container); color: var(--on-surface);' : 'color: var(--outline);'}"
         onclick={() => activeTab = key as any}
       >{label}</button>
     {/each}
@@ -595,7 +595,7 @@
         ['Top Action', logStats?.top_action ?? '—'],
       ] as [label, val]}
         <div class="border-2 p-2" style="border-color: var(--on-surface); background: var(--surface);">
-          <div class="text-[8px] font-black uppercase opacity-60">{label}</div>
+          <div class="text-[8px] font-medium uppercase opacity-60">{label}</div>
           <div class="text-sm font-mono font-bold">{val}</div>
         </div>
       {/each}
@@ -603,40 +603,40 @@
 
     <!-- Compact 1-row filter bar (auto-apply on change, no APPLY button) -->
     <div class="border-2 p-2 mb-3 flex flex-wrap items-center gap-2" style="border-color: var(--on-surface); background: var(--surface);">
-      <span class="text-[8px] font-black uppercase opacity-60 px-1">VIEW</span>
+      <span class="text-[8px] font-medium uppercase opacity-60 px-1">VIEW</span>
       <select bind:value={logSubTab}
         class="text-[10px] font-mono px-2 py-1.5 cursor-pointer"
-        style="border: 2px solid var(--on-surface); background: white; color: var(--on-surface);">
+        style="border: 1px solid var(--on-surface); background: white; color: var(--on-surface);">
         <option value="all">ALL</option>
         <option value="security">SECURITY</option>
         <option value="jobs">JOBS</option>
         <option value="users">USERS</option>
       </select>
 
-      <span class="text-[8px] font-black uppercase opacity-60 px-1 ml-2">FROM</span>
+      <span class="text-[8px] font-medium uppercase opacity-60 px-1 ml-2">FROM</span>
       <input type="date" bind:value={logFilter.date_from}
         class="text-[10px] font-mono px-2 py-1.5"
-        style="border: 2px solid var(--on-surface); background: white;" />
+        style="border: 1px solid var(--on-surface); background: white;" />
 
-      <span class="text-[8px] font-black uppercase opacity-60 px-1">TO</span>
+      <span class="text-[8px] font-medium uppercase opacity-60 px-1">TO</span>
       <input type="date" bind:value={logFilter.date_to}
         class="text-[10px] font-mono px-2 py-1.5"
-        style="border: 2px solid var(--on-surface); background: white;" />
+        style="border: 1px solid var(--on-surface); background: white;" />
 
-      <span class="text-[8px] font-black uppercase opacity-60 px-1 ml-2">ACTION</span>
+      <span class="text-[8px] font-medium uppercase opacity-60 px-1 ml-2">ACTION</span>
       <select bind:value={logFilter.action}
         class="text-[10px] font-mono px-2 py-1.5 cursor-pointer"
-        style="border: 2px solid var(--on-surface); background: white;">
+        style="border: 1px solid var(--on-surface); background: white;">
         <option value="">ALL</option>
         {#each ['LOGIN','LOGIN_FAILED','LOGOUT','RUN_JOB','JOB_START','JOB_SUCCESS','JOB_FAIL','LDAP_TEST','LDAP_CREATE','LDAP_DELETE','USER_CREATE','USER_DELETE','ROLE_CHANGE','CONFIG_CHANGE'] as a}
           <option>{a}</option>
         {/each}
       </select>
 
-      <span class="text-[8px] font-black uppercase opacity-60 px-1">STATUS</span>
+      <span class="text-[8px] font-medium uppercase opacity-60 px-1">STATUS</span>
       <select bind:value={logFilter.status}
         class="text-[10px] font-mono px-2 py-1.5 cursor-pointer"
-        style="border: 2px solid var(--on-surface); background: white;">
+        style="border: 1px solid var(--on-surface); background: white;">
         <option value="">ALL</option>
         <option>OK</option>
         <option>FAILED</option>
@@ -646,14 +646,14 @@
       <input type="text" placeholder="🔍 search user / details / resource / error" bind:value={logFilter.search}
         onkeydown={(e) => { if (e.key === 'Enter') applyLogFilters(); }}
         class="flex-1 min-w-[180px] text-[10px] font-mono px-2 py-1.5"
-        style="border: 2px solid var(--on-surface); background: white;" />
+        style="border: 1px solid var(--on-surface); background: white;" />
 
-      <button class="text-[8px] font-black uppercase px-3 py-1.5 cursor-pointer"
-        style="border: 2px solid var(--on-surface); background: var(--on-surface); color: var(--surface);"
+      <button class="text-[8px] font-medium uppercase px-3 py-1.5 cursor-pointer"
+        style="border: 1px solid var(--on-surface); background: var(--surface-container); color: var(--on-surface);"
         onclick={applyLogFilters}>APPLY</button>
 
-      <button class="text-[8px] font-black uppercase px-3 py-1.5 cursor-pointer"
-        style="border: 2px solid var(--on-surface); background: transparent;"
+      <button class="text-[8px] font-medium uppercase px-3 py-1.5 cursor-pointer"
+        style="border: 1px solid var(--on-surface); background: transparent;"
         onclick={exportCsv}>↓ CSV</button>
     </div>
 
@@ -680,12 +680,12 @@
       rowClass={(r: any) => r.status === 'FAILED' ? 'bg-red-50/50' : (r.action || '').startsWith('JOB_') ? 'bg-blue-50/30' : ''}
     />
     <div class="flex justify-between items-center p-3 border-2 border-t-0 stamp-shadow" style="border-color: var(--on-surface); background: var(--surface);">
-      <button class="text-[8px] font-black uppercase px-2 py-1 cursor-pointer"
-        style="border: 2px solid var(--on-surface);" disabled={logOffset === 0}
+      <button class="text-[8px] font-medium uppercase px-2 py-1 cursor-pointer"
+        style="border: 1px solid var(--on-surface);" disabled={logOffset === 0}
         onclick={() => { logOffset = Math.max(0, logOffset - logLimit); loadLogs(); }}>« PREV</button>
       <span class="text-[10px] font-mono">{logOffset + 1} – {Math.min(logOffset + logLimit, logTotal)} of {logTotal}</span>
-      <button class="text-[8px] font-black uppercase px-2 py-1 cursor-pointer"
-        style="border: 2px solid var(--on-surface);" disabled={logOffset + logLimit >= logTotal}
+      <button class="text-[8px] font-medium uppercase px-2 py-1 cursor-pointer"
+        style="border: 1px solid var(--on-surface);" disabled={logOffset + logLimit >= logTotal}
         onclick={() => { logOffset += logLimit; loadLogs(); }}>NEXT »</button>
     </div>
 
@@ -695,7 +695,7 @@
       <div class="lg:col-span-2 border-2 stamp-shadow" style="border-color: var(--on-surface);">
         <div class="dark-bar flex items-center justify-between">
           <span>KEYCLOAK_CONFIGURATION</span>
-          <button class="px-3 py-1 text-[10px] font-black uppercase cursor-pointer border-2"
+          <button class="px-3 py-1 text-[10px] font-medium uppercase cursor-pointer border-2"
             style="border-color: {kcEnabled ? 'white' : 'rgba(255,255,255,0.4)'}; background: {kcEnabled ? 'var(--primary)' : 'transparent'}; color: white;"
             onclick={() => kcEnabled = !kcEnabled}>{kcEnabled ? 'ENABLED' : 'DISABLED'}</button>
         </div>
@@ -705,24 +705,24 @@
           <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-3">
             <div>
               <div class="tag-label mb-0.5" style="font-size: 9px;">REALM_URL</div>
-              <input bind:value={kcRealmUrl} placeholder="https://keycloak.example.com/realms/myapp" class="w-full font-bold text-sm focus:outline-none" style="padding: 8px 10px; font-family: 'Space Grotesk', sans-serif; background: white; border: 2px solid var(--on-surface);" />
+              <input bind:value={kcRealmUrl} placeholder="https://keycloak.example.com/realms/myapp" class="w-full font-bold text-sm focus:outline-none" style="padding: 8px 10px; font-family: 'Inter', sans-serif; background: white; border: 1px solid var(--on-surface);" />
             </div>
             <div>
               <div class="tag-label mb-0.5" style="font-size: 9px;">CLIENT_ID</div>
-              <input bind:value={kcClientId} placeholder="ro-ed-frontend" class="w-full font-bold text-sm focus:outline-none" style="padding: 8px 10px; font-family: 'Space Grotesk', sans-serif; background: white; border: 2px solid var(--on-surface);" />
+              <input bind:value={kcClientId} placeholder="ro-ed-frontend" class="w-full font-bold text-sm focus:outline-none" style="padding: 8px 10px; font-family: 'Inter', sans-serif; background: white; border: 1px solid var(--on-surface);" />
             </div>
             <div>
               <div class="tag-label mb-0.5" style="font-size: 9px;">CLIENT_SECRET <span style="color: var(--outline); font-weight: 500;">(optional)</span></div>
-              <input bind:value={kcClientSecret} placeholder="Leave empty for public client (PKCE)" class="w-full font-bold text-sm focus:outline-none" style="padding: 8px 10px; font-family: 'Space Grotesk', sans-serif; background: white; border: 2px solid var(--on-surface);" />
+              <input bind:value={kcClientSecret} placeholder="Leave empty for public client (PKCE)" class="w-full font-bold text-sm focus:outline-none" style="padding: 8px 10px; font-family: 'Inter', sans-serif; background: white; border: 1px solid var(--on-surface);" />
             </div>
             <div>
               <div class="tag-label mb-0.5" style="font-size: 9px;">ADMIN_ROLE_NAME</div>
-              <input bind:value={kcAdminRole} placeholder="admin" class="w-full font-bold text-sm focus:outline-none" style="padding: 8px 10px; font-family: 'Space Grotesk', sans-serif; background: white; border: 2px solid var(--on-surface);" />
+              <input bind:value={kcAdminRole} placeholder="admin" class="w-full font-bold text-sm focus:outline-none" style="padding: 8px 10px; font-family: 'Inter', sans-serif; background: white; border: 1px solid var(--on-surface);" />
             </div>
           </div>
           <div class="flex gap-3 mt-4">
-            <button onclick={testKeycloakConnection} disabled={kcTesting || !kcRealmUrl} class="px-4 py-2.5 text-xs font-black uppercase cursor-pointer border-2" class:opacity-50={kcTesting || !kcRealmUrl} style="border-color: var(--on-surface); background: var(--surface-container-highest);">{kcTesting ? 'TESTING...' : 'TEST_CONNECTION'}</button>
-            <button onclick={saveKeycloakSettings} disabled={kcSaving} class="flex-1 px-4 py-2.5 text-xs font-black uppercase cursor-pointer border-2 press-effect" class:opacity-50={kcSaving} style="border-color: var(--on-surface); background: var(--primary-container); box-shadow: 3px 3px 0px 0px var(--on-surface);">{kcSaving ? 'SAVING...' : 'SAVE_CONFIGURATION'}</button>
+            <button onclick={testKeycloakConnection} disabled={kcTesting || !kcRealmUrl} class="px-4 py-2.5 text-xs font-medium uppercase cursor-pointer border-2" class:opacity-50={kcTesting || !kcRealmUrl} style="border-color: var(--on-surface); background: var(--surface-container-highest);">{kcTesting ? 'TESTING...' : 'TEST_CONNECTION'}</button>
+            <button onclick={saveKeycloakSettings} disabled={kcSaving} class="flex-1 px-4 py-2.5 text-xs font-medium uppercase cursor-pointer border-2 press-effect" class:opacity-50={kcSaving} style="border-color: var(--on-surface); background: var(--primary-container); box-shadow: var(--shadow-sm);">{kcSaving ? 'SAVING...' : 'SAVE_CONFIGURATION'}</button>
           </div>
         </div>
       </div>
@@ -750,7 +750,7 @@
           <div>
             <div style="color: var(--secondary);">5. REALM_ROLES_NEEDED</div>
             <div class="flex gap-1 mt-0.5">
-              <span class="px-1.5 py-0.5 text-[9px]" style="background: var(--on-surface); color: var(--surface);">{kcAdminRole || 'admin'}</span>
+              <span class="px-1.5 py-0.5 text-[9px]" style="background: var(--surface-container); color: var(--on-surface);">{kcAdminRole || 'admin'}</span>
               <span class="px-1.5 py-0.5 text-[9px]" style="background: var(--outline); color: white;">user</span>
             </div>
             <div class="mt-0.5" style="color: var(--outline);">Users without "{kcAdminRole || 'admin'}" role get "user" role</div>
@@ -777,7 +777,7 @@
       <div class="border-2 stamp-shadow" style="border-color: var(--on-surface);">
         <div class="dark-bar flex items-center justify-between">
           <span>GROUPS</span>
-          <button class="px-2 py-0.5 text-[10px] font-black uppercase cursor-pointer" style="color: var(--primary-container);" onclick={startNewGroup}>+ NEW</button>
+          <button class="px-2 py-0.5 text-[10px] font-medium uppercase cursor-pointer" style="color: var(--primary-container);" onclick={startNewGroup}>+ NEW</button>
         </div>
         <div class="bg-white">
           {#if groups.length === 0}
@@ -807,7 +807,7 @@
 
             <div>
               <div class="tag-label mb-0.5" style="font-size: 9px;">GROUP_NAME</div>
-              <input bind:value={groupName} placeholder="e.g. Operators" class="w-full font-bold text-sm focus:outline-none" style="padding: 6px 10px; font-family: 'Space Grotesk', sans-serif; background: white; border: 2px solid var(--on-surface);" />
+              <input bind:value={groupName} placeholder="e.g. Operators" class="w-full font-bold text-sm focus:outline-none" style="padding: 6px 10px; font-family: 'Inter', sans-serif; background: white; border: 1px solid var(--on-surface);" />
             </div>
 
             <!-- Pages -->
@@ -815,7 +815,7 @@
               <div class="tag-label mb-1" style="font-size: 9px;">PAGES</div>
               <div class="flex flex-wrap gap-2">
                 {#each Object.entries(groupPages) as [key, val]}
-                  <button class="px-2 py-1 text-[10px] font-black uppercase cursor-pointer border"
+                  <button class="px-2 py-1 text-[10px] font-medium uppercase cursor-pointer border"
                     style="border-color: var(--on-surface); background: {val ? 'var(--primary)' : 'white'}; color: {val ? 'white' : 'var(--outline)'};"
                     onclick={() => groupPages = {...groupPages, [key]: !val}}>{key}</button>
                 {/each}
@@ -827,7 +827,7 @@
               <div class="tag-label mb-1" style="font-size: 9px;">ACTIONS</div>
               <div class="flex flex-wrap gap-2">
                 {#each Object.entries(groupActions) as [key, val]}
-                  <button class="px-2 py-1 text-[10px] font-black uppercase cursor-pointer border"
+                  <button class="px-2 py-1 text-[10px] font-medium uppercase cursor-pointer border"
                     style="border-color: var(--on-surface); background: {val ? 'var(--secondary)' : 'white'}; color: {val ? 'white' : 'var(--outline)'};"
                     onclick={() => groupActions = {...groupActions, [key]: !val}}>{key.replace(/_/g, ' ')}</button>
                 {/each}
@@ -839,7 +839,7 @@
               <div class="tag-label mb-1" style="font-size: 9px;">DATA_SCOPE</div>
               <div class="flex gap-2">
                 {#each [['own', 'OWN DATA'], ['all_readonly', 'ALL (READ)'], ['all_full', 'ALL (FULL)']] as [val, label]}
-                  <button class="px-2 py-1 text-[10px] font-black uppercase cursor-pointer border"
+                  <button class="px-2 py-1 text-[10px] font-medium uppercase cursor-pointer border"
                     style="border-color: var(--on-surface); background: {groupScope === val ? 'var(--on-surface)' : 'white'}; color: {groupScope === val ? 'var(--surface)' : 'var(--outline)'};"
                     onclick={() => groupScope = val}>{label}</button>
                 {/each}
@@ -864,15 +864,15 @@
             <!-- Buttons -->
             <div class="flex gap-2 pt-1">
               {#if editingGroup.id}
-                <button onclick={deleteGroup} class="px-3 py-2 text-[10px] font-black uppercase cursor-pointer border-2" style="border-color: var(--error); color: var(--error);">DELETE</button>
+                <button onclick={deleteGroup} class="px-3 py-2 text-[10px] font-medium uppercase cursor-pointer border-2" style="border-color: var(--error); color: var(--error);">DELETE</button>
               {/if}
               <button onclick={saveGroup} disabled={groupSaving || !groupName.trim()}
-                class="flex-1 px-3 py-2 text-[10px] font-black uppercase cursor-pointer border-2 press-effect"
+                class="flex-1 px-3 py-2 text-[10px] font-medium uppercase cursor-pointer border-2 press-effect"
                 class:opacity-50={groupSaving || !groupName.trim()}
-                style="border-color: var(--on-surface); background: var(--primary-container); box-shadow: 2px 2px 0px 0px var(--on-surface);">
+                style="border-color: var(--on-surface); background: var(--primary-container); box-shadow: var(--shadow-sm);">
                 {groupSaving ? 'SAVING...' : 'SAVE_GROUP'}
               </button>
-              <button onclick={() => editingGroup = null} class="px-3 py-2 text-[10px] font-black uppercase cursor-pointer border-2" style="border-color: var(--on-surface); color: var(--outline);">CANCEL</button>
+              <button onclick={() => editingGroup = null} class="px-3 py-2 text-[10px] font-medium uppercase cursor-pointer border-2" style="border-color: var(--on-surface); color: var(--outline);">CANCEL</button>
             </div>
           </div>
         </div>
@@ -880,8 +880,8 @@
         <div class="border-2 flex items-center justify-center p-8" style="border-color: var(--surface-container-highest); border-style: dashed;">
           <div class="text-center">
             <div class="text-xs font-bold uppercase" style="color: var(--outline);">Select a group to edit or</div>
-            <button class="mt-2 px-4 py-2 text-xs font-black uppercase cursor-pointer border-2 press-effect"
-              style="border-color: var(--on-surface); background: var(--primary-container); box-shadow: 2px 2px 0px 0px var(--on-surface);"
+            <button class="mt-2 px-4 py-2 text-xs font-medium uppercase cursor-pointer border-2 press-effect"
+              style="border-color: var(--on-surface); background: var(--primary-container); box-shadow: var(--shadow-sm);"
               onclick={startNewGroup}>CREATE_NEW_GROUP</button>
           </div>
         </div>
@@ -899,8 +899,8 @@
 
     <div class="flex justify-end mb-2">
       <button
-        class="text-[8px] font-black uppercase px-3 py-1.5 cursor-pointer"
-        style="background: #10b981; color: white; border: 2px solid var(--on-surface);"
+        class="text-[8px] font-medium uppercase px-3 py-1.5 cursor-pointer"
+        style="background: #10b981; color: white; border: 1px solid var(--on-surface);"
         onclick={() => ldapEditing = { port: 389, attr_username: 'uid', attr_mail: 'mail', attr_groups: 'memberOf', priority: 50, active: true, use_tls: false, validate_cert: true }}
       >+ ADD_LDAP</button>
     </div>
@@ -939,9 +939,9 @@
              style="border-color: var(--on-surface); background: var(--surface);"
              onclick={(e) => e.stopPropagation()}>
           <div class="flex items-center justify-between mb-4 -mx-6 -mt-6 px-6 py-3"
-               style="background: var(--on-surface); color: var(--surface);">
-            <span class="text-xs font-black uppercase tracking-wider">{ldapEditing.id ? 'EDIT_LDAP' : 'ADD_LDAP'}</span>
-            <button class="text-[10px] font-black uppercase cursor-pointer" style="color: var(--surface);"
+               style="background: var(--surface-container); color: var(--on-surface);">
+            <span class="text-xs font-medium uppercase tracking-wider">{ldapEditing.id ? 'EDIT_LDAP' : 'ADD_LDAP'}</span>
+            <button class="text-[10px] font-medium uppercase cursor-pointer" style="color: var(--surface);"
                     onclick={() => ldapEditing = null}>×</button>
           </div>
           <div class="grid grid-cols-2 gap-3">
@@ -960,14 +960,14 @@
               ['priority','PRIORITY','number', '50'],
             ] as [k, label, type, ph]}
               <label class="block">
-                <span class="text-[8px] font-black uppercase tag-label">{label}</span>
+                <span class="text-[8px] font-medium uppercase tag-label">{label}</span>
                 <input
                   type={type}
                   value={ldapEditing[k] ?? ''}
                   placeholder={ph}
                   oninput={(e) => ldapEditing[k] = type === 'number' ? +e.currentTarget.value : e.currentTarget.value}
                   class="w-full mt-1 px-2 py-1.5 text-[10px] font-mono focus:outline-none"
-                  style="border: 2px solid var(--on-surface); background: white; color: var(--on-surface);"
+                  style="border: 1px solid var(--on-surface); background: white; color: var(--on-surface);"
                 />
               </label>
             {/each}
@@ -976,19 +976,19 @@
           <div class="mt-4 flex flex-wrap gap-2">
             {#each [['use_tls','USE_TLS'],['validate_cert','VALIDATE_CERT'],['active','ACTIVE']] as [k, label]}
               <button
-                class="text-[8px] font-black uppercase px-3 py-1.5 cursor-pointer"
-                style="border: 2px solid var(--on-surface); background: {ldapEditing[k] ? 'var(--primary)' : 'white'}; color: {ldapEditing[k] ? 'white' : 'var(--outline)'};"
+                class="text-[8px] font-medium uppercase px-3 py-1.5 cursor-pointer"
+                style="border: 1px solid var(--on-surface); background: {ldapEditing[k] ? 'var(--primary)' : 'white'}; color: {ldapEditing[k] ? 'white' : 'var(--outline)'};"
                 onclick={() => ldapEditing[k] = !ldapEditing[k]}
               >[{ldapEditing[k] ? 'X' : ' '}] {label}</button>
             {/each}
           </div>
 
           <div class="flex justify-end gap-2 mt-4">
-            <button class="text-[8px] font-black uppercase px-3 py-1.5 cursor-pointer"
-                    style="border: 2px solid var(--on-surface); background: transparent; color: var(--on-surface);"
+            <button class="text-[8px] font-medium uppercase px-3 py-1.5 cursor-pointer"
+                    style="border: 1px solid var(--on-surface); background: transparent; color: var(--on-surface);"
                     onclick={() => ldapEditing = null}>CANCEL</button>
-            <button class="text-[8px] font-black uppercase px-3 py-1.5 cursor-pointer"
-                    style="background: #10b981; color: white; border: 2px solid var(--on-surface);"
+            <button class="text-[8px] font-medium uppercase px-3 py-1.5 cursor-pointer"
+                    style="background: #10b981; color: white; border: 1px solid var(--on-surface);"
                     onclick={saveLdap}>{ldapEditing.id ? 'UPDATE' : 'CREATE'}</button>
           </div>
         </div>
@@ -1006,8 +1006,8 @@
 
     <div class="flex justify-end mb-2">
       <button
-        class="text-[8px] font-black uppercase px-3 py-1.5 cursor-pointer"
-        style="background: #10b981; color: white; border: 2px solid var(--on-surface);"
+        class="text-[8px] font-medium uppercase px-3 py-1.5 cursor-pointer"
+        style="background: #10b981; color: white; border: 1px solid var(--on-surface);"
         onclick={() => storageEditing = { provider: 'aws', label: '', endpoint_url: '', region_name: '', bucket_name: '', access_key_id: '', secret_access_key: '', key_prefix: '', use_ssl: true, addressing_style: 'auto', signature_version: 's3v4', use_for_uploads: true, use_for_exports: true, use_for_cache: false, use_for_archive: false, active: true }}
       >+ ADD_STORAGE</button>
     </div>
@@ -1051,20 +1051,20 @@
               {c.label} <span class="opacity-60">[{(c.provider||'').toUpperCase()}]</span>
               {#if c.active}<span class="ml-2 px-1.5 py-0.5 text-[8px]" style="background: #10b981; color: white;">ACTIVE</span>{/if}
             </span>
-            <button class="text-[8px] font-black uppercase px-2 py-1 cursor-pointer"
-                    style="border: 2px solid var(--on-surface); background: white;"
+            <button class="text-[8px] font-medium uppercase px-2 py-1 cursor-pointer"
+                    style="border: 1px solid var(--on-surface); background: white;"
                     disabled={storageTesting === c.id}
                     onclick={() => testStorage(c.id)}>{storageTesting === c.id ? 'TESTING…' : 'TEST'}</button>
             {#if !c.active}
-              <button class="text-[8px] font-black uppercase px-2 py-1 cursor-pointer"
-                      style="border: 2px solid var(--on-surface); background: var(--primary-container);"
+              <button class="text-[8px] font-medium uppercase px-2 py-1 cursor-pointer"
+                      style="border: 1px solid var(--on-surface); background: var(--primary-container);"
                       onclick={() => activateStorage(c.id)}>ACTIVATE</button>
             {/if}
-            <button class="text-[8px] font-black uppercase px-2 py-1 cursor-pointer"
-                    style="border: 2px solid var(--on-surface); background: white;"
+            <button class="text-[8px] font-medium uppercase px-2 py-1 cursor-pointer"
+                    style="border: 1px solid var(--on-surface); background: white;"
                     onclick={() => storageEditing = { ...c, secret_access_key: '' }}>EDIT</button>
-            <button class="text-[8px] font-black uppercase px-2 py-1 cursor-pointer"
-                    style="border: 2px solid var(--error); color: var(--error); background: white;"
+            <button class="text-[8px] font-medium uppercase px-2 py-1 cursor-pointer"
+                    style="border: 1px solid var(--error); color: var(--error); background: white;"
                     onclick={() => deleteStorage(c.id)}>DELETE</button>
           </div>
         {/each}
@@ -1079,19 +1079,19 @@
              style="border-color: var(--on-surface); background: var(--surface);"
              onclick={(e) => e.stopPropagation()}>
           <div class="flex items-center justify-between mb-4 -mx-6 -mt-6 px-6 py-3"
-               style="background: var(--on-surface); color: var(--surface);">
-            <span class="text-xs font-black uppercase tracking-wider">{storageEditing.id ? 'EDIT_STORAGE' : 'ADD_STORAGE'}</span>
-            <button class="text-[10px] font-black uppercase cursor-pointer" style="color: var(--surface);"
+               style="background: var(--surface-container); color: var(--on-surface);">
+            <span class="text-xs font-medium uppercase tracking-wider">{storageEditing.id ? 'EDIT_STORAGE' : 'ADD_STORAGE'}</span>
+            <button class="text-[10px] font-medium uppercase cursor-pointer" style="color: var(--surface);"
                     onclick={() => storageEditing = null}>×</button>
           </div>
 
           <!-- Provider radio -->
           <div class="mb-3">
-            <div class="text-[8px] font-black uppercase tag-label mb-1">PROVIDER</div>
+            <div class="text-[8px] font-medium uppercase tag-label mb-1">PROVIDER</div>
             <div class="flex flex-wrap gap-2">
               {#each [['aws','AWS'],['minio','MINIO'],['r2','R2'],['wasabi','WASABI'],['backblaze','BACKBLAZE'],['custom','CUSTOM']] as [val, label]}
-                <button class="text-[9px] font-black uppercase px-3 py-1.5 cursor-pointer"
-                        style="border: 2px solid var(--on-surface); background: {storageEditing.provider === val ? 'var(--on-surface)' : 'white'}; color: {storageEditing.provider === val ? 'var(--surface)' : 'var(--on-surface)'};"
+                <button class="text-[9px] font-medium uppercase px-3 py-1.5 cursor-pointer"
+                        style="border: 1px solid var(--on-surface); background: {storageEditing.provider === val ? 'var(--on-surface)' : 'white'}; color: {storageEditing.provider === val ? 'var(--surface)' : 'var(--on-surface)'};"
                         onclick={() => applyPreset(val)}>{label}</button>
               {/each}
             </div>
@@ -1109,25 +1109,25 @@
               ['signature_version','SIGNATURE_VERSION','text', 's3v4'],
             ] as [k, label, type, ph]}
               <label class="block">
-                <span class="text-[8px] font-black uppercase tag-label">{label}</span>
+                <span class="text-[8px] font-medium uppercase tag-label">{label}</span>
                 <input
                   type={type}
                   value={storageEditing[k] ?? ''}
                   placeholder={ph}
                   oninput={(e) => storageEditing[k] = e.currentTarget.value}
                   class="w-full mt-1 px-2 py-1.5 text-[10px] font-mono focus:outline-none"
-                  style="border: 2px solid var(--on-surface); background: white; color: var(--on-surface);"
+                  style="border: 1px solid var(--on-surface); background: white; color: var(--on-surface);"
                 />
               </label>
             {/each}
 
             <label class="block">
-              <span class="text-[8px] font-black uppercase tag-label">ADDRESSING_STYLE</span>
+              <span class="text-[8px] font-medium uppercase tag-label">ADDRESSING_STYLE</span>
               <select
                 value={storageEditing.addressing_style ?? 'auto'}
                 onchange={(e) => storageEditing.addressing_style = e.currentTarget.value}
                 class="w-full mt-1 px-2 py-1.5 text-[10px] font-mono focus:outline-none cursor-pointer"
-                style="border: 2px solid var(--on-surface); background: white; color: var(--on-surface);"
+                style="border: 1px solid var(--on-surface); background: white; color: var(--on-surface);"
               >
                 <option value="auto">AUTO</option>
                 <option value="path">PATH</option>
@@ -1139,19 +1139,19 @@
           <div class="mt-4 flex flex-wrap gap-2">
             {#each [['use_ssl','USE_SSL'],['use_for_uploads','USE_FOR_UPLOADS'],['use_for_exports','USE_FOR_EXPORTS'],['use_for_cache','USE_FOR_CACHE'],['use_for_archive','USE_FOR_ARCHIVE'],['active','ACTIVE']] as [k, label]}
               <button
-                class="text-[8px] font-black uppercase px-3 py-1.5 cursor-pointer"
-                style="border: 2px solid var(--on-surface); background: {storageEditing[k] ? 'var(--primary)' : 'white'}; color: {storageEditing[k] ? 'white' : 'var(--outline)'};"
+                class="text-[8px] font-medium uppercase px-3 py-1.5 cursor-pointer"
+                style="border: 1px solid var(--on-surface); background: {storageEditing[k] ? 'var(--primary)' : 'white'}; color: {storageEditing[k] ? 'white' : 'var(--outline)'};"
                 onclick={() => storageEditing[k] = !storageEditing[k]}
               >[{storageEditing[k] ? 'X' : ' '}] {label}</button>
             {/each}
           </div>
 
           <div class="flex justify-end gap-2 mt-4">
-            <button class="text-[8px] font-black uppercase px-3 py-1.5 cursor-pointer"
-                    style="border: 2px solid var(--on-surface); background: transparent; color: var(--on-surface);"
+            <button class="text-[8px] font-medium uppercase px-3 py-1.5 cursor-pointer"
+                    style="border: 1px solid var(--on-surface); background: transparent; color: var(--on-surface);"
                     onclick={() => storageEditing = null}>CANCEL</button>
-            <button class="text-[8px] font-black uppercase px-3 py-1.5 cursor-pointer"
-                    style="background: #10b981; color: white; border: 2px solid var(--on-surface);"
+            <button class="text-[8px] font-medium uppercase px-3 py-1.5 cursor-pointer"
+                    style="background: #10b981; color: white; border: 1px solid var(--on-surface);"
                     onclick={saveStorage}>{storageEditing.id ? 'UPDATE' : 'CREATE'}</button>
           </div>
         </div>
@@ -1171,7 +1171,7 @@
         <div class="flex items-center gap-3">
           <label class="text-xs font-bold uppercase w-32">ENABLED</label>
           <button class="text-[10px] font-bold uppercase px-3 py-1.5 cursor-pointer"
-            style="border: 2px solid var(--on-surface);
+            style="border: 1px solid var(--on-surface);
                    background: {autoApprove.enabled ? '#10b981' : 'white'};
                    color: {autoApprove.enabled ? 'white' : 'var(--on-surface)'};"
             onclick={() => autoApprove.enabled = !autoApprove.enabled}>
@@ -1184,7 +1184,7 @@
           <input type="number" min="0" max="1" step="0.01"
             bind:value={autoApprove.threshold}
             class="text-xs font-mono px-2 py-1.5 w-32"
-            style="border: 2px solid var(--on-surface); background: white;" />
+            style="border: 1px solid var(--on-surface); background: white;" />
           <span class="text-[10px] font-mono opacity-60">
             (0.0–1.0; ≥ {((autoApprove.threshold || 0) * 100).toFixed(0)}% accuracy auto-approves)
           </span>
@@ -1234,20 +1234,20 @@
          style="border-color: var(--on-surface); background: var(--surface);"
          onclick={(e) => e.stopPropagation()}>
       <div class="-mx-6 -mt-6 px-6 py-3 mb-4"
-           style="background: var(--on-surface); color: var(--surface);">
-        <span class="text-xs font-black uppercase">EVENT_DETAIL</span>
+           style="background: var(--surface-container); color: var(--on-surface);">
+        <span class="text-xs font-medium uppercase">EVENT_DETAIL</span>
       </div>
       <div class="space-y-2 text-[10px] font-mono">
         {#each Object.entries(drawerEvent.event || {}) as [k, v]}
           <div class="grid grid-cols-3 gap-2">
-            <div class="font-black opacity-60">{k.toUpperCase()}</div>
+            <div class="font-medium opacity-60">{k.toUpperCase()}</div>
             <div class="col-span-2 break-all">{v ?? '—'}</div>
           </div>
         {/each}
       </div>
       {#if drawerEvent.related?.length}
-        <div class="mt-6 pt-3" style="border-top: 2px solid var(--on-surface);">
-          <div class="text-[10px] font-black uppercase mb-2">RECENT (same user)</div>
+        <div class="mt-6 pt-3" style="border-top: 1px solid var(--on-surface);">
+          <div class="text-[10px] font-medium uppercase mb-2">RECENT (same user)</div>
           {#each drawerEvent.related as r}
             <div class="text-[10px] font-mono py-1" style="border-bottom: 1px solid rgba(0,0,0,0.1);">
               {r.timestamp} · {r.action} · {r.status || ''}

@@ -466,7 +466,7 @@ RATE_LIMIT_EXTRACT=30/minute
 
 ## Tech Stack
 
-- **Frontend:** SvelteKit 5 (runes), TailwindCSS 4.2, ECharts (cost dashboard), Vite
+- **Frontend:** SvelteKit 5 (runes), TailwindCSS 4.2, ECharts (cost dashboard), Vite. Claude-inspired design system (warm cream surfaces, clay accent, Source Serif 4 headings, Inter body, JetBrains Mono code)
 - **Backend:** FastAPI 0.115, Uvicorn (Python 3.12, 2 workers), Pydantic v2
 - **Database:** Postgres 16, psycopg3, SQLAlchemy QueuePool (10 base + 10 overflow)
 - **Migrations:** Alembic (`backend/alembic/`)
@@ -478,6 +478,40 @@ RATE_LIMIT_EXTRACT=30/minute
 - **LLMs:** OpenRouter API (Gemini 3 Flash Preview, Claude Sonnet 4.6 Verifier)
 - **Rate limiting:** slowapi (Redis storage)
 - **Observability:** Sentry SDK (optional)
+
+---
+
+## Design System
+
+Claude-inspired warm-neutral aesthetic. Tokens defined in `frontend/src/app.css` (`:root`), consumed by all components via `var(--*)`.
+
+**Palette**
+- Surface cream `#F5F4EE`, surface-lowest `#FFFFFF`, surface-container `#F0EEE6`
+- Text coal `#1F1E1D`, muted `#6B6862`, subtle `#8E8B83`
+- Accent clay `#CC785C` (primary), tint `#F4E3DC` (primary-container)
+- Secondary slate `#2C2B29`, tertiary plum `#8B6F8E`
+- Status: success `#5C8A5C`, warning `#C68E3F`, error `#B5483C`
+
+**Type**
+- Headings: Source Serif 4 (`font-serif`), weight 500, `letter-spacing -0.01em`
+- Body: Inter, weight 400-500, line-height 1.55
+- Code/data: JetBrains Mono
+
+**Shape**
+- Radii: `--radius-sm 6px / --radius-md 8px / --radius-lg 12px / --radius-xl 16px`
+- Shadows: layered soft `--shadow-xs / sm / md / lg` (rgba coal at 4-8%)
+- Focus ring: 2px clay outline + 3px primary-container glow
+
+**Components** in `frontend/src/lib/components/`:
+- `Button.svelte` — primary (clay), secondary (white+outline), danger, ghost, dark
+- `FormInput.svelte` — clay focus ring, muted label above
+- `Badge.svelte` — soft tinted pills (bg + readable fg per variant)
+- `KpiCard.svelte` — serif numeral + slim progress bar
+- `DataTable.svelte` — surface header bar + uppercase muted column labels + row hover
+- `Header.svelte` — translucent backdrop-blur, pill nav, circular avatar
+- `Footer.svelte` — minimal sentence-case status strip
+
+`prefers-reduced-motion` respected globally.
 
 ---
 
@@ -509,8 +543,8 @@ RO-ED-Lang/
 │   │   ├── agents/                   page_classifier.py, merger.py
 │   │   └── tools/                    pdf_split.py, field_bbox.py
 │   ├── v10_pro/                      Scrivener (handwritten pipeline)
-│   ├── pipeline/                     V7 / Veritas (typed-page pipeline)
-│   ├── v2/                           confidence + validation + report
+│   ├── pipeline/                     V7 / Veritas (typed-page pipeline) +
+│   │                                 confidence.py (shared scoring)
 │   ├── storage/                      local.py, s3.py (factory)
 │   └── scripts/                      migrate_sqlite_to_pg.py
 ├── frontend/
@@ -607,6 +641,7 @@ alembic upgrade head
 | `JWT_SECRET_KEY too short` on prod boot | Must be ≥ 32 chars. Regenerate: `openssl rand -hex 32`. `DEV_MODE=` (empty) in prod. |
 | Login storm 429s | Bump `RATE_LIMIT_LOGIN=20/minute`. |
 | `LDAP_FERNET_KEY` rotated → existing passwords unreadable | Keys must be stable. Treat them as long-lived secrets; back them up. |
+| Item count lower than source (e.g. 16 → 13) | Dedup collapse. Two gates: V7 assembler key `(name, HS, pack_size, price_bucket, quantity)` in `backend/pipeline/assembler.py:1988-2015`; V11 merger `_dedup_match` in `backend/v11/agents/merger.py` (exact-name + HS-agree + pack-match + qty-match). Tail worker log for `Dedup: N → M items` line — printed key reveals which field collided (empty `pack_size` = pack-regex miss, e.g. units like `GMS`, `KGS`, `PCS.`). |
 
 ---
 

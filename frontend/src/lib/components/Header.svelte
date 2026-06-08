@@ -10,13 +10,13 @@
 
   const navItems = $derived(
     [
-      { label: 'AGENT', href: '/agent', icon: 'description', page: 'agent' },
-      { label: 'HISTORY', href: '/history', icon: 'history', page: 'history' },
-      { label: 'REVIEW', href: '/review', icon: 'checklist', page: 'history' },
-      { label: 'ITEMS', href: '/items', icon: 'inventory_2', page: 'items' },
-      { label: 'DECLARATIONS', href: '/declarations', icon: 'receipt_long', page: 'declarations' },
-      { label: 'COSTS', href: '/costs', icon: 'payments', page: 'costs' },
-      { label: 'SETTINGS', href: '/settings', icon: 'settings', page: 'settings' },
+      { label: 'Agent', href: '/agent', icon: 'description', page: 'agent' },
+      { label: 'History', href: '/history', icon: 'history', page: 'history' },
+      { label: 'Review', href: '/review', icon: 'checklist', page: 'history' },
+      { label: 'Items', href: '/items', icon: 'inventory_2', page: 'items' },
+      { label: 'Declarations', href: '/declarations', icon: 'receipt_long', page: 'declarations' },
+      { label: 'Costs', href: '/costs', icon: 'payments', page: 'costs' },
+      { label: 'Settings', href: '/settings', icon: 'settings', page: 'settings' },
     ].filter(item => auth.canPage(item.page))
   );
 
@@ -24,43 +24,50 @@
   const initial = $derived(username ? username[0].toUpperCase() : '?');
 </script>
 
-<header class="fixed top-0 w-full z-50" style="background: var(--surface); border-bottom: 3px solid var(--on-surface);">
-  <div class="flex items-center justify-between px-6 py-2 max-w-[1920px] mx-auto">
+<header class="fixed top-0 w-full z-50"
+        style="background: rgba(245,244,238,0.85); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-bottom: 1px solid var(--outline-variant);">
+  <div class="flex items-center justify-between px-8 py-3 max-w-[1920px] mx-auto">
     <!-- Brand -->
-    <div class="text-2xl font-bold tracking-tighter uppercase px-2 py-1"
-         style="background: var(--on-surface); color: var(--surface);">
-      RO-ED COMMAND CENTER
-    </div>
+    <a href="/agent" class="flex items-center gap-2 no-underline" style="color: var(--on-surface);">
+      <span class="w-7 h-7 flex items-center justify-center text-white font-medium text-xs"
+            style="background: var(--primary); border-radius: var(--radius-sm);">RO</span>
+      <span class="font-serif text-lg" style="letter-spacing: -0.01em;">RO‑ED</span>
+      <span class="text-xs" style="color: var(--on-surface-muted);">Command Center</span>
+    </a>
 
     <!-- Nav -->
-    <nav class="hidden md:flex items-center gap-0.5">
+    <nav class="hidden md:flex items-center gap-1">
       {#each navItems as item}
+        {@const active = currentPath.startsWith(item.href)}
         <a href={item.href}
-           class="px-2 py-1 text-sm font-bold uppercase tracking-tighter transition-colors no-underline"
-           style="{currentPath.startsWith(item.href)
-             ? 'background: var(--on-surface); color: var(--surface);'
-             : 'color: var(--on-surface);'}"
-           onmouseenter={(e) => { if (!currentPath.startsWith(item.href)) { e.currentTarget.style.background = '#007518'; e.currentTarget.style.color = 'white'; } }}
-           onmouseleave={(e) => { if (!currentPath.startsWith(item.href)) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--on-surface)'; } }}
+           class="px-3 py-1.5 text-sm font-medium transition-colors no-underline"
+           style="border-radius: var(--radius-md); {active
+             ? 'background: var(--primary-container); color: var(--primary); font-weight: 600;'
+             : 'color: var(--on-surface-muted);'}"
+           onmouseenter={(e) => { if (!active) { e.currentTarget.style.background = 'var(--surface-container-low)'; e.currentTarget.style.color = 'var(--on-surface)'; } }}
+           onmouseleave={(e) => { if (!active) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--on-surface-muted)'; } }}
         >
           {item.label}
         </a>
       {/each}
     </nav>
 
-    <!-- User avatar -->
+    <!-- User -->
     <div class="flex items-center gap-3">
       {#if auth.user?.auth_source}
-        <span class="text-[10px] px-1.5 py-0.5 rounded bg-zinc-200 text-zinc-700 font-bold uppercase">
+        <span class="tag-label" style="text-transform: uppercase; letter-spacing: 0.04em;">
           {auth.user.auth_source}
         </span>
       {/if}
-      <button onclick={onlogout} class="text-[10px] font-black uppercase px-2 py-1 cursor-pointer"
-              style="color: var(--tertiary); border: 1px solid var(--tertiary); background: transparent;">
-        LOGOUT
+      <button onclick={onlogout}
+              class="text-xs font-medium px-3 py-1.5 cursor-pointer transition-colors"
+              style="color: var(--on-surface-muted); border: 1px solid var(--outline-variant); background: transparent; border-radius: var(--radius-md);"
+              onmouseenter={(e) => { e.currentTarget.style.background = 'var(--surface-container)'; e.currentTarget.style.color = 'var(--on-surface)'; }}
+              onmouseleave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--on-surface-muted)'; }}>
+        Logout
       </button>
-      <div class="w-10 h-10 flex items-center justify-center font-bold text-sm text-white"
-           style="background: var(--tertiary); border: 2px solid var(--on-surface);">
+      <div class="w-9 h-9 flex items-center justify-center font-medium text-sm text-white"
+           style="background: var(--tertiary); border-radius: 50%;">
         {initial}
       </div>
     </div>

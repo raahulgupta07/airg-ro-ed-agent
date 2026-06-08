@@ -191,9 +191,9 @@
   });
 
   function confDot(level: string): string {
-    if (level === 'high') return '#22c55e';
-    if (level === 'medium') return '#eab308';
-    return '#ef4444';
+    if (level === 'high') return 'var(--success)';
+    if (level === 'medium') return 'var(--warning)';
+    return 'var(--error)';
   }
 
   // ── Page map (v2) ──
@@ -412,7 +412,7 @@
         <div class="flex gap-0 border-b" style="border-color: rgba(56,56,50,0.15);">
           {#each [['results', 'RESULTS'], ['annotated', 'PDF (ANNOTATED)'], ['log', 'PIPELINE LOG']] as [key, label]}
             <button class="px-3 py-1.5 text-[10px] font-bold uppercase cursor-pointer"
-              style="{activeTab === key ? 'background: var(--on-surface); color: var(--surface);' : 'color: var(--outline); background: var(--surface-container);'}"
+              style="{activeTab === key ? 'background: var(--surface-container); color: var(--on-surface);' : 'color: var(--outline); background: var(--surface-container);'}"
               onclick={() => { activeTab = key as any; if (key === 'pagemap') loadPageData(); }}>
               {label}
             </button>
@@ -441,9 +441,9 @@
             {#if documentFormat || !crossValPassed || !verifiedFlag || sanityFlags().length > 0}
               <div class="border-2 bg-white p-2 space-y-2" style="border-color: var(--on-surface);">
                 <div class="flex flex-wrap items-center gap-2">
-                  <span class="text-[9px] font-black uppercase" style="color: var(--on-surface);">STATUS</span>
+                  <span class="text-[9px] font-medium uppercase" style="color: var(--on-surface);">STATUS</span>
                   {#if documentFormat === 'CUSDEC1'}
-                    <span class="inline-block font-black uppercase text-white" style="padding: 2px 6px; font-size: 9px; background: #1d4ed8;">
+                    <span class="inline-block font-medium uppercase text-white" style="padding: 2px 6px; font-size: 9px; background: var(--info);">
                       OLD FORMAT — CUSDEC-1
                     </span>
                   {:else if documentFormat === 'MACCS'}
@@ -460,8 +460,8 @@
                   {#if sanityFlags().length > 0}
                     <button
                       type="button"
-                      class="inline-flex items-center gap-1 cursor-pointer font-black uppercase text-white"
-                      style="padding: 2px 6px; font-size: 9px; background: #ff9d00; border: none;"
+                      class="inline-flex items-center gap-1 cursor-pointer font-medium uppercase text-white"
+                      style="padding: 2px 6px; font-size: 9px; background: var(--warning); border: none;"
                       onclick={() => sanityOpen = !sanityOpen}
                     >
                       <span class="material-symbols-outlined" style="font-size: 11px;">
@@ -472,10 +472,10 @@
                   {/if}
                 </div>
                 {#if sanityOpen && sanityFlags().length > 0}
-                  <ul class="text-[10px] font-mono space-y-0.5 pl-2 border-l-2" style="border-color: #ff9d00; color: var(--on-surface);">
+                  <ul class="text-[10px] font-mono space-y-0.5 pl-2 border-l-2" style="border-color: var(--warning); color: var(--on-surface);">
                     {#each sanityFlags() as flag}
                       <li class="flex items-center gap-1">
-                        <span class="material-symbols-outlined" style="font-size: 11px; color: #ff9d00;">warning</span>
+                        <span class="material-symbols-outlined" style="font-size: 11px; color: var(--warning);">warning</span>
                         <span>{flag}</span>
                       </li>
                     {/each}
@@ -502,20 +502,20 @@
 
             <!-- KPI Row -->
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <KpiCard title="ITEMS" value="{items.length}" icon="inventory_2" accent="#007518" />
+              <KpiCard title="ITEMS" value="{items.length}" icon="inventory_2" accent="var(--success)" />
               <KpiCard title="ACCURACY" value="{accuracy.toFixed(1)}%" progress={accuracy} accent={getAccuracyColor(accuracy)} />
-              <KpiCard title="DECISION" value="{decision}" accent={decisionColors[decision] ?? '#007518'} />
-              <KpiCard title="TIME" value="{job.processing_time_seconds?.toFixed(1) ?? '—'}s" accent="#006f7c" />
+              <KpiCard title="DECISION" value="{decision}" accent={decisionColors[decision] ?? 'var(--success)'} />
+              <KpiCard title="TIME" value="{job.processing_time_seconds?.toFixed(1) ?? '—'}s" accent="var(--info)" />
             </div>
 
             <!-- Cost & Tokens KPI Row -->
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
-              <KpiCard title="COST" value="${job.cost_usd?.toFixed(3) ?? '—'}" accent="#a16207" />
-              <KpiCard title="TOKENS_IN" value="{((job.tokens_in ?? 0) / 1000).toFixed(1)}K" accent="#1d4ed8"
+              <KpiCard title="COST" value="${job.cost_usd?.toFixed(3) ?? '—'}" accent="var(--warning)" />
+              <KpiCard title="TOKENS_IN" value="{((job.tokens_in ?? 0) / 1000).toFixed(1)}K" accent="var(--info)"
                        subtitle="{(job.tokens_in ?? 0).toLocaleString()} in" />
-              <KpiCard title="TOKENS_OUT" value="{((job.tokens_out ?? 0) / 1000).toFixed(1)}K" accent="#7c3aed"
+              <KpiCard title="TOKENS_OUT" value="{((job.tokens_out ?? 0) / 1000).toFixed(1)}K" accent="var(--tertiary)"
                        subtitle="{(job.tokens_out ?? 0).toLocaleString()} out" />
-              <KpiCard title="MODEL" value="{job.model_used || pipeLabel(job.pipeline_mode || job.pipeline_version) || 'V11'}" accent="#7e22ce"
+              <KpiCard title="MODEL" value="{job.model_used || pipeLabel(job.pipeline_mode || job.pipeline_version) || 'V11'}" accent="var(--tertiary)"
                        subtitle="Pipeline: {pipeLabel(job.pipeline_mode || job.pipeline_version) || '—'}" />
             </div>
 
@@ -560,22 +560,22 @@
             {#if confidence?.summary}
               <div class="border-2 bg-white p-3" style="border-color: var(--on-surface);">
                 <div class="flex items-center justify-between mb-2">
-                  <span class="text-[9px] font-black uppercase" style="color: var(--on-surface);">FIELD CONFIDENCE</span>
-                  <span class="text-[10px] font-bold" style="color: {confidence.summary.average_confidence >= 0.8 ? '#22c55e' : confidence.summary.average_confidence >= 0.5 ? '#eab308' : '#ef4444'};">
+                  <span class="text-[9px] font-medium uppercase" style="color: var(--on-surface);">FIELD CONFIDENCE</span>
+                  <span class="text-[10px] font-bold" style="color: {confidence.summary.average_confidence >= 0.8 ? 'var(--success)' : confidence.summary.average_confidence >= 0.5 ? 'var(--warning)' : 'var(--error)'};">
                     {(confidence.summary.average_confidence * 100).toFixed(0)}% avg
                   </span>
                 </div>
-                <div class="flex items-center gap-1 h-3 w-full" style="background: #f1f1f1;">
+                <div class="flex items-center gap-1 h-3 w-full" style="background: var(--surface-container);">
                   {#if confidence.summary.total_fields > 0}
-                    <div style="width: {confidence.summary.high / confidence.summary.total_fields * 100}%; height: 100%; background: #22c55e;" title="{confidence.summary.high} high confidence"></div>
-                    <div style="width: {confidence.summary.medium / confidence.summary.total_fields * 100}%; height: 100%; background: #eab308;" title="{confidence.summary.medium} medium"></div>
-                    <div style="width: {confidence.summary.low / confidence.summary.total_fields * 100}%; height: 100%; background: #ef4444;" title="{confidence.summary.low} low"></div>
+                    <div style="width: {confidence.summary.high / confidence.summary.total_fields * 100}%; height: 100%; background: var(--success);" title="{confidence.summary.high} high confidence"></div>
+                    <div style="width: {confidence.summary.medium / confidence.summary.total_fields * 100}%; height: 100%; background: var(--warning);" title="{confidence.summary.medium} medium"></div>
+                    <div style="width: {confidence.summary.low / confidence.summary.total_fields * 100}%; height: 100%; background: var(--error);" title="{confidence.summary.low} low"></div>
                   {/if}
                 </div>
                 <div class="flex gap-4 mt-1.5 text-[9px]" style="color: var(--outline);">
-                  <span><span style="display:inline-block;width:6px;height:6px;background:#22c55e;margin-right:2px;"></span> {confidence.summary.high} high</span>
-                  <span><span style="display:inline-block;width:6px;height:6px;background:#eab308;margin-right:2px;"></span> {confidence.summary.medium} medium</span>
-                  <span><span style="display:inline-block;width:6px;height:6px;background:#ef4444;margin-right:2px;"></span> {confidence.summary.low} low</span>
+                  <span><span style="display:inline-block;width:6px;height:6px;background:var(--success);margin-right:2px;"></span> {confidence.summary.high} high</span>
+                  <span><span style="display:inline-block;width:6px;height:6px;background:var(--warning);margin-right:2px;"></span> {confidence.summary.medium} medium</span>
+                  <span><span style="display:inline-block;width:6px;height:6px;background:var(--error);margin-right:2px;"></span> {confidence.summary.low} low</span>
                   <span style="color: var(--on-surface); font-weight: bold;">{confidence.summary.total_fields} total fields</span>
                 </div>
               </div>
@@ -589,37 +589,37 @@
               <div class="grid grid-cols-2 md:grid-cols-4 gap-0">
                 {#if true}{@const dc = confidence?.declaration || {}}
                 <div class="p-3 border-r border-b" style="border-color: rgba(56,56,50,0.15);">
-                  <div class="text-[8px] font-black uppercase" style="color: var(--outline);">IMPORTER {#if dc['Importer (Name)']}<span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:{confDot(dc['Importer (Name)'].level)};vertical-align:middle;margin-left:3px;"></span>{/if}</div>
+                  <div class="text-[8px] font-medium uppercase" style="color: var(--outline);">IMPORTER {#if dc['Importer (Name)']}<span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:{confDot(dc['Importer (Name)'].level)};vertical-align:middle;margin-left:3px;"></span>{/if}</div>
                   <div class="text-[11px] font-bold mt-0.5 truncate" style="color: var(--on-surface);">{decl?.importer_name || '—'}</div>
                 </div>
                 <div class="p-3 border-r border-b" style="border-color: rgba(56,56,50,0.15);">
-                  <div class="text-[8px] font-black uppercase" style="color: var(--outline);">CONSIGNOR {#if dc['Consignor (Name)']}<span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:{confDot(dc['Consignor (Name)'].level)};vertical-align:middle;margin-left:3px;"></span>{/if}</div>
+                  <div class="text-[8px] font-medium uppercase" style="color: var(--outline);">CONSIGNOR {#if dc['Consignor (Name)']}<span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:{confDot(dc['Consignor (Name)'].level)};vertical-align:middle;margin-left:3px;"></span>{/if}</div>
                   <div class="text-[11px] font-bold mt-0.5 truncate" style="color: var(--on-surface);">{decl?.consignor_name || '—'}</div>
                 </div>
                 <div class="p-3 border-r border-b" style="border-color: rgba(56,56,50,0.15);">
-                  <div class="text-[8px] font-black uppercase" style="color: var(--outline);">CUSTOMS VALUE {#if dc['Total Customs Value']}<span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:{confDot(dc['Total Customs Value'].level)};vertical-align:middle;margin-left:3px;"></span>{/if}</div>
+                  <div class="text-[8px] font-medium uppercase" style="color: var(--outline);">CUSTOMS VALUE {#if dc['Total Customs Value']}<span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:{confDot(dc['Total Customs Value'].level)};vertical-align:middle;margin-left:3px;"></span>{/if}</div>
                   <div class="text-[11px] font-bold mt-0.5" style="color: var(--on-surface);">{decl?.total_customs_value?.toLocaleString() ?? '—'}</div>
                 </div>
                 <div class="p-3 border-b" style="border-color: rgba(56,56,50,0.15);">
-                  <div class="text-[8px] font-black uppercase" style="color: var(--outline);">INVOICE NO (CUSTOMS DECLARATION)</div>
+                  <div class="text-[8px] font-medium uppercase" style="color: var(--outline);">INVOICE NO (CUSTOMS DECLARATION)</div>
                   <div class="text-[11px] font-bold mt-0.5" style="color: var(--on-surface);">{decl?.invoice_number_customs_declaration || '—'}</div>
-                  <div class="text-[8px] font-black uppercase mt-2" style="color: var(--outline);">INVOICE NO (COMMERCIAL INVOICE)</div>
+                  <div class="text-[8px] font-medium uppercase mt-2" style="color: var(--outline);">INVOICE NO (COMMERCIAL INVOICE)</div>
                   <div class="text-[11px] font-bold mt-0.5" style="color: var(--on-surface);">{decl?.invoice_number_commercial_invoice || decl?.invoice_number || '—'}</div>
                 </div>
                 <div class="p-3 border-r" style="border-color: rgba(56,56,50,0.15);">
-                  <div class="text-[8px] font-black uppercase" style="color: var(--outline);">INVOICE PRICE {#if dc['Invoice Price']}<span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:{confDot(dc['Invoice Price'].level)};vertical-align:middle;margin-left:3px;"></span>{/if}</div>
+                  <div class="text-[8px] font-medium uppercase" style="color: var(--outline);">INVOICE PRICE {#if dc['Invoice Price']}<span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:{confDot(dc['Invoice Price'].level)};vertical-align:middle;margin-left:3px;"></span>{/if}</div>
                   <div class="text-[11px] font-bold mt-0.5" style="color: var(--on-surface);">{decl?.invoice_price?.toLocaleString() ?? '—'} {decl?.currency || ''}</div>
                 </div>
                 <div class="p-3 border-r" style="border-color: rgba(56,56,50,0.15);">
-                  <div class="text-[8px] font-black uppercase" style="color: var(--outline);">EXCHANGE RATE</div>
+                  <div class="text-[8px] font-medium uppercase" style="color: var(--outline);">EXCHANGE RATE</div>
                   <div class="text-[11px] font-bold mt-0.5" style="color: var(--on-surface);">{decl?.exchange_rate?.toLocaleString() ?? '—'}</div>
                 </div>
                 <div class="p-3 border-r" style="border-color: rgba(56,56,50,0.15);">
-                  <div class="text-[8px] font-black uppercase" style="color: var(--outline);">PAGES</div>
+                  <div class="text-[8px] font-medium uppercase" style="color: var(--outline);">PAGES</div>
                   <div class="text-[11px] font-bold mt-0.5" style="color: var(--on-surface);">{job.total_pages ?? '—'}</div>
                 </div>
                 <div class="p-3">
-                  <div class="text-[8px] font-black uppercase" style="color: var(--outline);">PROCESSED BY</div>
+                  <div class="text-[8px] font-medium uppercase" style="color: var(--outline);">PROCESSED BY</div>
                   <div class="text-[11px] font-bold mt-0.5" style="color: var(--on-surface);">{job.username || job.model_used || '—'} · {(job.created_at || job.processed_at)?.split('T')[0]?.split(' ')[0] || ''}</div>
                 </div>
               {/if}
@@ -647,7 +647,7 @@
                 <div class="dark-bar flex justify-between items-center text-xs">
                   <div class="flex items-center gap-2">
                     <span>PRODUCT_ITEMS</span>
-                    <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:{itemConfAvg >= 0.8 ? '#22c55e' : itemConfAvg >= 0.5 ? '#eab308' : '#ef4444'};"></span>
+                    <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:{itemConfAvg >= 0.8 ? 'var(--success)' : itemConfAvg >= 0.5 ? 'var(--warning)' : 'var(--error)'};"></span>
                   </div>
                   <span class="px-2 py-0.5" style="background: var(--surface); color: var(--on-surface);">{items.length} RECORDS</span>
                 </div>
@@ -655,9 +655,9 @@
                   <table class="w-full text-[11px]">
                     <thead>
                       <!-- Row 1: Column headers -->
-                      <tr style="background: var(--on-surface); color: var(--surface);">
+                      <tr style="background: var(--surface-container); color: var(--on-surface);">
                         {#each cols as col}
-                          <th class="px-2 py-1.5 text-left text-[9px] font-black uppercase">{col.l}</th>
+                          <th class="px-2 py-1.5 text-left text-[9px] font-medium uppercase">{col.l}</th>
                         {/each}
                       </tr>
                       <!-- Row 2: Definitions -->
@@ -673,7 +673,7 @@
                         {/each}
                       </tr>
                       <!-- Row 4: Confidence -->
-                      <tr style="background: var(--surface-container); border-bottom: 2px solid var(--on-surface);">
+                      <tr style="background: var(--surface-container); border-bottom: 1px solid var(--on-surface);">
                         {#each cols as col}
                           <td class="px-2 py-0.5 text-[7px]">
                             {#if col.ck && ic[0]?.[col.ck]}
@@ -777,7 +777,7 @@
                 <div class="dark-bar flex justify-between items-center text-xs">
                   <div class="flex items-center gap-2">
                     <span>CUSTOMS_DECLARATION</span>
-                    <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:{( confidence?.summary?.average_confidence || 0.9) >= 0.8 ? '#22c55e' : (confidence?.summary?.average_confidence || 0.9) >= 0.5 ? '#eab308' : '#ef4444'};"></span>
+                    <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:{( confidence?.summary?.average_confidence || 0.9) >= 0.8 ? 'var(--success)' : (confidence?.summary?.average_confidence || 0.9) >= 0.5 ? 'var(--warning)' : 'var(--error)'};"></span>
                   </div>
                   <span class="px-2 py-0.5" style="background: var(--surface); color: var(--on-surface);">1 RECORD</span>
                 </div>
@@ -785,9 +785,9 @@
                   <table class="w-full text-[11px]">
                     <thead>
                       <!-- Row 1: Column headers -->
-                      <tr style="background: var(--on-surface); color: var(--surface);">
+                      <tr style="background: var(--surface-container); color: var(--on-surface);">
                         {#each dCols as col}
-                          <th class="px-2 py-1.5 text-left text-[9px] font-black uppercase">{col.l}</th>
+                          <th class="px-2 py-1.5 text-left text-[9px] font-medium uppercase">{col.l}</th>
                         {/each}
                       </tr>
                       <!-- Row 2: Definitions -->
@@ -803,7 +803,7 @@
                         {/each}
                       </tr>
                       <!-- Row 4: Confidence -->
-                      <tr style="background: var(--surface-container); border-bottom: 2px solid var(--on-surface);">
+                      <tr style="background: var(--surface-container); border-bottom: 1px solid var(--on-surface);">
                         {#each dCols as col}
                           <td class="px-2 py-0.5 text-[7px]">
                             {#if dc[col.ck]}
@@ -824,7 +824,7 @@
                             {#if isEditing('declaration', col.ck, 0)}
                               <input type="text" bind:value={editValue}
                                 class="w-full px-1 py-0.5 border text-[10px] font-mono"
-                                style="border-color: #38bdf8; outline: none; background: #fffde7;"
+                                style="border-color: var(--primary); outline: none; background: var(--primary-container);"
                                 onkeydown={(e) => { if (e.key === 'Enter') saveEdit(); if (e.key === 'Escape') cancelEdit(); }}
                                 onblur={saveEdit}
                               />
@@ -851,7 +851,7 @@
                 <div class="overflow-x-auto bg-white">
                   <table style="border-collapse: collapse; font-size: 11px; width: 100%;">
                     <thead>
-                      <tr style="background: var(--on-surface); color: var(--surface);">
+                      <tr style="background: var(--surface-container); color: var(--on-surface);">
                         <th style="padding: 6px 10px; text-align: left; font-size: 9px; font-weight: 900; white-space: nowrap;">TIME</th>
                         <th style="padding: 6px 10px; text-align: left; font-size: 9px; font-weight: 900; white-space: nowrap;">TABLE</th>
                         <th style="padding: 6px 10px; text-align: left; font-size: 9px; font-weight: 900; white-space: nowrap;">FIELD</th>
@@ -866,8 +866,8 @@
                           <td style="padding: 5px 10px; font-family: monospace; font-size: 9px; white-space: nowrap; color: var(--outline);">{c.created_at?.split(' ')[1]?.slice(0,5) || c.created_at || ''}</td>
                           <td style="padding: 5px 10px; font-size: 9px; font-weight: bold;">{c.table_key}</td>
                           <td style="padding: 5px 10px; font-size: 10px; font-weight: bold; color: var(--secondary);">{c.field_key}</td>
-                          <td style="padding: 5px 10px; font-family: monospace; font-size: 10px; text-decoration: line-through; color: #ef4444;">{c.original_value || '—'}</td>
-                          <td style="padding: 5px 10px; font-family: monospace; font-size: 10px; font-weight: bold; color: #22c55e;">{c.corrected_value}</td>
+                          <td style="padding: 5px 10px; font-family: monospace; font-size: 10px; text-decoration: line-through; color: var(--error);">{c.original_value || '—'}</td>
+                          <td style="padding: 5px 10px; font-family: monospace; font-size: 10px; font-weight: bold; color: var(--success);">{c.corrected_value}</td>
                           <td style="padding: 5px 10px; font-size: 9px; color: var(--outline);">{c.username || '—'}</td>
                         </tr>
                       {/each}
@@ -890,35 +890,35 @@
                 </div>
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-0 bg-white">
                   <div class="p-3 border-r border-b" style="border-color: rgba(56,56,50,0.1);">
-                    <div class="text-[7px] font-black uppercase" style="color: var(--outline);">DOCUMENT TYPES</div>
+                    <div class="text-[7px] font-medium uppercase" style="color: var(--outline);">DOCUMENT TYPES</div>
                     <div class="text-[11px] font-bold mt-0.5" style="color: var(--on-surface);">{pageTypeGroups().length} types across {pageData.length} pages</div>
                   </div>
                   <div class="p-3 border-r border-b" style="border-color: rgba(56,56,50,0.1);">
-                    <div class="text-[7px] font-black uppercase" style="color: var(--outline);">SHIPPING</div>
+                    <div class="text-[7px] font-medium uppercase" style="color: var(--outline);">SHIPPING</div>
                     <div class="text-[11px] font-bold mt-0.5" style="color: var(--on-surface);">{shipPages.length > 0 ? `${shipPages.length} docs` : '—'}</div>
                   </div>
                   <div class="p-3 border-r border-b" style="border-color: rgba(56,56,50,0.1);">
-                    <div class="text-[7px] font-black uppercase" style="color: var(--outline);">INVOICES</div>
+                    <div class="text-[7px] font-medium uppercase" style="color: var(--outline);">INVOICES</div>
                     <div class="text-[11px] font-bold mt-0.5" style="color: var(--on-surface);">{invPages.length > 0 ? `${invPages.length} invoices` : '—'}</div>
                   </div>
                   <div class="p-3 border-b" style="border-color: rgba(56,56,50,0.1);">
-                    <div class="text-[7px] font-black uppercase" style="color: var(--outline);">CERTIFICATES</div>
+                    <div class="text-[7px] font-medium uppercase" style="color: var(--outline);">CERTIFICATES</div>
                     <div class="text-[11px] font-bold mt-0.5" style="color: var(--on-surface);">{certPages.length > 0 ? `${certPages.length} docs` : '—'}</div>
                   </div>
                   <div class="p-3 border-r" style="border-color: rgba(56,56,50,0.1);">
-                    <div class="text-[7px] font-black uppercase" style="color: var(--outline);">INSURANCE</div>
+                    <div class="text-[7px] font-medium uppercase" style="color: var(--outline);">INSURANCE</div>
                     <div class="text-[11px] font-bold mt-0.5" style="color: var(--on-surface);">{insPages.length > 0 ? `${insPages.length} docs` : '—'}</div>
                   </div>
                   <div class="p-3 border-r" style="border-color: rgba(56,56,50,0.1);">
-                    <div class="text-[7px] font-black uppercase" style="color: var(--outline);">AVG CONFIDENCE</div>
+                    <div class="text-[7px] font-medium uppercase" style="color: var(--outline);">AVG CONFIDENCE</div>
                     <div class="text-[11px] font-bold mt-0.5" style="color: var(--on-surface);">{(pageData.reduce((s, p) => s + (p.confidence || 0), 0) / pageData.length).toFixed(2)}</div>
                   </div>
                   <div class="p-3 border-r" style="border-color: rgba(56,56,50,0.1);">
-                    <div class="text-[7px] font-black uppercase" style="color: var(--outline);">SKIPPED PAGES</div>
+                    <div class="text-[7px] font-medium uppercase" style="color: var(--outline);">SKIPPED PAGES</div>
                     <div class="text-[11px] font-bold mt-0.5" style="color: var(--on-surface);">{pageData.filter(p => (p.page_type||'').includes('blank') || (p.page_type||'').includes('stamps')).length} junk pages</div>
                   </div>
                   <div class="p-3">
-                    <div class="text-[7px] font-black uppercase" style="color: var(--outline);">TOTAL FIELDS</div>
+                    <div class="text-[7px] font-medium uppercase" style="color: var(--outline);">TOTAL FIELDS</div>
                     <div class="text-[11px] font-bold mt-0.5" style="color: var(--on-surface);">{pageData.reduce((s, p) => s + Object.keys(p.fields || {}).length, 0)} extracted</div>
                   </div>
                 </div>
@@ -938,9 +938,9 @@
                     <input type="text" placeholder="Search any field or value across all pages..."
                       bind:value={fieldSearch}
                       class="flex-1 text-xs font-bold uppercase px-3 py-2 focus:outline-none"
-                      style="border: 2px solid var(--on-surface); background: white;" />
+                      style="border: 1px solid var(--on-surface); background: white;" />
                     {#if fieldSearch}
-                      <button class="text-[9px] font-black uppercase px-2 py-1 cursor-pointer" style="border: 1px solid var(--outline); color: var(--outline);" onclick={() => fieldSearch = ''}>CLEAR</button>
+                      <button class="text-[9px] font-medium uppercase px-2 py-1 cursor-pointer" style="border: 1px solid var(--outline); color: var(--outline);" onclick={() => fieldSearch = ''}>CLEAR</button>
                     {/if}
                   </div>
                   {#if fieldSearch.trim() && fieldSearchResults().length > 0}
@@ -948,7 +948,7 @@
                     {@const groupedByPage = results.reduce((acc, r) => { (acc[r.page] = acc[r.page] || []).push(r); return acc; }, {} as Record<number, typeof results>)}
                     <div class="mt-3 flex items-center justify-between mb-2">
                       <span class="text-[10px] font-bold uppercase" style="color: var(--outline);">{results.length} matches across {Object.keys(groupedByPage).length} pages</span>
-                      <button class="text-[9px] font-black uppercase px-2 py-1 cursor-pointer border"
+                      <button class="text-[9px] font-medium uppercase px-2 py-1 cursor-pointer border"
                         style="border-color: var(--on-surface); color: var(--on-surface);"
                         onclick={() => { const text = results.map(r => `Page ${r.page} | ${r.field}: ${r.value}`).join('\n'); navigator.clipboard.writeText(text); }}
                       >COPY ALL</button>
@@ -960,13 +960,13 @@
                         <div class="border" style="border-color: rgba(56,56,50,0.15);">
                           <div class="flex items-center gap-2 px-2 py-1.5" style="background: var(--surface-container);">
                             <span class="w-5 h-5 flex items-center justify-center text-[8px] font-bold text-white" style="background: {ptc.bg};">{pageNum}</span>
-                            <span class="text-[8px] font-black uppercase" style="color: {ptc.bg};">{pt.replace(/_/g, ' ')}</span>
+                            <span class="text-[8px] font-medium uppercase" style="color: {ptc.bg};">{pt.replace(/_/g, ' ')}</span>
                             <span class="text-[8px] font-mono" style="color: var(--outline);">{matches.length} matches</span>
                           </div>
                           <div class="px-2 py-1">
                             {#each matches as match}
                               <div class="flex gap-2 py-0.5 border-b items-center" style="border-color: rgba(56,56,50,0.05);">
-                                <span class="text-[7px] font-black uppercase px-1 py-0.5 flex-shrink-0" style="color: var(--outline); background: var(--surface-container);">{match.source}</span>
+                                <span class="text-[7px] font-medium uppercase px-1 py-0.5 flex-shrink-0" style="color: var(--outline); background: var(--surface-container);">{match.source}</span>
                                 <span class="text-[10px] font-bold flex-shrink-0" style="color: var(--secondary); min-width: 120px;">{match.field}</span>
                                 <span class="text-[10px] font-mono flex-1 select-all" style="color: var(--on-surface);">{match.value}</span>
                                 <button class="flex-shrink-0 px-1 py-0.5 text-[8px] font-bold uppercase cursor-pointer border opacity-40 hover:opacity-100"
@@ -999,7 +999,7 @@
                   <div class="flex flex-wrap gap-1 mb-3">
                     {#each pageTypeGroups() as [type, count]}
                       {@const c = getPageTypeColor(type)}
-                      <span class="px-1.5 py-0.5 text-[7px] font-black uppercase text-white" style="background: {c.bg};">{type.replace(/_/g,' ')} ({count})</span>
+                      <span class="px-1.5 py-0.5 text-[7px] font-medium uppercase text-white" style="background: {c.bg};">{type.replace(/_/g,' ')} ({count})</span>
                     {/each}
                   </div>
                   <div class="flex flex-wrap gap-1 mb-3">
@@ -1020,10 +1020,10 @@
                         onclick={() => selectedMapPage = selectedMapPage?.page_number === pg.page_number ? null : pg}
                       >
                         <span class="flex-shrink-0 w-6 h-5 flex items-center justify-center text-[8px] font-bold text-white" style="background: {c.bg};">{pg.page_number}</span>
-                        <span class="flex-shrink-0 text-[8px] font-black uppercase w-24 truncate" style="color: {c.bg};">{pg.page_type?.replace(/_/g, ' ') || '?'}</span>
+                        <span class="flex-shrink-0 text-[8px] font-medium uppercase w-24 truncate" style="color: {c.bg};">{pg.page_type?.replace(/_/g, ' ') || '?'}</span>
                         <span class="text-[9px] flex-1 truncate" style="color: var(--on-surface);">{pg.explanation || '—'}</span>
                         <span class="text-[8px] font-mono flex-shrink-0" style="color: var(--outline);">{pg.fields ? Object.keys(pg.fields).length : 0}f</span>
-                        <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:{(pg.confidence || 0) >= 0.9 ? '#22c55e' : (pg.confidence || 0) >= 0.7 ? '#eab308' : '#ef4444'};flex-shrink:0;"></span>
+                        <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:{(pg.confidence || 0) >= 0.9 ? 'var(--success)' : (pg.confidence || 0) >= 0.7 ? 'var(--warning)' : 'var(--error)'};flex-shrink:0;"></span>
                         <span class="material-symbols-outlined text-sm flex-shrink-0" style="color: var(--outline);">
                           {selectedMapPage?.page_number === pg.page_number ? 'expand_less' : 'expand_more'}
                         </span>
@@ -1078,8 +1078,8 @@
                 </div>
                 {#if pdfMode === 'annotated'}
                   <div class="flex items-center gap-3 text-[8px]">
-                    <span><span style="display:inline-block;width:8px;height:8px;background:#22c55e;margin-right:3px;"></span> Declaration</span>
-                    <span><span style="display:inline-block;width:8px;height:8px;background:#eab308;margin-right:3px;"></span> Items</span>
+                    <span><span style="display:inline-block;width:8px;height:8px;background:var(--success);margin-right:3px;"></span> Declaration</span>
+                    <span><span style="display:inline-block;width:8px;height:8px;background:var(--warning);margin-right:3px;"></span> Items</span>
                   </div>
                 {/if}
               </div>

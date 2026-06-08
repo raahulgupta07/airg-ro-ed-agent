@@ -23,7 +23,7 @@
   <div class="px-3 py-2 flex flex-wrap gap-1.5 border-b" style="border-color: rgba(56,56,50,0.15); background: var(--surface-container);">
     {#each typeGroups() as [type, count]}
       {@const c = getPageTypeColor(type)}
-      <span class="px-1.5 py-0.5 text-[8px] font-black uppercase"
+      <span class="px-1.5 py-0.5 text-[8px] font-medium uppercase"
         style="background: {c.bg}; color: {c.text};">
         {type.replace(/_/g, ' ')} ({count})
       </span>
@@ -52,7 +52,7 @@
         <!-- Content -->
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-2">
-            <span class="px-1.5 py-0.5 text-[8px] font-black uppercase"
+            <span class="px-1.5 py-0.5 text-[8px] font-medium uppercase"
               style="background: {ptc.bg}; color: {ptc.text};">
               {page.page_type?.replace(/_/g, ' ') || 'unknown'}
             </span>

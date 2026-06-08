@@ -5,52 +5,51 @@
     totalJobs = 0,
     totalCost = 0,
   } = $props();
+
+  const statusLabel = $derived(pipelineStatus.toString().toLowerCase());
+  const modelLabel  = $derived(model.toString().toLowerCase());
 </script>
 
-<footer class="fixed bottom-0 left-0 w-full h-10 z-50 flex items-stretch overflow-hidden"
-        style="background: var(--surface); border-top: 3px solid var(--on-surface);">
-  <!-- SYS_OK segment -->
-  <div class="flex items-center px-4 h-full font-mono text-[11px] font-bold tracking-widest uppercase text-white"
-       style="background: var(--primary); border-right: 2px solid var(--on-surface);">
-    SYS_OK
+<footer class="fixed bottom-0 left-0 w-full h-10 z-50 flex items-center px-6 gap-5 text-xs"
+        style="background: rgba(245,244,238,0.85); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-top: 1px solid var(--outline-variant); color: var(--on-surface-muted);">
+
+  <!-- System ok -->
+  <div class="flex items-center gap-1.5">
+    <span class="inline-block w-1.5 h-1.5 rounded-full" style="background: var(--success);"></span>
+    <span class="font-medium" style="color: var(--on-surface);">System active</span>
   </div>
 
-  <!-- Pipeline status -->
-  <div class="flex items-center px-4 h-full font-mono text-[11px] font-bold tracking-widest uppercase"
-       style="color: var(--on-surface); border-right: 2px solid var(--on-surface);">
-    PIPELINE: {pipelineStatus}
-  </div>
+  <span style="color: var(--outline-variant);">·</span>
+
+  <!-- Pipeline -->
+  <div>Pipeline · <span style="color: var(--on-surface);">{statusLabel}</span></div>
+
+  <span style="color: var(--outline-variant);">·</span>
 
   <!-- Model -->
-  <div class="flex items-center px-4 h-full font-mono text-[11px] font-bold tracking-widest uppercase"
-       style="color: var(--on-surface); border-right: 2px solid var(--on-surface);">
-    MODEL: {model}
-  </div>
+  <div>Model · <span class="font-mono" style="color: var(--on-surface);">{modelLabel}</span></div>
 
-  <!-- DB status -->
-  <div class="flex items-center px-4 h-full font-mono text-[11px] font-bold tracking-widest uppercase"
-       style="color: var(--on-surface); border-right: 2px solid var(--on-surface);">
-    DB: WAL_ACTIVE
-  </div>
+  <span style="color: var(--outline-variant);">·</span>
 
-  <!-- Jobs + Cost -->
-  <div class="flex items-center px-4 h-full font-mono text-[11px] font-bold tracking-widest uppercase"
-       style="color: var(--on-surface); border-right: 2px solid var(--on-surface);">
-    JOBS: {totalJobs}
-  </div>
-  <div class="flex items-center px-4 h-full font-mono text-[11px] font-bold tracking-widest uppercase"
-       style="color: #fbbf24; border-right: 2px solid var(--on-surface);">
-    COST: ${totalCost.toFixed(3)}
-  </div>
+  <!-- DB -->
+  <div>DB · <span style="color: var(--on-surface);">wal_active</span></div>
+
+  <span style="color: var(--outline-variant);">·</span>
+
+  <!-- Jobs -->
+  <div>Jobs · <span style="color: var(--on-surface);">{totalJobs}</span></div>
+
+  <span style="color: var(--outline-variant);">·</span>
+
+  <!-- Cost -->
+  <div>Cost · <span class="font-mono" style="color: var(--primary);">${totalCost.toFixed(3)}</span></div>
 
   <!-- Spacer -->
   <div class="flex-1"></div>
 
-  <!-- LIVE_FEED -->
-  <div class="flex items-center px-4 h-full">
-    <span class="text-[10px] font-bold uppercase text-white animate-pulse px-2 py-0.5"
-          style="background: var(--tertiary); border: 1px solid var(--on-surface);">
-      LIVE_FEED
-    </span>
+  <!-- Live feed -->
+  <div class="flex items-center gap-1.5">
+    <span class="inline-block w-1.5 h-1.5 rounded-full animate-pulse" style="background: var(--tertiary);"></span>
+    <span style="color: var(--on-surface-muted);">Live feed</span>
   </div>
 </footer>

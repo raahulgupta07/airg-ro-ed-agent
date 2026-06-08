@@ -154,6 +154,12 @@ def _save_to_db(out: Dict, pdf_path: str) -> str:
             "exemption_reduction": decl.get("exemption") or decl.get("Exemption/Reduction"),
             "document_format": out.get("document_format"),
         }
+        # Persist sanity_flags (item_count_mismatch, currency_rate, etc) for review UI
+        _sflags = out.get("sanity_flags") or []
+        if _sflags:
+            import json as _json
+            db_decl["_sanity_flags_json"] = _json.dumps(_sflags)
+            db_decl["_document_format"] = out.get("document_format")
         try:
             database.save_declarations(job_id, [db_decl])
         except Exception as e:
@@ -266,9 +272,12 @@ def _save_to_db(out: Dict, pdf_path: str) -> str:
         import database as _db
         _conn = _db._connect()
         _cur = _conn.cursor()
+        _proc = out.get("processed_at") or None
+        if _proc == "":
+            _proc = None
         _cur.execute(
             "UPDATE jobs SET model_used = ?, processed_at = ? WHERE job_id = ?",
-            (out.get("model_used"), out.get("processed_at"), job_id),
+            (out.get("model_used"), _proc, job_id),
         )
         _conn.commit()
         _conn.close()
@@ -572,6 +581,7 @@ def run(pdf_path: str, job_id: Optional[str] = None) -> Dict:
             out["document_format"] = merged.get("document_format")
             out["cost"] = merged.get("cost", 0)
             out["needs_review"] = merged.get("needs_review", False)
+            out["sanity_flags"] = merged.get("sanity_flags") or []
             out["v7_used"] = merged.get("v7_result", {}).get("used", False)
             out["v10_used"] = merged.get("v10_result", {}).get("used", False)
 
@@ -617,6 +627,73 @@ def run(pdf_path: str, job_id: Optional[str] = None) -> Dict:
             _log_event("MERGE", merge_payload, job_id=job_id)
         except Exception as e:
             out["trace"].append({"phase": "merge", "error": str(e)})
+
+        # ─── Phase 4.25: Item-count mismatch fallback ───
+        # If sanity flagged item_count_mismatch (extracted < PDF-declared total items),
+        # re-run V7 on the FULL original PDF (forcing all pages through Veritas) and
+        # replace items if recovery yields more. Catches PageClassifier misroute
+        # (tail pages wrongly verdicted INKED/EXTRA → Veritas never saw them).
+        try:
+            _sflags = (merged or {}).get("sanity_flags") or []
+            _mismatch = next((f for f in _sflags if f.startswith("item_count_mismatch")), None)
+            _already_full = bool(fallback_to_full) or (typed_pdf == pdf_path and not hw_pdf)
+            if _mismatch and not _already_full:
+                out["trace"].append({"phase": "recover", "reason": _mismatch,
+                                     "action": "rerun V7 on full PDF"})
+                _emit(job_id, "STAGE_START", {
+                    "pipeline": "V7_RECOVER",
+                    "label": "Veritas recovery — full PDF",
+                    "pages": list(range(1, (cls.get("n_pages") or 0) + 1)),
+                })
+                _r_t0 = time.time()
+                try:
+                    # Bound recovery to 600s to prevent worker hang on large PDFs
+                    with ThreadPoolExecutor(max_workers=1) as _rex:
+                        _rfut = _rex.submit(_call_v7, pdf_path)
+                        full_res = _rfut.result(timeout=600)
+                    _r_dt = round(time.time() - _r_t0, 2)
+                    full_items_n = len(full_res.get("items") or [])
+                    current_items_n = len(out.get("items") or [])
+                    if full_items_n > current_items_n:
+                        out["items"] = full_res.get("items", [])
+                        # Track recovery in tokens + cost
+                        out["trace"].append({"phase": "recover", "ok": True,
+                                              "items_before": current_items_n,
+                                              "items_after": full_items_n})
+                        # Re-flag (count may now match)
+                        _emit(job_id, "STAGE_DONE", {
+                            "pipeline": "V7_RECOVER",
+                            "label": "Veritas recovery",
+                            "duration_s": _r_dt,
+                            "cost_usd": float(full_res.get("cost") or full_res.get("cost_usd") or 0) or 0.0,
+                            "tokens_in": int(full_res.get("tokens_in") or 0),
+                            "tokens_out": int(full_res.get("tokens_out") or 0),
+                            "items_recovered": full_items_n - current_items_n,
+                        })
+                        # Accumulate recovery cost/tokens (aggregated below)
+                        v7_res = v7_res or {}
+                        v7_res["tokens_in"] = int(v7_res.get("tokens_in", 0)) + int(full_res.get("tokens_in", 0))
+                        v7_res["tokens_out"] = int(v7_res.get("tokens_out", 0)) + int(full_res.get("tokens_out", 0))
+                        v7_res["cost"] = float(v7_res.get("cost", 0) or 0) + float(full_res.get("cost", 0) or 0)
+                    else:
+                        out["trace"].append({"phase": "recover", "ok": False,
+                                              "items_before": current_items_n,
+                                              "items_after": full_items_n,
+                                              "reason": "no new items recovered"})
+                        _emit(job_id, "STAGE_DONE", {
+                            "pipeline": "V7_RECOVER",
+                            "label": "Veritas recovery — no gain",
+                            "duration_s": _r_dt,
+                        })
+                except Exception as _re:
+                    out["trace"].append({"phase": "recover", "error": str(_re)})
+                    _emit(job_id, "STAGE_DONE", {
+                        "pipeline": "V7_RECOVER",
+                        "label": "Veritas recovery",
+                        "error": str(_re),
+                    })
+        except Exception as _e:
+            out["trace"].append({"phase": "recover_guard", "error": str(_e)})
 
         out["duration_seconds"] = round(time.time() - t0, 1)
 

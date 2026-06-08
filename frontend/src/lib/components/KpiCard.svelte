@@ -6,30 +6,34 @@
     subtitle = '',
     icon = '',
     progress = -1,
-    accent = '#007518',
+    accent = '',
   } = $props();
+
+  const accentColor = $derived(accent || 'var(--primary)');
 </script>
 
-<div class="ink-border stamp-shadow bg-white p-4">
-  <div class="flex justify-between items-start mb-2">
-    <span class="tag-label">{title}</span>
+<div class="ink-border stamp-shadow p-5 transition-shadow hover:shadow-md"
+     style="background: var(--surface-container-lowest);">
+  <div class="flex justify-between items-center mb-3">
+    <span class="text-xs font-medium uppercase tracking-wide" style="color: var(--on-surface-muted); letter-spacing: 0.06em;">{title}</span>
     {#if icon}
-      <span class="material-symbols-outlined text-lg" style="color: {accent};">{icon}</span>
+      <span class="material-symbols-outlined text-base" style="color: {accentColor};">{icon}</span>
     {/if}
   </div>
 
-  <div class="text-4xl font-black tracking-tighter" style="color: var(--on-surface);">
-    {value}{#if unit}<span class="text-lg">{unit}</span>{/if}
+  <div class="font-serif text-4xl" style="color: var(--on-surface); letter-spacing: -0.02em; font-weight: 500;">
+    {value}{#if unit}<span class="text-xl ml-1" style="color: var(--on-surface-muted);">{unit}</span>{/if}
   </div>
 
   {#if progress >= 0}
-    <div class="mt-3 h-2 border border-[var(--on-surface)]" style="background: var(--surface-container-highest);">
-      <div class="h-full transition-all" style="width: {Math.min(progress, 100)}%; background: {accent};"></div>
+    <div class="mt-4 h-1.5 overflow-hidden" style="background: var(--surface-container); border-radius: 999px;">
+      <div class="h-full transition-all duration-500"
+           style="width: {Math.min(progress, 100)}%; background: {accentColor}; border-radius: 999px;"></div>
     </div>
   {/if}
 
   {#if subtitle}
-    <div class="mt-2 text-[10px] uppercase opacity-60 font-bold" style="color: var(--on-surface);">
+    <div class="mt-2 text-xs" style="color: var(--on-surface-muted);">
       {subtitle}
     </div>
   {/if}

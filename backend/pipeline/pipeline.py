@@ -479,7 +479,7 @@ def _run_pipeline_impl(
     # Confidence scoring
     confidence = None
     try:
-        from v2.confidence import compute_field_confidence
+        from pipeline.confidence import compute_field_confidence
         confidence = compute_field_confidence(declaration=declaration, items=items, page_results=page_results)
         if confidence and confidence.get("summary"):
             s = confidence["summary"]

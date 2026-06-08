@@ -1784,6 +1784,23 @@ def validate_importer_baseline(declaration: Dict) -> List[str]:
     return flags
 
 
+def validate_item_count_match(items: List[Dict], page_summary: str) -> List[str]:
+    """Cross-check extracted item count vs PDF declared 'Total items: N'."""
+    if items is None or not page_summary:
+        return []
+    import re as _re
+    m = _re.search(r'Total\s+items?\s*[:\-]?\s*(\d+)', page_summary, _re.IGNORECASE)
+    if not m:
+        m = _re.search(r'(\d+)\s*\n\s*Total\s+items?', page_summary, _re.IGNORECASE)
+    if not m:
+        return []
+    declared = int(m.group(1))
+    extracted = len(items)
+    if declared != extracted:
+        return [f"item_count_mismatch:declared={declared},extracted={extracted}"]
+    return []
+
+
 def run_sanity_validators(declaration: Dict, fmt: str, items: List[Dict] = None,
                            page_summary: str = "") -> List[str]:
     """Run advisory sanity checks. Returns list of flag strings."""
@@ -1801,6 +1818,7 @@ def run_sanity_validators(declaration: Dict, fmt: str, items: List[Dict] = None,
         flags.append(f"invoice_ratio:HIGH:price={price},cv={cv},rate={rate}")
     if items is not None:
         flags.extend(validate_arithmetic_closure(declaration, items))
+        flags.extend(validate_item_count_match(items, page_summary))
     if page_summary:
         flags.extend(validate_currency_token_in_pagetext(declaration, page_summary))
     flags.extend(validate_importer_baseline(declaration))
@@ -1986,7 +2004,10 @@ def assemble(page_results: List[Dict], model: str = None) -> Dict:
     # Pack size + price guard: prevents merging different pack variants of same product
     # (e.g. QUADRATINI 125g vs 250g, Ferrero 62.5g vs 125g — bug seen in D13/D15/D20)
     if len(items) > 1:
-        _PACK_RE = re.compile(r'\b(\d+(?:[.,]\d+)?)\s*(g|gm|gr|kg|ml|l|lb|oz|pcs?|x)\b', re.IGNORECASE)
+        _PACK_RE = re.compile(
+            r'\b(\d+(?:[.,]\d+)?)\s*(gms?|gm|grams?|gr|kgs?|kg|mls?|ml|ltr?|l|lbs?|lb|oz|pcs?|pieces?|x)\b\.?',
+            re.IGNORECASE,
+        )
         def _pack_size(name: str) -> str:
             if not name:
                 return ""
@@ -2001,10 +2022,11 @@ def assemble(page_results: List[Dict], model: str = None) -> Dict:
         unique_items = []
         for item in items:
             name = str(item.get("Item name", "")).strip()
-            key = (name[:50].lower(),
+            key = (name.lower(),
                    str(item.get("HS Code", "")).strip(),
                    _pack_size(name),
-                   _price_bucket(item.get("Invoice unit price")))
+                   _price_bucket(item.get("Invoice unit price")),
+                   str(item.get("Quantity", "")).strip())
             if key not in seen:
                 seen.add(key)
                 unique_items.append(item)

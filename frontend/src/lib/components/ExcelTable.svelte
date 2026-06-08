@@ -201,20 +201,20 @@
 </script>
 
 <div class="border-2 stamp-shadow" style="border-color: var(--on-surface); background: var(--surface);">
-  <div class="flex items-center justify-between p-3" style="background: var(--on-surface); color: var(--surface);">
-    <span class="text-xs font-black uppercase tracking-wider">{title}</span>
+  <div class="flex items-center justify-between p-3" style="background: var(--surface-container); color: var(--on-surface);">
+    <span class="text-xs font-medium uppercase tracking-wider">{title}</span>
     <div class="flex gap-2 items-center">
       <span class="text-[10px] font-mono">[{data.length} ROWS]</span>
       {#if enableAddRow}
         <button
-          class="text-[8px] font-black uppercase px-2 py-1 cursor-pointer"
-          style="border: 2px solid white; background: transparent; color: white;"
+          class="text-[8px] font-medium uppercase px-2 py-1 cursor-pointer"
+          style="border: 1px solid white; background: transparent; color: white;"
           onclick={onAddRow}
         >+ ADD</button>
       {/if}
       <button
-        class="text-[8px] font-black uppercase px-2 py-1 cursor-pointer"
-        style="border: 2px solid white; background: transparent; color: white;"
+        class="text-[8px] font-medium uppercase px-2 py-1 cursor-pointer"
+        style="border: 1px solid white; background: transparent; color: white;"
         onclick={exportCsv}
       >↓ CSV</button>
     </div>
@@ -243,7 +243,7 @@
                      background: #d9d9d9;
                      color: #1f1f1f;
                      border-right: 1px solid #999;
-                     border-bottom: 2px solid #666;
+                     border-bottom: 1px solid #666;
                      user-select: none;
                      letter-spacing: 0.05em;"
               onclick={() => toggleSort(c.id)}
@@ -271,7 +271,7 @@
               class="px-2 py-1.5 text-[10px] font-bold uppercase text-center"
               style="position: sticky; top: 0; z-index: 20;
                      background: #d9d9d9; color: #1f1f1f;
-                     border-bottom: 2px solid #666;
+                     border-bottom: 1px solid #666;
                      user-select: none;"
             >ACTIONS</th>
           {/if}
@@ -307,7 +307,7 @@
                   <input
                     bind:value={editValue}
                     class="w-full px-1 py-0.5 text-[11px]"
-                    style="border: 2px solid #3b82f6; outline: none; background: white; color: #1f1f1f; font-family: inherit;"
+                    style="border: 1px solid #3b82f6; outline: none; background: white; color: #1f1f1f; font-family: inherit;"
                     onkeydown={(e) => {
                       if (e.key === 'Enter') { e.preventDefault(); saveCell(); }
                       else if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }

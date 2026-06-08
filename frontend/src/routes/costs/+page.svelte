@@ -131,25 +131,25 @@ const filteredJobs = $derived(() => {
       grid: { top: 40, right: 80, bottom: 40, left: 70 },
       legend: {
         data: ['COST ($)', 'DOCS', 'TOKENS'],
-        textStyle: { color: '#383832', fontSize: 10, fontFamily: 'Space Grotesk', fontWeight: 700 },
+        textStyle: { color: 'var(--on-surface)', fontSize: 10, fontFamily: 'Inter', fontWeight: 700 },
         top: 0,
       },
       xAxis: {
         type: 'category',
         data: dates.map(d => d.slice(5)),
-        axisLabel: { color: '#65655e', fontSize: 10, fontFamily: 'Space Grotesk' },
-        axisLine: { lineStyle: { color: '#383832' } },
+        axisLabel: { color: 'var(--on-surface-muted)', fontSize: 10, fontFamily: 'Inter' },
+        axisLine: { lineStyle: { color: 'var(--on-surface)' } },
       },
       yAxis: [
         { type: 'value', name: 'COST', position: 'left',
-          axisLabel: { color: '#fbbf24', fontSize: 9, formatter: (v:number) => '$' + v.toFixed(3) },
+          axisLabel: { color: 'var(--warning)', fontSize: 9, formatter: (v:number) => '$' + v.toFixed(3) },
           splitLine: { lineStyle: { color: 'rgba(56,56,50,0.1)' } },
-          axisLine: { lineStyle: { color: '#fbbf24' } },
+          axisLine: { lineStyle: { color: 'var(--warning)' } },
         },
         { type: 'value', name: 'DOCS / TOKENS', position: 'right',
-          axisLabel: { color: '#65655e', fontSize: 9, formatter: (v:number) => v >= 1000 ? (v/1000).toFixed(1)+'K' : String(v) },
+          axisLabel: { color: 'var(--on-surface-muted)', fontSize: 9, formatter: (v:number) => v >= 1000 ? (v/1000).toFixed(1)+'K' : String(v) },
           splitLine: { show: false },
-          axisLine: { lineStyle: { color: '#383832' } },
+          axisLine: { lineStyle: { color: 'var(--on-surface)' } },
         },
       ],
       tooltip: {
@@ -169,15 +169,15 @@ const filteredJobs = $derived(() => {
         { name: 'COST ($)', type: 'line', smooth: true, yAxisIndex: 0,
           data: costSeries,
           symbol: 'circle', symbolSize: 6,
-          lineStyle: { color: '#fbbf24', width: 2 },
-          itemStyle: { color: '#fbbf24', borderColor: '#383832', borderWidth: 1 },
+          lineStyle: { color: 'var(--warning)', width: 2 },
+          itemStyle: { color: 'var(--warning)', borderColor: 'var(--on-surface)', borderWidth: 1 },
           areaStyle: { color: 'rgba(251,191,36,0.15)' },
         },
         { name: 'DOCS', type: 'line', smooth: true, yAxisIndex: 1,
           data: docSeries,
           symbol: 'rect', symbolSize: 6,
-          lineStyle: { color: '#007518', width: 2 },
-          itemStyle: { color: '#007518' },
+          lineStyle: { color: 'var(--success)', width: 2 },
+          itemStyle: { color: 'var(--success)' },
         },
         { name: 'TOKENS', type: 'line', smooth: true, yAxisIndex: 1,
           data: tokSeries,
@@ -233,19 +233,19 @@ const filteredJobs = $derived(() => {
       <div class="tag-label mb-1 text-[8px]">FROM</div>
       <input type="date" bind:value={dateFrom}
              class="text-[10px] font-mono px-2 py-1.5 focus:outline-none"
-             style="border: 2px solid var(--on-surface); background: white; color: var(--on-surface);" />
+             style="border: 1px solid var(--on-surface); background: white; color: var(--on-surface);" />
     </div>
     <div>
       <div class="tag-label mb-1 text-[8px]">TO</div>
       <input type="date" bind:value={dateTo}
              class="text-[10px] font-mono px-2 py-1.5 focus:outline-none"
-             style="border: 2px solid var(--on-surface); background: white; color: var(--on-surface);" />
+             style="border: 1px solid var(--on-surface); background: white; color: var(--on-surface);" />
     </div>
     <div>
       <div class="tag-label mb-1 text-[8px]">USER</div>
       <select bind:value={selectedUser}
               class="text-[10px] font-mono font-bold uppercase px-2 py-1.5 focus:outline-none"
-              style="border: 2px solid var(--on-surface); background: white; color: var(--on-surface);">
+              style="border: 1px solid var(--on-surface); background: white; color: var(--on-surface);">
         <option value="">ALL USERS</option>
         {#each users as u}
           <option value={u}>{u}</option>
@@ -253,23 +253,23 @@ const filteredJobs = $derived(() => {
       </select>
     </div>
     {#if dateFrom || dateTo || selectedUser}
-      <button class="text-[8px] font-black uppercase px-2 py-1.5 cursor-pointer"
+      <button class="text-[8px] font-medium uppercase px-2 py-1.5 cursor-pointer"
               style="border: 1px solid var(--outline); color: var(--outline); background: transparent;"
               onclick={clearFilters}>CLEAR</button>
     {/if}
     <div class="flex-1"></div>
     {#if dateFrom || dateTo || selectedUser}
-      <div class="text-xs font-mono font-bold" style="color: #fbbf24;">
+      <div class="text-xs font-mono font-bold" style="color: var(--warning);">
         FILTERED: ${filteredTotalCost().toFixed(4)} ({filteredJobs().length} PDFs)
       </div>
     {/if}
     <button
-      class="text-[10px] font-black uppercase px-3 py-1.5 cursor-pointer border-2 press-effect"
-      style="border-color: var(--on-surface); background: var(--primary-container); color: var(--on-surface); box-shadow: 2px 2px 0px 0px var(--on-surface);"
+      class="text-[10px] font-medium uppercase px-3 py-1.5 cursor-pointer border-2 press-effect"
+      style="border-color: var(--on-surface); background: var(--primary-container); color: var(--on-surface); box-shadow: var(--shadow-sm);"
       onclick={downloadXlsx}
     >↓ DOWNLOAD XLSX</button>
     <button
-      class="text-[10px] font-black uppercase px-3 py-1.5 cursor-pointer border-2"
+      class="text-[10px] font-medium uppercase px-3 py-1.5 cursor-pointer border-2"
       style="border-color: var(--on-surface); background: var(--surface); color: var(--on-surface);"
       onclick={downloadCsv}
     >↓ CSV</button>
@@ -278,15 +278,15 @@ const filteredJobs = $derived(() => {
   <!-- KPI Row 1: cost -->
   {#if costStats}
     <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
-      <KpiCard title="TOTAL_SPENT" value="${costStats.total_cost.toFixed(3)}" icon="payments" accent="#fbbf24"
+      <KpiCard title="TOTAL_SPENT" value="${costStats.total_cost.toFixed(3)}" icon="payments" accent="var(--warning)"
                subtitle="{costStats.total_jobs} PDFs total" />
-      <KpiCard title="AVG_PER_PDF" value="${costStats.avg_per_pdf.toFixed(4)}" icon="calculate" accent="#006f7c"
+      <KpiCard title="AVG_PER_PDF" value="${costStats.avg_per_pdf.toFixed(4)}" icon="calculate" accent="var(--info)"
                subtitle="per extraction" />
-      <KpiCard title="THIS_MONTH" value="${costStats.month_cost.toFixed(3)}" icon="calendar_month" accent="#007518"
+      <KpiCard title="THIS_MONTH" value="${costStats.month_cost.toFixed(3)}" icon="calendar_month" accent="var(--success)"
                subtitle="{costStats.month_jobs} PDFs this month" />
-      <KpiCard title="TODAY" value="${costStats.today_cost.toFixed(3)}" icon="today" accent="#9d4867"
+      <KpiCard title="TODAY" value="${costStats.today_cost.toFixed(3)}" icon="today" accent="var(--tertiary)"
                subtitle="{costStats.today_jobs} PDFs today" />
-      <KpiCard title="PROJECTED" value="${(costStats.avg_per_pdf * 100).toFixed(2)}" icon="trending_up" accent="#ff9d00"
+      <KpiCard title="PROJECTED" value="${(costStats.avg_per_pdf * 100).toFixed(2)}" icon="trending_up" accent="var(--warning)"
                subtitle="per 100 PDFs/month" />
     </div>
     <!-- KPI Row 2: tokens -->
@@ -334,7 +334,7 @@ const filteredJobs = $derived(() => {
           ] as proj}
             <div class="flex items-center justify-between">
               <span class="text-[10px] font-bold uppercase" style="color: var(--outline);">{proj.label}</span>
-              <span class="text-sm font-mono font-bold" style="color: #fbbf24;">${proj.value.toFixed(2)}</span>
+              <span class="text-sm font-mono font-bold" style="color: var(--warning);">${proj.value.toFixed(2)}</span>
             </div>
           {/each}
         {/if}

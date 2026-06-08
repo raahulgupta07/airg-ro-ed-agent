@@ -98,7 +98,7 @@
   }
 
   function statusColor(s: StepStatus): string {
-    if (s === 'done') return '#22c55e';
+    if (s === 'done') return 'var(--success)';
     if (s === 'running') return '#38bdf8';
     if (s === 'error') return '#ef4444';
     return '#374151';
@@ -121,12 +121,12 @@
   }
 </script>
 
-<div style="border: 2px solid #383832; background: #0a0a0f; font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace; font-size: 11px; color: #6b7280;">
+<div style="border: 1px solid var(--on-surface); background: #0a0a0f; font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace; font-size: 11px; color: #6b7280;">
 
   <!-- Header -->
   <div style="padding: 8px 14px; border-bottom: 1px solid #1a1a2e; display: flex; justify-content: space-between; align-items: center;">
     <div style="display: flex; align-items: center; gap: 8px;">
-      <span style="color: #22c55e; font-size: 8px;">●</span>
+      <span style="color: var(--success); font-size: 8px;">●</span>
       <span style="color: #4b5563; font-size: 10px; font-weight: bold;">RO-ED AI PIPELINE</span>
       <span style="color: #a78bfa; font-size: 9px; border: 1px solid #4c1d95; padding: 1px 6px; border-radius: 2px;">{pipelineLabel(mode)}</span>
       <span style="color: #eab308; font-size: 10px;">{filename}</span>
@@ -134,7 +134,7 @@
     {#if !complete && mergedSteps.some(s => s.status === 'running')}
       <span style="color: #38bdf8; font-size: 9px;">{spinner} PROCESSING</span>
     {:else if complete}
-      <span style="color: #22c55e; font-size: 9px;">● COMPLETE</span>
+      <span style="color: var(--success); font-size: 9px;">● COMPLETE</span>
     {/if}
   </div>
 
@@ -159,7 +159,7 @@
               </div>
               {#if step.detail}<div style="color: #4b5563; font-size: 8px; margin-top: 2px;">{step.detail}</div>{/if}
             </div>
-            <span style="color: {step.status === 'done' ? '#22c55e' : '#1a1a2e'}; font-size: 10px;">→</span>
+            <span style="color: {step.status === 'done' ? 'var(--success)' : '#1a1a2e'}; font-size: 10px;">→</span>
           </div>
         {/each}
         <!-- Fork indicator -->
@@ -194,7 +194,7 @@
             background: #050510;
             {s.status === 'running' ? `box-shadow: 0 0 10px ${statusColor(s.status)}40;` : ''}
           ">
-            <div style="color: #fbbf24; font-size: 9px; font-weight: bold; margin-bottom: 4px;">▼ SCRIVENER BRANCH (HW pages)</div>
+            <div style="color: var(--warning); font-size: 9px; font-weight: bold; margin-bottom: 4px;">▼ SCRIVENER BRANCH (HW pages)</div>
             <div style="display: flex; align-items: center; gap: 4px;">
               <span style="color: {statusColor(s.status)}; font-size: 10px;">{statusIcon(s.status)}</span>
               <span style="color: {s.status === 'running' ? '#e5e7eb' : statusColor(s.status)}; font-size: 9px;">{s.label}</span>
@@ -243,7 +243,7 @@
               {#if step.time}<div style="color: #374151; font-size: 8px;">{step.time}</div>{/if}
             </div>
             {#if i < mergedSteps.length - 1}
-              <span style="color: {step.status === 'done' ? '#22c55e' : '#1a1a2e'}; font-size: 10px;">→</span>
+              <span style="color: {step.status === 'done' ? 'var(--success)' : '#1a1a2e'}; font-size: 10px;">→</span>
             {/if}
           </div>
         {/each}
@@ -256,7 +256,7 @@
       {@const totalSteps = mergedSteps.length}
       <div style="margin-top: 8px; display: flex; align-items: center; gap: 6px;">
         <div style="flex: 1; height: 3px; background: #1a1a2e; border-radius: 2px;">
-          <div style="width: {(doneCount / totalSteps) * 100}%; height: 100%; background: #22c55e; border-radius: 2px; transition: width 0.3s;"></div>
+          <div style="width: {(doneCount / totalSteps) * 100}%; height: 100%; background: var(--success); border-radius: 2px; transition: width 0.3s;"></div>
         </div>
         <span style="color: #374151; font-size: 9px;">{doneCount}/{totalSteps}</span>
       </div>
@@ -265,12 +265,12 @@
     <!-- Completion summary -->
     {#if complete && summary}
       <div style="margin-top: 10px; border: 1px solid #14532d; background: #052e16; padding: 8px 12px;">
-        <div style="color: #22c55e; font-weight: bold; font-size: 11px;">✅ EXTRACTION COMPLETE</div>
+        <div style="color: var(--success); font-weight: bold; font-size: 11px;">✅ EXTRACTION COMPLETE</div>
         <div style="margin-top: 6px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px 12px; font-size: 10px;">
           <div style="color: #4b5563;">Declaration <span style="color: #d1d5db; font-weight: bold;">{summary.declFilled}/16</span></div>
           <div style="color: #4b5563;">Items <span style="color: #d1d5db; font-weight: bold;">{summary.items}</span></div>
           <div style="color: #4b5563;">AI Tables <span style="color: #d1d5db; font-weight: bold;">{summary.aiTables}</span></div>
-          <div style="color: #4b5563;">Accuracy <span style="color: #22c55e; font-weight: bold;">{summary.accuracy.toFixed(1)}%</span></div>
+          <div style="color: #4b5563;">Accuracy <span style="color: var(--success); font-weight: bold;">{summary.accuracy.toFixed(1)}%</span></div>
           <div style="color: #4b5563;">Cost <span style="color: #eab308;">${summary.cost.toFixed(3)}</span></div>
           <div style="color: #4b5563;">Time <span style="color: #9ca3af;">{summary.duration.toFixed(1)}s</span></div>
         </div>

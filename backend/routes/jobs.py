@@ -258,7 +258,7 @@ async def get_job_confidence(job_id: str, current_user: dict = Depends(get_curre
             "Exchange Rate (1)": it.get("exchange_rate"),
         })
 
-    from v2.confidence import compute_field_confidence
+    from pipeline.confidence import compute_field_confidence
     confidence = compute_field_confidence(declaration=decl, items=items)
     return confidence
 

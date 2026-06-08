@@ -191,10 +191,10 @@
 
 <!-- KPI strip -->
 <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
-  <KpiCard title="PENDING" value="{stats.pending_review ?? '—'}" icon="rate_review" accent="#ff9d00" />
-  <KpiCard title="APPROVED" value="{stats.approved ?? '—'}" icon="check_circle" accent="#007518" />
-  <KpiCard title="REJECTED" value="{stats.rejected ?? '—'}" icon="block" accent="#be2d06" />
-  <KpiCard title="AUTO_APPROVED_TODAY" value="{stats.auto_approved_today ?? '—'}" icon="bolt" accent="#006f7c" />
+  <KpiCard title="PENDING" value="{stats.pending_review ?? '—'}" icon="rate_review" accent="var(--warning)" />
+  <KpiCard title="APPROVED" value="{stats.approved ?? '—'}" icon="check_circle" accent="var(--success)" />
+  <KpiCard title="REJECTED" value="{stats.rejected ?? '—'}" icon="block" accent="var(--error)" />
+  <KpiCard title="AUTO_APPROVED_TODAY" value="{stats.auto_approved_today ?? '—'}" icon="bolt" accent="var(--info)" />
   <KpiCard title="DRAFT" value="{stats.draft ?? '—'}" icon="edit_note" accent="#888" />
 </div>
 
@@ -202,35 +202,35 @@
 <div class="border-2 stamp-shadow mb-3" style="border-color: var(--on-surface); background: var(--surface);">
   <div class="dark-bar text-xs">FILTERS</div>
   <div class="bg-white p-2 flex flex-wrap items-center gap-2">
-    <span class="text-[8px] font-black uppercase opacity-60 px-1">STATUS</span>
+    <span class="text-[8px] font-medium uppercase opacity-60 px-1">STATUS</span>
     <select bind:value={filters.status}
       class="text-[10px] font-mono px-2 py-1.5 cursor-pointer"
-      style="border: 2px solid var(--on-surface); background: white;">
+      style="border: 1px solid var(--on-surface); background: white;">
       <option value="pending_review">PENDING_REVIEW</option>
       <option value="approved">APPROVED</option>
       <option value="rejected">REJECTED</option>
       <option value="draft">DRAFT</option>
     </select>
 
-    <span class="text-[8px] font-black uppercase opacity-60 px-1">IMPORTER</span>
+    <span class="text-[8px] font-medium uppercase opacity-60 px-1">IMPORTER</span>
     <input type="text" bind:value={filters.importer} placeholder="substring"
       class="text-[10px] font-mono px-2 py-1.5"
-      style="border: 2px solid var(--on-surface); background: white; width: 160px;" />
+      style="border: 1px solid var(--on-surface); background: white; width: 160px;" />
 
-    <span class="text-[8px] font-black uppercase opacity-60 px-1">FROM</span>
+    <span class="text-[8px] font-medium uppercase opacity-60 px-1">FROM</span>
     <input type="date" bind:value={filters.date_from}
       class="text-[10px] font-mono px-2 py-1.5"
-      style="border: 2px solid var(--on-surface); background: white;" />
+      style="border: 1px solid var(--on-surface); background: white;" />
 
-    <span class="text-[8px] font-black uppercase opacity-60 px-1">TO</span>
+    <span class="text-[8px] font-medium uppercase opacity-60 px-1">TO</span>
     <input type="date" bind:value={filters.date_to}
       class="text-[10px] font-mono px-2 py-1.5"
-      style="border: 2px solid var(--on-surface); background: white;" />
+      style="border: 1px solid var(--on-surface); background: white;" />
 
-    <span class="text-[8px] font-black uppercase opacity-60 px-1">MIN_EDITS</span>
+    <span class="text-[8px] font-medium uppercase opacity-60 px-1">MIN_EDITS</span>
     <input type="number" min="0" bind:value={filters.min_edits}
       class="text-[10px] font-mono px-2 py-1.5"
-      style="border: 2px solid var(--on-surface); background: white; width: 70px;" />
+      style="border: 1px solid var(--on-surface); background: white; width: 70px;" />
 
     <Button size="sm" variant="primary" onclick={applyFilters}>APPLY</Button>
     <Button size="sm" variant="secondary" onclick={resetFilters}>RESET</Button>
@@ -241,7 +241,7 @@
 <div class="flex items-center gap-3 mb-2 p-2 border-2"
   style="border-color: var(--on-surface); background: {selected.size > 0 ? '#fff8d8' : 'transparent'};">
   <button class="text-[10px] font-bold uppercase px-2 py-1 cursor-pointer"
-    style="border: 2px solid var(--on-surface); background: white;"
+    style="border: 1px solid var(--on-surface); background: white;"
     onclick={selectAllVisible}>
     {selected.size === queue.length && queue.length > 0 ? '☑' : '☐'}
     SELECT_ALL
@@ -281,7 +281,7 @@
 
 {#if toastMsg}
   <div class="fixed bottom-4 right-4 px-4 py-2 text-xs font-bold uppercase border-2 stamp-shadow z-50"
-    style="background: var(--on-surface); color: var(--surface);">{toastMsg}</div>
+    style="background: var(--surface-container); color: var(--on-surface);">{toastMsg}</div>
 {/if}
 
 {#if showRejectModal}
@@ -291,7 +291,7 @@
       <label class="text-[10px] font-bold uppercase opacity-70">REASON / NOTES (required)</label>
       <textarea bind:value={rejectNotes} rows="4"
         class="w-full text-xs font-mono p-2 mt-1"
-        style="border: 2px solid var(--on-surface); background: white;"></textarea>
+        style="border: 1px solid var(--on-surface); background: white;"></textarea>
       <div class="flex justify-end gap-2 mt-3">
         <Button size="sm" variant="ghost" onclick={() => showRejectModal = false}>CANCEL</Button>
         <Button size="sm" variant="primary" disabled={bulkBusy || !rejectNotes.trim()} onclick={bulkReject}>

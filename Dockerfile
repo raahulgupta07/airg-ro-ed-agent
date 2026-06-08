@@ -36,9 +36,6 @@ COPY backend/scripts/ /app/scripts/
 # Backend code — pipeline
 COPY backend/pipeline/ /app/pipeline/
 
-# Backend code — shared utilities
-COPY backend/v2/ /app/v2/
-
 # Backend code — platform features
 COPY backend/agents/ /app/agents/
 

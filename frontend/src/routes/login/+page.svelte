@@ -2,7 +2,6 @@
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
   import { api } from '$lib/api';
-  import FormInput from '$lib/components/FormInput.svelte';
 
   let username = $state('');
   let password = $state('');
@@ -10,6 +9,7 @@
   let loading = $state(false);
   let showPassword = $state(false);
   let redirecting = $state(false);
+  let remember = $state(true);
 
   $effect(() => {
     if (auth.isAuthenticated) {
@@ -30,7 +30,7 @@
         goto('/agent');
       }
     } catch (e: any) {
-      error = e.message || 'AUTHENTICATION_FAILED';
+      error = e.message || 'Authentication failed';
     } finally {
       loading = false;
     }
@@ -42,163 +42,210 @@
       await auth.initiateLogin();
     } catch {
       redirecting = false;
-      error = 'REDIRECT_FAILED';
+      error = 'Redirect failed';
     }
   }
+
+  const greeting = (() => {
+    const h = new Date().getHours();
+    if (h < 12) return 'Good morning';
+    if (h < 18) return 'Good afternoon';
+    return 'Good evening';
+  })();
+
+  const tiles = [
+    { icon: 'upload_file',    label: 'Upload PDF',     accent: false },
+    { icon: 'auto_awesome',   label: 'Classify pages', accent: true  },
+    { icon: 'description',    label: 'Typed extract',  accent: false },
+    { icon: 'edit_note',      label: 'Handwritten',    accent: false },
+    { icon: 'merge',          label: 'Merge results',  accent: false },
+    { icon: 'checklist',      label: 'Review queue',   accent: false },
+    { icon: 'history_edu',    label: 'Audit edits',    accent: false },
+    { icon: 'file_download',  label: 'Export',         accent: false },
+  ];
 </script>
 
-<div class="h-screen flex flex-col overflow-hidden" style="background: var(--surface);">
-  <!-- Top bar (matches main app header) -->
-  <div class="flex items-center justify-between px-6 py-2 shrink-0" style="border-bottom: 3px solid var(--on-surface);">
-    <div class="text-lg font-black tracking-tighter uppercase px-3 py-1"
-         style="background: var(--on-surface); color: var(--primary-container); letter-spacing: -0.5px;">
-      RO-ED COMMAND CENTER
-    </div>
-    <div class="flex items-center gap-3">
-      <span class="text-[9px] font-bold uppercase" style="color: var(--outline);">CITY AI TEAM</span>
-      <span class="text-[9px] font-bold uppercase px-2 py-0.5" style="background: var(--secondary); color: white;">v2.0</span>
-    </div>
-  </div>
+<div class="min-h-screen flex flex-col" style="background: var(--surface);">
 
-  <!-- Main content -->
-  <div class="flex-1 flex items-center px-6 md:px-16 min-h-0">
-    <div class="w-full max-w-7xl mx-auto flex items-center justify-between gap-12">
+  <!-- Top brand bar -->
+  <header class="px-10 py-6 shrink-0">
+    <a href="/login" class="inline-flex items-center gap-2.5 no-underline">
+      <span class="w-9 h-9 flex items-center justify-center text-white font-medium text-sm"
+            style="background: var(--primary); border-radius: 10px;">RO</span>
+      <span class="font-serif text-xl" style="color: var(--on-surface); letter-spacing: -0.01em;">RO‑ED</span>
+      <span class="text-xs" style="color: var(--on-surface-muted);">Command Center</span>
+    </a>
+  </header>
 
-      <!-- Left: Form -->
-      <div class="w-full max-w-md">
-        <!-- Auth badge + Title -->
-        <div class="mb-1">
-          <span class="tag-label" style="font-size: 9px;">AUTHENTICATION_REQUIRED</span>
-        </div>
-        <div class="text-3xl font-black uppercase tracking-tighter" style="color: var(--on-surface); border-bottom: 3px solid var(--on-surface); padding-bottom: 6px;">
-          ACCESS_PORTAL
-        </div>
-        <div class="text-xs font-medium uppercase mt-2 mb-4" style="color: var(--outline);">
-          CITY HOLDINGS MYANMAR — PG : RO AGENT
+  <!-- Main split -->
+  <main class="flex-1 px-10 pb-10">
+    <div class="max-w-7xl mx-auto grid lg:grid-cols-2 gap-12 items-center">
+
+      <!-- LEFT: greeting + form -->
+      <section class="max-w-lg w-full lg:pt-6">
+        <h1 class="font-serif text-5xl leading-[1.1]" style="color: var(--on-surface); letter-spacing: -0.02em; font-weight: 500;">
+          {greeting},<br>sign in to RO‑ED
+        </h1>
+        <p class="mt-5 text-base" style="color: var(--on-surface-muted); line-height: 1.6;">
+          AI-powered Myanmar customs declaration extraction. Typed and handwritten, on one queue.
+        </p>
+
+        <!-- Stats -->
+        <div class="mt-5 flex items-center gap-2 text-sm" style="color: var(--on-surface-muted);">
+          <span class="inline-block w-2 h-2 rounded-full" style="background: var(--success);"></span>
+          <span>10 concurrent · V11 Maestro queue · 99.9% uptime</span>
         </div>
 
-        <!-- Form container -->
-        <div class="p-5 stamp-shadow"
-             style="background: var(--surface-container); border-top: 2px solid var(--on-surface); border-left: 2px solid var(--on-surface); border-bottom: 3px solid var(--on-surface); border-right: 3px solid var(--on-surface);">
+        <!-- Form card -->
+        <div class="mt-8 p-6 ink-border" style="background: var(--surface-container-lowest); box-shadow: var(--shadow-sm);">
 
           {#if error}
-            <div class="mb-4 p-2 font-bold text-xs uppercase text-white border-2"
-                 style="background: var(--error); border-color: var(--on-surface);">
+            <div class="mb-4 px-3 py-2 text-sm" style="background: var(--error-container); color: var(--on-error-container); border-radius: var(--radius-md);">
               {error}
             </div>
           {/if}
 
+          <!-- SSO / LDAP top buttons -->
           {#if auth.isKeycloak}
-            <!-- KEYCLOAK SSO -->
-            <div class="flex items-center justify-between mb-3">
-              <div>
-                <div class="text-[9px] font-black uppercase tracking-widest" style="color: var(--outline);">SSO_PROVIDER</div>
-                <div class="text-xs font-bold uppercase" style="color: var(--secondary);">KEYCLOAK IDENTITY SERVER</div>
-              </div>
-            </div>
-
             <button
+              type="button"
               onclick={handleKeycloakLogin}
               disabled={redirecting}
-              class="w-full press-effect font-black uppercase tracking-wider text-xs cursor-pointer py-3"
-              class:opacity-50={redirecting}
-              style="background: var(--on-surface); color: var(--surface); border: 2px solid var(--on-surface); box-shadow: 3px 3px 0px 0px var(--on-surface);"
+              class="w-full flex items-center justify-center gap-2 py-2.5 text-sm font-medium cursor-pointer transition-colors"
+              style="background: var(--surface-container-lowest); color: var(--on-surface); border: 1px solid var(--outline-variant); border-radius: var(--radius-md);"
+              onmouseenter={(e) => e.currentTarget.style.background = 'var(--surface-container-low)'}
+              onmouseleave={(e) => e.currentTarget.style.background = 'var(--surface-container-lowest)'}
             >
-              {redirecting ? 'REDIRECTING...' : 'SIGN IN WITH KEYCLOAK'}
+              <span class="w-1.5 h-1.5 rounded-full" style="background: var(--on-surface-muted);"></span>
+              {redirecting ? 'Redirecting…' : 'Continue with SSO (SAML / OIDC)'}
             </button>
-
-            <!-- Divider -->
-            <div class="flex items-center gap-3 my-4">
-              <div class="flex-1 h-[2px]" style="background: var(--on-surface); opacity: 0.15;"></div>
-              <span class="text-[9px] font-black uppercase tracking-widest" style="color: var(--outline);">OR</span>
-              <div class="flex-1 h-[2px]" style="background: var(--on-surface); opacity: 0.15;"></div>
-            </div>
           {/if}
 
-          <!-- Local login -->
-          <div class="space-y-3">
-            {#if auth.isKeycloak}
-              <div class="text-[9px] font-black uppercase tracking-widest mb-1" style="color: var(--outline);">LOCAL_CREDENTIALS</div>
-            {/if}
+          <button
+            type="button"
+            disabled
+            class="mt-2 w-full py-2.5 text-sm font-medium cursor-not-allowed transition-colors"
+            style="background: var(--surface-container-lowest); color: var(--on-surface-muted); border: 1px solid var(--outline-variant); border-radius: var(--radius-md); opacity: 0.65;"
+            title="Use credentials below — LDAP auto-cascade on backend"
+          >
+            Continue with LDAP / Active Directory
+          </button>
 
-            <div>
-              <div class="tag-label mb-0.5" style="font-size: 9px;">OPERATOR_ID</div>
-              <input
-                type="text"
-                placeholder="Enter credentials"
-                bind:value={username}
-                class="w-full font-bold text-sm focus:outline-none"
-                style="padding: 8px 12px; font-family: 'Space Grotesk', sans-serif; background: white; border: 2px solid var(--on-surface); color: var(--on-surface);"
-              />
-            </div>
-
-            <div>
-              <div class="tag-label mb-0.5" style="font-size: 9px;">ACCESS_KEY</div>
-              <div class="relative">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder="Enter password"
-                  bind:value={password}
-                  class="w-full font-bold text-sm focus:outline-none pr-14"
-                  style="padding: 8px 12px; font-family: 'Space Grotesk', sans-serif; background: white; border: 2px solid var(--on-surface); color: var(--on-surface);"
-                />
-                <button
-                  type="button"
-                  class="absolute right-3 top-1/2 -translate-y-1/2 text-[9px] font-black uppercase cursor-pointer"
-                  style="color: var(--outline);"
-                  onclick={() => showPassword = !showPassword}
-                >
-                  {showPassword ? 'HIDE' : 'SHOW'}
-                </button>
-              </div>
-            </div>
+          <!-- OR divider -->
+          <div class="flex items-center gap-3 my-5">
+            <div class="flex-1 h-px" style="background: var(--outline-variant);"></div>
+            <span class="text-xs font-medium" style="color: var(--on-surface-subtle); letter-spacing: 0.08em;">OR</span>
+            <div class="flex-1 h-px" style="background: var(--outline-variant);"></div>
           </div>
 
-          <div class="mt-4">
+          <!-- Username -->
+          <input
+            type="text"
+            placeholder="Username"
+            bind:value={username}
+            class="w-full text-sm focus:outline-none transition-colors"
+            style="padding: 12px 14px; background: var(--surface-container-lowest); border: 1px solid var(--outline-variant); color: var(--on-surface); border-radius: var(--radius-md);"
+            onfocus={(e) => { e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.boxShadow = '0 0 0 3px var(--primary-container)'; }}
+            onblur={(e) => { e.currentTarget.style.borderColor = 'var(--outline-variant)'; e.currentTarget.style.boxShadow = 'none'; }}
+          />
+
+          <!-- Password -->
+          <div class="relative mt-2.5">
+            <input
+              type={showPassword ? 'text' : 'password'}
+              placeholder="Password"
+              bind:value={password}
+              class="w-full text-sm focus:outline-none transition-colors pr-16"
+              style="padding: 12px 14px; background: var(--surface-container-lowest); border: 1px solid var(--outline-variant); color: var(--on-surface); border-radius: var(--radius-md);"
+              onkeydown={(e) => { if (e.key === 'Enter' && username && password) handleLocalLogin(); }}
+              onfocus={(e) => { e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.boxShadow = '0 0 0 3px var(--primary-container)'; }}
+              onblur={(e) => { e.currentTarget.style.borderColor = 'var(--outline-variant)'; e.currentTarget.style.boxShadow = 'none'; }}
+            />
             <button
-              onclick={handleLocalLogin}
-              disabled={loading || !username || !password}
-              class="w-full press-effect font-black uppercase tracking-wider text-xs cursor-pointer py-3"
-              class:opacity-50={loading}
-              style="background: var(--primary-container); color: var(--on-surface); border: 2px solid var(--on-surface); box-shadow: 3px 3px 0px 0px var(--on-surface);"
+              type="button"
+              class="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium cursor-pointer"
+              style="color: var(--on-surface-muted);"
+              onclick={() => showPassword = !showPassword}
             >
-              {loading ? 'AUTHENTICATING...' : 'INITIATE_AUTHENTICATION'}
+              {showPassword ? 'Hide' : 'Show'}
+            </button>
+          </div>
+
+          <!-- Remember -->
+          <label class="flex items-center gap-2 mt-4 cursor-pointer text-sm" style="color: var(--on-surface);">
+            <input type="checkbox" bind:checked={remember}
+                   class="w-4 h-4 cursor-pointer"
+                   style="accent-color: var(--primary);" />
+            Remember me on this device
+          </label>
+
+          <!-- CTA -->
+          <button
+            type="button"
+            onclick={handleLocalLogin}
+            disabled={loading || !username || !password}
+            class="mt-4 w-full press-effect py-3 text-sm font-medium cursor-pointer transition-opacity"
+            class:opacity-50={loading || !username || !password}
+            style="background: var(--secondary); color: #fff; border-radius: var(--radius-md);"
+          >
+            {loading ? 'Signing in…' : 'Continue with email'}
+          </button>
+        </div>
+      </section>
+
+      <!-- RIGHT: pipeline preview -->
+      <aside class="hidden lg:block">
+        <div class="relative p-6 ink-border"
+             style="background-color: var(--surface-container-lowest);
+                    background-image:
+                      linear-gradient(rgba(31,30,29,0.05) 1px, transparent 1px),
+                      linear-gradient(90deg, rgba(31,30,29,0.05) 1px, transparent 1px);
+                    background-size: 32px 32px;
+                    background-position: -1px -1px;
+                    box-shadow: var(--shadow-md);">
+
+          <!-- Tooltip pill -->
+          <div class="mb-5 inline-flex items-center px-3 py-1.5 text-xs font-medium text-white"
+               style="background: var(--primary); border-radius: var(--radius-md); box-shadow: var(--shadow-sm);">
+            "Route this declaration"
+          </div>
+
+          <!-- Tiles grid -->
+          <div class="grid grid-cols-4 gap-3">
+            {#each tiles as t}
+              <div class="aspect-square p-3 flex flex-col justify-between transition-all cursor-default"
+                   style="background: var(--surface-container-lowest);
+                          border: {t.accent ? '1.5px solid var(--primary)' : '1px solid var(--outline-variant)'};
+                          border-radius: var(--radius-md);
+                          box-shadow: {t.accent ? '0 0 0 3px var(--primary-container)' : 'var(--shadow-xs)'};">
+                <span class="material-symbols-outlined text-lg"
+                      style="color: {t.accent ? 'var(--primary)' : 'var(--on-surface-muted)'};">{t.icon}</span>
+                <span class="text-xs font-medium"
+                      style="color: {t.accent ? 'var(--primary)' : 'var(--on-surface)'};">{t.label}</span>
+              </div>
+            {/each}
+          </div>
+
+          <!-- Bottom prompt strip -->
+          <div class="mt-6 flex items-center gap-2 p-2"
+               style="background: var(--surface-container-lowest); border: 1px solid var(--outline-variant); border-radius: var(--radius-md);">
+            <span class="material-symbols-outlined text-base ml-1" style="color: var(--on-surface-muted);">science</span>
+            <span class="flex-1 text-sm" style="color: var(--on-surface);">Customs declaration · 5 pages</span>
+            <button class="w-7 h-7 flex items-center justify-center text-base cursor-default"
+                    style="background: var(--surface-container); color: var(--on-surface-muted); border-radius: var(--radius-sm);">+</button>
+            <button class="px-3 py-1.5 text-xs font-medium cursor-default"
+                    style="background: var(--primary-container); color: var(--primary-hover); border-radius: var(--radius-sm);">
+              Let's go →
             </button>
           </div>
         </div>
+      </aside>
 
-        <!-- Status bar -->
-        <div class="mt-3 flex items-center gap-3 opacity-40">
-          <div class="flex items-center gap-1.5">
-            <span class="inline-block w-1.5 h-1.5" style="background: var(--primary);"></span>
-            <span class="text-[9px] font-bold uppercase tracking-widest" style="color: var(--on-surface);">NODE_ACTIVE</span>
-          </div>
-          <span style="color: var(--outline);">|</span>
-          <span class="text-[9px] font-bold uppercase tracking-widest" style="color: var(--on-surface);">
-            {auth.isKeycloak ? 'OIDC_PKCE' : 'AES-256'}
-          </span>
-          <span style="color: var(--outline);">|</span>
-          <span class="text-[9px] font-bold uppercase tracking-widest" style="color: var(--on-surface);">V1.0</span>
-        </div>
-      </div>
-
-      <!-- Right: Big text decoration -->
-      <div class="hidden lg:block flex-1 text-right">
-        <div class="font-black uppercase leading-[0.85] tracking-tight"
-             style="font-size: 7rem; color: #1a1a1a; opacity: 0.12;">
-          CITY<br>HOLDINGS<br>MYANMAR
-        </div>
-        <div class="mt-4 flex items-center justify-end gap-3">
-          <span class="text-xl font-black uppercase tracking-tight" style="color: #1a1a1a; opacity: 0.35;">RO AGENT</span>
-          <span class="text-xl font-black uppercase" style="color: #1a1a1a; opacity: 0.35;">V1.0</span>
-        </div>
-      </div>
     </div>
-  </div>
+  </main>
 
   <!-- Footer -->
-  <div class="flex items-center justify-between px-6 py-2 shrink-0" style="border-top: 1px solid rgba(56,56,50,0.15);">
-    <span class="text-[9px] font-mono uppercase" style="color: var(--outline); opacity: 0.4;">&copy; 2026 CITY HOLDINGS MYANMAR</span>
-    <span class="text-[9px] font-mono uppercase" style="color: var(--outline); opacity: 0.4;">SECURE_TERMINAL</span>
-  </div>
+  <footer class="px-10 py-6 text-center text-xs" style="color: var(--on-surface-subtle);">
+    © 2026 City Holdings Myanmar · RO‑ED Command Center
+  </footer>
 </div>
