@@ -2128,55 +2128,6 @@ def upsert_keycloak_user(keycloak_id: str, username: str, display_name: str,
 # PAGE EXTRACTIONS — v2 per-page structured data
 # =============================================================================
 
-def save_page_extractions(job_id: str, page_results: List[Dict]):
-    """Save v2 per-page extraction results."""
-    conn = _connect()
-    cursor = conn.cursor()
-
-    for pr in page_results:
-        parsed = pr.get("parsed", {})
-        doc = parsed.get("document", {})
-        visual = parsed.get("visual", {})
-        entities = parsed.get("entities", {})
-
-        cursor.execute("""
-            INSERT INTO page_extractions
-                (job_id, page_number, page_type, language, confidence, explanation,
-                 doc_title, doc_issuer, doc_date, doc_reference, doc_country,
-                 fields_json, items_json, amounts_json, entities_json,
-                 has_logo, has_stamp, has_signature, has_barcode, visual_quality,
-                 raw_char_count, orientation, pipeline_version)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v2')
-        """, (
-            job_id,
-            pr.get("page_number", 0),
-            pr.get("page_type", "unknown"),
-            parsed.get("language", ""),
-            pr.get("confidence", 0),
-            pr.get("explanation", ""),
-            doc.get("title", ""),
-            doc.get("issuer", ""),
-            doc.get("date", ""),
-            doc.get("reference", ""),
-            doc.get("country", ""),
-            json.dumps(parsed.get("fields", {}), ensure_ascii=False, default=str),
-            json.dumps(parsed.get("items", []), ensure_ascii=False, default=str),
-            json.dumps(parsed.get("amounts", []), ensure_ascii=False, default=str),
-            json.dumps(entities, ensure_ascii=False, default=str),
-            1 if visual.get("has_logo") else 0,
-            1 if visual.get("has_stamp") else 0,
-            1 if visual.get("has_signature") else 0,
-            1 if visual.get("has_barcode") else 0,
-            visual.get("quality", ""),
-            pr.get("raw_char_count", 0),
-            pr.get("orientation", "portrait"),
-        ))
-
-    conn.commit()
-    conn.close()
-    print(f"  Saved {len(page_results)} page extractions for {job_id}")
-
-
 def get_page_extractions(job_id: str) -> List[Dict]:
     """Get all page extractions for a job."""
     conn = _connect()
@@ -2292,25 +2243,6 @@ def update_field_accuracy(importer_name: str, field_key: str, was_corrected: boo
           1 if was_corrected else 0, was_corrected))
     conn.commit()
     conn.close()
-
-
-def get_weak_fields(importer_name: str, min_error_rate: float = 0.3) -> List[str]:
-    """Get fields that have high error rate for an importer."""
-    norm = _normalize_importer(importer_name)
-    if not norm:
-        return []
-    conn = _connect()
-    rows = conn.execute("""
-        SELECT field_key, total_extractions, corrections_count
-        FROM field_accuracy
-        WHERE importer_name_normalized = ? AND total_extractions >= 2
-    """, (norm,)).fetchall()
-    conn.close()
-    weak = []
-    for field, total, corrections in rows:
-        if total > 0 and corrections / total >= min_error_rate:
-            weak.append(field)
-    return weak
 
 
 def get_recent_declarations_by_importer(importer_name: str, limit: int = 5) -> list:

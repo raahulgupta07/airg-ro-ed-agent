@@ -1,5 +1,12 @@
 # RO-ED AI Agent — Future Roadmap
 
+> ⚠️ **SUPERSEDED (as of V11 Maestro).** Written against the pre-V11 "v2.0"
+> architecture (5 hardcoded table agents, sync extraction). Current production is
+> **V11 Maestro** — queue-driven (Redis + RQ), Postgres-backed, per-page classifier →
+> parallel V7 (Veritas) + V10 PRO (Scrivener) → merge → reconcile. See README.md /
+> CLAUDE.md for the real current state. The forward-looking ideas below remain
+> aspirational, not started.
+
 ## Vision
 Transform from a hardcoded Myanmar customs extraction tool into a **self-learning, multi-tenant document intelligence platform** that handles ANY document type, learns from every user correction, and improves automatically over time.
 

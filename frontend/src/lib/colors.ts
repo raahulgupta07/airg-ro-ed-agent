@@ -1,26 +1,3 @@
-export const severityColors: Record<string, string> = {
-  CRITICAL: '#be2d06',
-  WARNING: '#ff9d00',
-  WATCH: '#ff9d00',
-  INFO: '#65655e',
-  NORMAL: '#9d9d91',
-};
-
-export const modeColors: Record<string, string> = {
-  FULL: '#007518',
-  MONITOR: '#ff9d00',
-  REDUCE: '#f95630',
-  CLOSE: '#be2d06',
-};
-
-export const gradeColors: Record<string, string> = {
-  A: '#007518',
-  B: '#006f7c',
-  C: '#ff9d00',
-  D: '#f95630',
-  F: '#be2d06',
-};
-
 export const decisionColors: Record<string, string> = {
   ACCEPT: '#007518',
   ACCEPTED: '#007518',
@@ -29,12 +6,6 @@ export const decisionColors: Record<string, string> = {
   FULL_RETRY: '#f95630',
   ESCALATE: '#be2d06',
   ESCALATED: '#be2d06',
-};
-
-export const statusColors: Record<string, string> = {
-  COMPLETED: '#007518',
-  PROCESSING: '#006f7c',
-  FAILED: '#be2d06',
 };
 
 export function getAccuracyColor(accuracy: number): string {
@@ -86,7 +57,6 @@ const HUE_PALETTE = [
 ];
 
 const categoryHueCache: Record<string, number> = {};
-let nextHueIndex = 0;
 
 function getCategoryHue(category: string): number {
   if (!(category in categoryHueCache)) {

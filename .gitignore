@@ -10,6 +10,7 @@ __pycache__/
 # Data (don't push user data)
 backend/data/uploads/
 backend/data/results/
+backend/data/test_results/
 backend/data/extraction_history.db
 
 # Frontend build
