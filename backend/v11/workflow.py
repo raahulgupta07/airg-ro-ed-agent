@@ -11,6 +11,7 @@ from typing import Dict, Optional
 from v11.agents.page_classifier import classify_pages
 from v11.tools.pdf_split import split_pdf_by_labels
 from v11.agents.merger import merge_results
+from v11.tools import reconcile as _reconcile
 try:
     from v11.tools.field_bbox import compute_field_bboxes as _compute_field_bboxes
 except Exception:
@@ -153,6 +154,9 @@ def _save_to_db(out: Dict, pdf_path: str) -> str:
             "maccs_service_fee_mf": decl.get("maccs_service_fee") or decl.get("MACCS Service Fee (MF)"),
             "exemption_reduction": decl.get("exemption") or decl.get("Exemption/Reduction"),
             "document_format": out.get("document_format"),
+            # Reconciliation verdict (items_sum vs declared total) — the gate.
+            # save_declarations reads the underscore-prefixed metadata key.
+            "_cross_val_passed": 1 if out.get("cross_val_passed") else 0,
         }
         # Persist sanity_flags (item_count_mismatch, currency_rate, etc) for review UI
         _sflags = out.get("sanity_flags") or []
@@ -695,6 +699,79 @@ def run(pdf_path: str, job_id: Optional[str] = None) -> Dict:
         except Exception as _e:
             out["trace"].append({"phase": "recover_guard", "error": str(_e)})
 
+        # ─── Phase 4.4: Reconciliation gate (the common invariant) ───
+        # One guard, one chokepoint: the declared customs total must equal the
+        # sum of item customs values. Any upstream leak — misclassified page,
+        # split bug, V7/V10 item miss — surfaces here as a broken equation.
+        # When it breaks and ATTACHMENT pages exist, try to RECOVER (those pages
+        # are often misrouted item pages). If still off, FLAG for human review.
+        current_stage = "reconcile"
+        try:
+            verdict = _reconcile.reconcile(out.get("declaration") or {}, out.get("items") or [])
+            recovery = {"attempted": False, "added_items": 0, "from_pages": []}
+
+            if (not verdict["balanced"]
+                    and _reconcile.recovery_enabled()
+                    and splits.get("ATTACHMENT")):
+                recovery["attempted"] = True
+                recovery["from_pages"] = list(buckets.get("ATTACHMENT") or [])
+                attach_pdf = splits.get("ATTACHMENT")
+                out["trace"].append({"phase": "reconcile_recover",
+                                     "gap_pct": verdict["gap_pct"],
+                                     "attachment_pages": recovery["from_pages"]})
+                try:
+                    # Re-extract the dropped slice with Veritas, normalize via merger.
+                    rec_raw = _call_v7(attach_pdf)
+                    rec_norm = merge_results(rec_raw, None)
+                    rec_items = rec_norm.get("items") or []
+                    before_n = len(out["items"])
+                    candidate = _reconcile.merge_recovered_items(out["items"], rec_items)
+                    cand_verdict = _reconcile.reconcile(out.get("declaration") or {}, candidate)
+                    # Keep recovered items only if they move us toward balance.
+                    if abs(cand_verdict["gap_value"]) <= abs(verdict["gap_value"]):
+                        out["items"] = candidate
+                        recovery["added_items"] = len(out["items"]) - before_n
+                        verdict = cand_verdict
+                        # Stash recovered usage; applied after token aggregation
+                        # below (which would otherwise overwrite tokens_in/out).
+                        recovery["cost"] = float(rec_raw.get("cost") or rec_raw.get("cost_usd") or 0)
+                        recovery["tokens_in"] = int(rec_raw.get("tokens_in") or 0)
+                        recovery["tokens_out"] = int(rec_raw.get("tokens_out") or 0)
+                        recovery["cost_breakdown"] = [{**e, "branch": "v7_recover"}
+                                                      for e in (rec_raw.get("cost_breakdown") or [])]
+                except Exception as _re:
+                    out["trace"].append({"phase": "reconcile_recover", "error": str(_re)})
+
+            # Verdict drives the human-review gate. Unbalanced OR un-checkable
+            # (no trustworthy anchor) → force review. Never ship a silent gap.
+            out["cross_val_passed"] = bool(verdict["checked"] and verdict["balanced"])
+            out["reconcile"] = {**verdict, "recovery": recovery}
+            if not out["cross_val_passed"]:
+                out["needs_review"] = True
+
+            out["trace"].append({"phase": "reconcile",
+                                 "balanced": verdict["balanced"],
+                                 "checked": verdict["checked"],
+                                 "gap_pct": verdict["gap_pct"],
+                                 "items_sum": verdict["items_sum"],
+                                 "declared_total": verdict["declared_total"],
+                                 "recovered": recovery["added_items"]})
+            _emit(job_id, "RECONCILE", {
+                "balanced": verdict["balanced"],
+                "checked": verdict["checked"],
+                "gap_pct": verdict["gap_pct"],
+                "gap_value": verdict["gap_value"],
+                "items_sum": verdict["items_sum"],
+                "declared_total": verdict["declared_total"],
+                "anchor": verdict["anchor"],
+                "recovered_items": recovery["added_items"],
+                "recovered_from_pages": recovery["from_pages"],
+                "needs_review": out.get("needs_review", False),
+            })
+            _log_event("RECONCILE", out["reconcile"], job_id=job_id)
+        except Exception as e:
+            out["trace"].append({"phase": "reconcile", "error": str(e)})
+
         out["duration_seconds"] = round(time.time() - t0, 1)
 
         # Aggregate tokens from V7 + V10 PRO
@@ -707,6 +784,13 @@ def run(pdf_path: str, job_id: Optional[str] = None) -> Dict:
             breakdown += [{**e, "branch": "v7"} for e in (v7_res.get("cost_breakdown") or [])]
         if v10_res:
             breakdown += [{**e, "branch": "v10_pro"} for e in (v10_res.get("cost_breakdown") or [])]
+        # Fold in recovery pass usage (reconciliation re-extraction), if any.
+        _rec = out.get("reconcile", {}).get("recovery", {}) if isinstance(out.get("reconcile"), dict) else {}
+        if _rec.get("added_items"):
+            out["tokens_in"] = int(out.get("tokens_in") or 0) + int(_rec.get("tokens_in") or 0)
+            out["tokens_out"] = int(out.get("tokens_out") or 0) + int(_rec.get("tokens_out") or 0)
+            out["cost"] = round(float(out.get("cost") or 0) + float(_rec.get("cost") or 0), 6)
+            breakdown += _rec.get("cost_breakdown") or []
         out["cost_breakdown"] = breakdown
 
         # ─── Phase 4.5: Compute field bboxes (best-effort, fitz text search) ───
