@@ -95,7 +95,11 @@ services:
       retries: 3
       start_period: 30s
     deploy:
-      replicas: 2
+      # Job throughput scales with replicas. Each worker processes 1 job at a
+      # time (~100-135s); for N replicas the 10th simultaneous upload waits
+      # ~(10/N)*120s. Raise WORKER_REPLICAS to your host RAM budget
+      # (each worker mem_limit=8g → N=3 ≈ 24g, N=5 ≈ 40g).
+      replicas: ${WORKER_REPLICAS:-3}
 
   nginx:
     image: nginx:1.27-alpine

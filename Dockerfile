@@ -74,4 +74,4 @@ HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
 
 USER appuser
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "9000", "--limit-concurrency", "20", "--timeout-keep-alive", "300"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "9000", "--workers", "2", "--limit-concurrency", "50", "--timeout-keep-alive", "300"]

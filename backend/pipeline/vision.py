@@ -5,6 +5,7 @@ Send each HD page image to vision model. Get structured JSON back.
 No text input — pure image analysis.
 """
 
+import os
 import json
 import re
 import time
@@ -15,9 +16,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import config
 
-# Global semaphore — limits total concurrent API calls across ALL users
-# Prevents OpenRouter rate limiting and OOM with 10+ concurrent users
-_API_SEMAPHORE = threading.Semaphore(16)  # max 16 simultaneous API calls server-wide
+# Global semaphore — limits total concurrent API calls across ALL users.
+# Prevents OpenRouter rate limiting and OOM with 10+ concurrent users.
+# Tune via VISION_MAX_CONCURRENCY (raise with more workers; watch OpenRouter
+# account rate limits + worker memory).
+_API_SEMAPHORE = threading.Semaphore(int(os.environ.get("VISION_MAX_CONCURRENCY", "24")))
 
 # Cost tracking
 try:
