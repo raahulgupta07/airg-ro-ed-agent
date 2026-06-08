@@ -12,7 +12,10 @@ Built by City AI Team — City Holdings Myanmar. Designed for a 10-user concurre
 
 ---
 
-## Quick Start
+## Fresh install (first-time setup)
+
+> For a **brand-new instance** with an empty database. Already running and just
+> pulling new code? → skip to **[Updating an existing deployment](#updating-an-existing-deployment-️-rebuild-required)**.
 
 ### Local development
 
@@ -94,41 +97,49 @@ docker compose up -d --build         # rebuild image (after Dockerfile / require
 docker compose ps                    # service status + healthchecks
 ```
 
-### Deploying updates ⚠️ rebuild required (or you'll see the old UI)
+---
+
+## Updating an existing deployment ⚠️ rebuild required
+
+> Use this when the instance is **already installed** and you're pulling new code.
+> Data (Postgres volume) is preserved — this only rebuilds the app, it does NOT
+> reset the database. For a brand-new box, use [Fresh install](#fresh-install-first-time-setup) instead.
 
 **The frontend is compiled into the app Docker image at build time** (`npm run build`
 in the Dockerfile). A `git pull` / `git push` alone does **not** change what a running
 container serves — you must **rebuild the image** after pulling new code. Forgetting
-this is the #1 cause of "I deployed but still see the old UI."
+this is the #1 cause of *"I deployed but still see the old UI."*
 
 On the server, after every code update:
 
 ```bash
+cd <repo dir on the server>
 git pull origin main                      # get the latest code
-git rev-parse --short HEAD                # note the commit you're deploying
+git rev-parse --short HEAD                # confirm you're on the commit you expect
 
 docker compose build app worker           # rebake frontend + backend into the image
-docker compose up -d                      # recreate containers
+docker compose up -d                      # recreate containers (volumes/data kept)
+docker compose exec app alembic upgrade head   # apply any new DB migrations (safe/no-op if none)
 ```
 
 Then **hard-refresh** the browser (`Cmd/Ctrl+Shift+R`) to drop cached assets.
 
-**Verify the new frontend is actually in the running image:**
+**Verify the new frontend is actually in the running image** (`≥1` = new UI live, `0` = still old image):
 
 ```bash
-# Prints the deployed commit baked into the build (>0 = new UI present)
-docker exec ro-ed-api sh -c 'ls /app/frontend-build/_app/immutable/assets/*.css' | head
+docker exec ro-ed-api sh -c 'ls /app/frontend-build/_app/immutable/assets/*.css >/dev/null 2>&1 && grep -lc . /app/frontend-build/_app/immutable/assets/*.css | head'
 ```
 
 If you deploy from a **container registry** (ECR / Docker Hub) instead of building on
-the host, `git push` won't rebuild the image — rebuild and push it from CI/a build
-host, then `docker compose pull && docker compose up -d` on the server:
+the server, `git pull` + `docker compose build` on the server won't reach the running
+image — rebuild and push it from CI/a build host, then pull on the server:
 
 ```bash
+# build host / CI
 docker compose build app worker
 docker tag ro-ed-lang-app:latest <registry>/ro-ed-lang-app:latest
 docker push <registry>/ro-ed-lang-app:latest
-# on the server:
+# on the server
 docker compose pull && docker compose up -d
 ```
 
