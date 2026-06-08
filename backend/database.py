@@ -419,6 +419,11 @@ def init_database():
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS tokens_out INTEGER DEFAULT 0",
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS document_type TEXT",
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS pipeline_mode TEXT",
+        # model_used + processed_at also ship in migration 0002, but back them
+        # here too so an existing DB stamped at head without the column self-heals
+        # on boot (no manual ALTER needed on update).
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS model_used VARCHAR(100)",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS processed_at TIMESTAMP",
     ):
         cursor.execute(stmt)
     conn.commit()

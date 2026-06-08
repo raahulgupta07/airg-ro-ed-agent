@@ -143,6 +143,27 @@ docker push <registry>/ro-ed-lang-app:latest
 docker compose pull && docker compose up -d
 ```
 
+### Post-update checklist (engineer)
+
+After `docker compose up -d`, confirm:
+
+```bash
+docker compose ps                     # all services Up; app + workers (healthy) after ~60s
+docker compose logs --tail=30 app     # no errors on boot
+docker compose logs --tail=30 worker  # "Listening on ro_ed_jobs"
+```
+
+- **DB schema self-heals on boot** — `init_database()` runs idempotent `ALTER ... ADD COLUMN IF NOT EXISTS` for evolving columns, so no manual SQL is needed on update. (If you ever pulled a build *before* this was added and see a `column ... does not exist` error, run the one-time backfill in [Troubleshooting](#troubleshooting).)
+- **Hard-refresh** the browser to drop cached old UI.
+
+### Common update issues
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Still see **old UI** after deploy | Image not rebuilt (frontend is baked at build time) | Re-run `docker compose build app worker` then `up -d`; hard-refresh. Verify with the frontend-build check above. |
+| Worker shows **`(unhealthy)`** but jobs still run | Healthcheck probe too strict/slow on a shared host | Pull latest (robust probe shipped) → `docker compose up -d worker`; wait ~60s. The worker is functional regardless — nothing depends on that status. To see the real probe error: `docker inspect --format '{{json .State.Health.Log}}' <worker-container>`. |
+| Log: **`column "model_used" of relation "jobs" does not exist`** | Old DB stamped at alembic head without the column | Fixed automatically on boot by the self-heal ALTERs. One-time manual backfill if on an older build: see [Troubleshooting](#troubleshooting). |
+
 ---
 
 ## Architecture
@@ -753,6 +774,8 @@ alembic upgrade head
 | Svelte 5 `{@const}` error | `{@const}` must live inside `{#if}` / `{#each}` / `<Component>` blocks, not at top level. |
 | `500` on a slowapi-decorated endpoint | The handler must declare `request: Request` (or `response: Response`) as a parameter — slowapi reads the IP off it. |
 | `database is locked` retries | Was a SQLite artefact. Postgres + advisory locks fixes it. If you still see it, you're hitting the legacy path — re-run migrations. |
+| `column "model_used" of relation "jobs" does not exist` (or similar) | Old DB stamped at alembic head without the column. Self-heals on boot from this build onward; one-time manual backfill: `docker compose exec postgres psql -U ro_ed -d ro_ed -c "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS model_used VARCHAR(100); ALTER TABLE jobs ADD COLUMN IF NOT EXISTS processed_at TIMESTAMP;"` |
+| Worker `(unhealthy)` but processing jobs | Healthcheck false-fail (strict env / slow probe on a shared host). Pull latest → `docker compose up -d worker`, wait ~60s. Real error: `docker inspect --format '{{json .State.Health.Log}}' <worker>`. Workers function regardless — nothing depends on the status. |
 | SSE stream silent | Check Redis pubsub: `docker exec ro-ed-redis redis-cli SUBSCRIBE 'job:*'`. Confirm nginx has `proxy_buffering off` for `/api/extract-v11/stream`. |
 | OOM during V11 | Bump Docker Desktop RAM to ≥ 12 GB; raise worker `mem_limit` in `docker-compose.yml`. |
 | `JWT_SECRET_KEY too short` on prod boot | Must be ≥ 32 chars. Regenerate: `openssl rand -hex 32`. `DEV_MODE=` (empty) in prod. |
