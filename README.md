@@ -98,66 +98,134 @@ docker compose ps                    # service status + healthchecks
 
 ## Architecture
 
-```
-                    ┌────────────────────────────┐
-  Browser  HTTPS    │       Nginx 1.27           │  9080 → 9443 (redirect)
-  ───────────────►  │   TLS 1.2/1.3 + HSTS       │
-                    └──────────┬─────────────────┘
-                               │ proxy_pass (SSE: buffering off, timeouts long)
-                               ▼
-                    ┌────────────────────────────┐
-                    │  FastAPI app  (uvicorn ×2) │
-                    │  slowapi rate-limit         │
-                    │  Sentry (optional)          │
-                    └──┬────┬──────────────┬─────┘
-                       │    │              │
-              POST /v11│    │ SSE stream   │ enqueue RQ job
-                       │    │              ▼
-                       │    │      ┌──────────────────────┐
-                       │    │      │   Redis 7             │ ◄──── pub/sub channel
-                       │    └─────►│   pubsub + RQ queue   │
-                       │           └─────────┬─────────────┘
-                       │                     │ worker dequeue
-                       ▼                     ▼
-                ┌──────────────────────────────────────┐
-                │  V11 Maestro workflow                │
-                │   1. PageClassifier (per-page)       │
-                │   2. pdf_split (PRINTED / INKED)     │
-                │   3. PARALLEL                        │  ◄── OpenRouter API
-                │       ├─ Veritas  (V7) typed pages   │      (Gemini, Claude)
-                │       └─ Scrivener (V10 PRO)         │
-                │   4. Merger                          │
-                │   5. field_bbox (PyMuPDF search_for) │
-                │   6. DB save → DONE                  │
-                └────────────┬─────────────────────────┘
-                             │
-              ┌──────────────┼──────────────┐
-              ▼              ▼              ▼
-        Postgres 16     Redis 7        S3 / Local
-        (jobs, items,   (queue,        (PDFs, exports,
-         declarations,   pubsub)        backups)
-         field_edits,
-         activity_log,
-         users, groups,
-         ldap_configs,
-         storage_config)
+### System & request flow
 
-        pg-backup                       (cron loop in container,
-         (sidecar)                       daily pg_dump → /backups,
-                                         14-day retention)
+```mermaid
+flowchart TB
+  Browser["Browser — SvelteKit 5 SPA"]
+  Nginx["Nginx 1.27<br/>TLS 1.2/1.3 + HSTS<br/>9080 → 9443 redirect"]
+  App["FastAPI app · uvicorn ×2<br/>auth (JWT / LDAP / Keycloak)<br/>slowapi rate-limit · Sentry"]
+  Redis[("Redis 7<br/>RQ queue + pub/sub<br/>rate-limit store")]
+  Worker["RQ worker ×N (default 3)<br/>V11 Maestro"]
+  PG[("Postgres 16<br/>source of truth")]
+  Store["S3 / Local<br/>PDFs · exports · backups"]
+  OR["OpenRouter API<br/>Gemini · Claude"]
+  Backup["pg-backup sidecar<br/>daily pg_dump · 14-day"]
+
+  Browser -->|HTTPS| Nginx
+  Nginx -->|proxy · SSE buffering off| App
+  App -->|"POST /extract-v11 → enqueue"| Redis
+  Redis -.->|"SSE stream ← pub/sub"| App
+  Redis -->|dequeue job| Worker
+  Worker -.->|publish JOB/CLASSIFY/…/DONE| Redis
+  Worker -->|LLM calls| OR
+  App --> PG
+  Worker --> PG
+  App --> Store
+  Worker --> Store
+  PG --- Backup
 ```
+
+### V11 Maestro pipeline (per job)
+
+```mermaid
+flowchart LR
+  PDF["PDF upload"] --> C["1 · PageClassifier<br/>Haiku 4.5"]
+  C --> S["2 · pdf_split<br/>TYPED / HANDWRITTEN / ATTACHMENT"]
+  S --> V7["Veritas (V7)<br/>typed → Gemini Flash<br/>+ verifier/ensemble"]
+  S --> V10["Scrivener (V10 PRO)<br/>handwritten → Opus / Gemini Pro<br/>multi-DPI vote"]
+  V7 --> M["4 · Merger"]
+  V10 --> M
+  M --> R{"4.25 / 4.4 · Reconcile gate<br/>Σ items == declared total?"}
+  R -->|"gap + dropped pages"| RC["recover: re-extract slice"]
+  RC --> R
+  R -->|balanced| BB["5 · field_bbox<br/>PyMuPDF search_for"]
+  R -->|"still off"| FLAG["needs_review = true<br/>cross_val_passed = 0"]
+  FLAG --> BB
+  BB --> DB[("6 · DB save")]
+  DB --> DONE["DONE → SSE → review UI"]
+```
+
+> The **reconcile gate** is the common invariant every pipeline funnels through:
+> the declared `total_customs_value` must equal the sum of item customs values.
+> Any leak (misclassified page, split bug, V7/V10 miss) breaks the equation →
+> auto-recover from dropped pages, else flag for human review. No silent gaps.
 
 **Stack ports**
 
-| Service     | Port (host)         | Visibility       |
-|-------------|---------------------|------------------|
-| nginx       | `9080` (HTTP→443)   | user-facing      |
-| nginx       | `9443` (HTTPS)      | user-facing      |
-| app         | —                   | internal only    |
-| worker × 2  | —                   | internal only    |
-| postgres    | —                   | internal only    |
-| redis       | —                   | internal only    |
-| pg-backup   | —                   | internal only    |
+| Service        | Port (host)         | Visibility       |
+|----------------|---------------------|------------------|
+| nginx          | `9080` (HTTP→443)   | user-facing      |
+| nginx          | `9443` (HTTPS)      | user-facing      |
+| app            | —                   | internal only    |
+| worker ×N (3)  | —                   | internal only    |
+| postgres       | —                   | internal only    |
+| redis          | —                   | internal only    |
+| pg-backup      | —                   | internal only    |
+
+Worker count is `WORKER_REPLICAS` (default 3). Throughput scales linearly:
+with N workers and ~100–135 s/job, the 10th simultaneous upload completes in
+≈ `(10/N) × 120 s`. Each worker `mem_limit=8g` → size N to host RAM.
+
+---
+
+## Security
+
+### Defense-in-depth layers
+
+```mermaid
+flowchart TB
+  subgraph L1["Edge / transport"]
+    TLS["Nginx · TLS 1.2/1.3 + HSTS<br/>HTTP→HTTPS redirect<br/>X-Frame-Options · X-Content-Type-Options · Referrer-Policy"]
+  end
+  subgraph L2["Authentication"]
+    JWT["Local JWT HS256<br/>secret ≥32 chars enforced<br/>bcrypt password hashing"]
+    LDAP["Multi-LDAP cascade<br/>Fernet-encrypted bind passwords"]
+    KC["Keycloak OIDC RS256 + PKCE"]
+  end
+  subgraph L3["Authorization"]
+    RBAC["require_admin · group permissions<br/>data_scope: own / all_readonly / all_full"]
+  end
+  subgraph L4["Abuse control"]
+    RL["slowapi (Redis-backed)<br/>per-user (JWT) + per-IP fallback<br/>login 5/min · extract 10/min · 1000/hr"]
+  end
+  subgraph L5["Secrets & audit"]
+    SEC["Fernet at rest (LDAP binds · S3 keys)<br/>encrypted columns never returned by API<br/>field_edits + activity_logs audit trail"]
+  end
+  L1 --> L2 --> L3 --> L4 --> L5
+```
+
+### Posture — what's in place
+
+- **Passwords:** bcrypt with per-hash salt; no plaintext path in production.
+- **JWT:** HS256, `JWT_SECRET_KEY` length **≥ 32 enforced at boot** (`auth.py`); access/refresh split.
+- **SSO:** Keycloak OIDC RS256 with **PKCE**; issuer verified; JWKS auto-rotated.
+- **SQL:** parameterized (`?` placeholders) through the DB shim; dynamic field names whitelisted via field maps.
+- **RBAC:** all admin routes behind `require_admin`; `data_scope` (own / all) enforced on list/get.
+- **Secrets at rest:** LDAP bind passwords + S3 keys Fernet-encrypted; encrypted columns are **never** serialized by the API.
+- **Transport:** TLS 1.2/1.3, HSTS, HTTP→HTTPS redirect, security headers; SSE locations `proxy_buffering off`.
+- **Uploads:** UUID-prefixed filenames (no path traversal); `.pdf` type + size checks.
+- **Rate limiting:** Redis-backed, **per-user** (so users behind one office NAT IP don't share a budget); login stays IP-keyed for brute-force protection.
+- **Audit:** every cell edit → `field_edits`; security/system events → `activity_logs` (IP, UA, auth_source, severity).
+- **Repo hygiene:** `.env`, `*.pem`, build artifacts gitignored — **no secrets or certs committed**.
+
+### Hardening checklist before production
+
+Some of these are already wired by the documented prod setup (see [Production deployment](#production-deployment-linux-server)); verify each:
+
+- [ ] **Rotate on-disk dev secrets** — the development `.env` holds a real OpenRouter key + JWT secret; generate fresh ones for prod.
+- [ ] **`DEV_MODE=` empty in prod** — non-empty enables an insecure hardcoded JWT fallback (`auth.py:_DEV_FALLBACK`).
+- [ ] **Persistent Fernet keys** — set `LDAP_FERNET_KEY` / `STORAGE_FERNET_KEY`; without them an ephemeral `/tmp` key is used and encrypted secrets become unrecoverable on restart.
+- [ ] **Keycloak audience** — `verify_aud=False` today (`auth.py`); set `verify_aud=True` + pass `client_id` if you rely on Keycloak.
+- [ ] **Token-type check** — `verify_token()` does not assert `type=="access"`; a refresh token can be presented as an access token. Add the check.
+- [ ] **Disable `/docs` in prod** — FastAPI Swagger/OpenAPI is currently exposed; set `docs_url=None, redoc_url=None, openapi_url=None`.
+- [ ] **Add CSP header** — nginx sets HSTS + frame/content-type/referrer headers but no `Content-Security-Policy`.
+- [ ] **Account lockout** — brute-force is rate-limited but there's no per-account lockout after N failures.
+- [ ] **First-admin password** — printed to stdout on first boot (lands in container logs); rotate immediately after first login, or seed via `ADMIN_INITIAL_PASSWORD`.
+- [ ] **CORS** — set `CORS_ALLOWED_ORIGINS` to your exact frontend domain only (no wildcards with `allow_credentials`).
+- [ ] **TLS** — replace dev self-signed cert with Let's Encrypt / CA cert; consider `ssl_prefer_server_ciphers on`.
+
+> Severity note: with the documented prod `.env` (empty `DEV_MODE`, set Fernet keys, scoped CORS, real TLS), the residual high-value items are **Keycloak `verify_aud`**, **token-type validation**, and **disabling `/docs`** — none are repo-level leaks; all are config/code one-liners.
 
 ---
 

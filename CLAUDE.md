@@ -37,8 +37,24 @@ PDF upload (browser)
   → SSE /api/extract-v11/stream/{id} streams:
        JOB_START, CLASSIFY, ROUTE,
        STAGE_START, STAGE_DONE,
-       MERGE, DB_SAVE, DONE, FAIL   (Redis pubsub channel `job:{id}`)
+       MERGE, RECONCILE, DB_SAVE, DONE, FAIL   (Redis pubsub channel `job:{id}`)
 ```
+
+```mermaid
+flowchart LR
+  C["PageClassifier"] --> S["pdf_split"]
+  S --> V7["Veritas V7 (typed)"]
+  S --> V10["Scrivener V10 PRO (handwritten)"]
+  V7 --> M["Merger"]
+  V10 --> M
+  M --> R{"Reconcile gate<br/>Σ items == declared total?"}
+  R -->|gap + dropped pages| RC["recover slice"] --> R
+  R -->|balanced| BB["field_bbox"]
+  R -->|still off| F["needs_review=true"] --> BB
+  BB --> DB[("DB save")] --> D["DONE / SSE"]
+```
+
+**Reconcile gate** (`backend/v11/tools/reconcile.py`, wired in `workflow.py` Phase 4.25 + 4.4): the one invariant every pipeline funnels through — declared `total_customs_value` must equal Σ item customs values. On gap + ATTACHMENT pages, re-extract the dropped slice; if still unbalanced, force `needs_review=true` + `cross_val_passed=0`. Never ship a silent gap. Tunable: `RECONCILE_TOLERANCE_PCT` (5), `RECONCILE_RECOVER` (on).
 
 V7 (legacy sync) is still mounted at `POST /api/extract` for external integrations. V10 PRO standalone at `POST /api/extract-v10-pro` is kept for HW testing. **All UI traffic uses V11.**
 
@@ -156,21 +172,33 @@ scripts/
 
 ## Hardening
 
-- **HTTPS** — nginx terminates TLS 1.2/1.3, HSTS on. SSE locations: `proxy_buffering off`, long timeouts.
-- **Rate limit** — slowapi + Redis (shared across uvicorn workers). Defaults `5/min` login, `10/min` extract, `1000/hour` global per IP.
+- **HTTPS** — nginx terminates TLS 1.2/1.3, HSTS on + security headers. SSE locations: `proxy_buffering off`, long timeouts.
+- **Auth** — local JWT HS256 (`JWT_SECRET_KEY` ≥32 enforced at boot), bcrypt passwords, multi-LDAP (Fernet binds), Keycloak OIDC RS256 + PKCE.
+- **Rate limit** — slowapi + Redis, **keyed per-user (JWT) with IP fallback** (login stays IP-keyed). Defaults `5/min` login, `10/min` extract, `1000/hour`.
 - **Sentry** — opt-in via `SENTRY_DSN`. Filters out `HTTPException` + `RequestValidationError`. `send_default_pii=False`.
 - **Backups** — `pg-backup` sidecar runs `pg_backup_loop.sh` (daily, 14-day retention). Optional S3 push via `S3_BACKUP_BUCKET`.
-- **Secrets at rest** — LDAP bind passwords (Fernet via `LDAP_FERNET_KEY`), S3 secret keys (Fernet via `STORAGE_FERNET_KEY`).
+- **Secrets at rest** — LDAP bind passwords (Fernet via `LDAP_FERNET_KEY`), S3 secret keys (Fernet via `STORAGE_FERNET_KEY`). Encrypted columns never returned by the API.
 - **First-boot security** — random admin password printed once when `ADMIN_INITIAL_PASSWORD` is unset; force-change-password on first login.
 - **Healthchecks** — postgres (`pg_isready`), redis (`PING`), app (`/api/health`), nginx (`/health`).
 
+### Known security gaps (see README "Security" → hardening checklist)
+Config/code one-liners, not repo leaks (`.env`/certs are gitignored):
+- Keycloak `verify_aud=False` (`auth.py`) — enable if relying on Keycloak.
+- `verify_token()` doesn't assert `type=="access"` — refresh token usable as access.
+- FastAPI `/docs` exposed — set `docs_url=None` in prod.
+- No CSP header; no per-account lockout (only rate limit).
+- `DEV_MODE` non-empty → insecure hardcoded JWT fallback; keep empty in prod.
+- Fernet keys fall back to ephemeral `/tmp` if `LDAP_FERNET_KEY`/`STORAGE_FERNET_KEY` unset → set them.
+
 ## Concurrency targets (10 users)
 
-- 2 uvicorn workers (`--workers 2 --limit-concurrency 50 --timeout-keep-alive 300`)
-- 2 RQ worker containers (sequential per-worker, parallel across)
-- SQLAlchemy QueuePool 10 base + 10 overflow
-- Redis maxmemory 512 MB, allkeys-lru
-- App container `mem_limit: 4g`, worker `mem_limit: 8g`
+- 2 uvicorn workers (`--workers 2 --limit-concurrency 50 --timeout-keep-alive 300`); Dockerfile CMD pinned to match.
+- **RQ workers: `WORKER_REPLICAS` (default 3)**, sequential per-worker, parallel across. 10th simultaneous upload ≈ `(10/N)×120s`.
+- Vision API fan-out capped by `VISION_MAX_CONCURRENCY` (default 24) global semaphore.
+- SQLAlchemy QueuePool 10 base + 10 overflow.
+- Redis maxmemory 512 MB, allkeys-lru.
+- App container `mem_limit: 4g`, worker `mem_limit: 8g` (× N replicas → size to host RAM).
+- **Not yet done** (flagged): async Redis pubsub for SSE, offload blocking uploads/auto-approve to threads, de-dupe auto-approve to one worker, N+1 in data/download endpoints.
 
 ## Key design principles
 
