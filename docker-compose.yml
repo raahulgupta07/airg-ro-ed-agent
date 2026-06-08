@@ -89,11 +89,13 @@ services:
     cpus: 4
     command: ["python", "/app/worker.py"]
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import os,redis;redis.from_url(os.environ['REDIS_URL']).ping()\" || exit 1"]
+      # Robust: same REDIS_URL fallback the worker code uses + a connect timeout,
+      # so the probe can't false-fail when REDIS_URL is unset or the box is busy.
+      test: ["CMD-SHELL", "python -c \"import os,redis; redis.from_url(os.environ.get('REDIS_URL','redis://redis:6379/0'), socket_connect_timeout=5).ping()\" || exit 1"]
       interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
     deploy:
       # Job throughput scales with replicas. Each worker processes 1 job at a
       # time (~100-135s); for N replicas the 10th simultaneous upload waits
