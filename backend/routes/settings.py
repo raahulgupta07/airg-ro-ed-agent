@@ -57,10 +57,10 @@ async def set_auto_approve(body: AutoApproveSettings, admin: dict = Depends(requ
 import json as _json
 
 ALL_ENGINES = [
-    {"id": "atlas",   "label": "ATLAS",   "desc": "V14 · all-new (Presto + Scribe + gates)"},
-    {"id": "presto",  "label": "PRESTO",  "desc": "V12 · typed fast-path"},
-    {"id": "classic", "label": "CLASSIC", "desc": "V7 Veritas (legacy)"},
-    {"id": "auto",    "label": "AUTO",    "desc": "flag-based default"},
+    {"id": "atlas",   "label": "ATLAS",         "desc": "Gen 2 · flagship — auto typed + handwriting + gates"},
+    {"id": "presto",  "label": "ATLAS SWIFT",   "desc": "Gen 2 · fast typed-digital"},
+    {"id": "classic", "label": "ATLAS CLASSIC", "desc": "Gen 1 · legacy typed ensemble"},
+    {"id": "auto",    "label": "AUTO",          "desc": "follows the admin default"},
 ]
 # By default ONLY the latest engine is enabled; legacy ones are off.
 _DEFAULT_ENABLED = ["atlas"]

@@ -909,22 +909,22 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
         _eng_choice = (engine or "auto").lower()
         _ran = []
         if locals().get("_use_presto"):
-            _ran.append("Presto")
+            _ran.append("Atlas Swift")
         elif _v7_used:
-            _ran.append("Veritas")
+            _ran.append("Atlas Classic")
         if locals().get("_use_scribe"):
-            _ran.append("Scribe")
+            _ran.append("Atlas Vision")
         elif _v10_used:
-            _ran.append("Scrivener")
+            _ran.append("Atlas Heritage")
         _ran_str = (" (" + " + ".join(_ran) + ")") if _ran else ""
         if _eng_choice == "atlas":
-            out["model_used"] = "ATLAS V14" + _ran_str
+            out["model_used"] = "Atlas Gen 2" + _ran_str
         elif _eng_choice == "presto":
-            out["model_used"] = "Presto V12" + _ran_str
+            out["model_used"] = "Atlas Swift" + _ran_str
         elif _eng_choice == "classic":
-            out["model_used"] = "Veritas V7" + _ran_str
+            out["model_used"] = "Atlas Classic" + _ran_str
         else:
-            out["model_used"] = "V11 Maestro" + _ran_str
+            out["model_used"] = "Atlas Core" + _ran_str
 
         # ─── Phase 5: Save merged result to DB ───
         current_stage = "db_save"

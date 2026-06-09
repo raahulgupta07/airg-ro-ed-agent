@@ -63,8 +63,8 @@
   let selectedEngine = $state<'auto' | 'presto' | 'classic' | 'atlas'>('atlas');
   // Engine availability — super-admin controls this in Settings; default ATLAS only.
   const ENGINE_OPTIONS: [string,string,string][] = [
-    ['auto','AUTO','smart default'],['classic','CLASSIC','V7 · accurate'],
-    ['presto','PRESTO','V12 · ~4× faster'],['atlas','ATLAS','V14 · all-new'],
+    ['auto','AUTO','admin default'],['classic','ATLAS CLASSIC','Gen 1 · legacy'],
+    ['presto','ATLAS SWIFT','Gen 2 · fast typed'],['atlas','ATLAS','Gen 2 · flagship'],
   ];
   let enabledEngines = $state<string[]>(['atlas']);
   const visibleEngines = $derived(ENGINE_OPTIONS.filter(o => enabledEngines.includes(o[0])));

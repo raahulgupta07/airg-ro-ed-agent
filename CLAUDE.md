@@ -62,6 +62,9 @@ V7 (legacy sync) is still mounted at `POST /api/extract` for external integratio
 
 A new extraction stack — additive, V7/V10/V11 untouched (kept as fallback). Picked per-job via `engine=auto|classic|presto|atlas` on `POST /api/extract-v11`.
 
+**Branding — the "Atlas" family** (display names; code/module names unchanged):
+Atlas Gen 2 = `atlas` flagship · **Atlas Swift** = Presto (typed) · **Atlas Vision** = Scribe (handwriting) · **Atlas Classic** = V7 (legacy typed) · **Atlas Heritage** = V10 (legacy ink) · **Atlas Core** = V11 router · **Atlas Guard** = gates+JUDGE · **Atlas Mend** = self-correct · **Atlas Learn** = learn/. `engine=` IDs stay `auto|classic|presto|atlas`.
+
 - **V12 "Presto"** (`backend/v11/presto.py`) — typed fast-path. Digital PDF → `fitz.get_text` text layer → ONE schema call (gemini-3-flash, schema in `v11/presto_schema.py`) → declaration + items. ~20s/$0.01, ~4× faster + ~10× cheaper than V7. Reads typed ∪ attachment pages so misrouted item pages are caught.
 - **V13 "Scribe"** (`backend/v13/scribe.py`, `v13/config.py`) — handwriting/scanned (no text layer). High-DPI render → vision vote across N reads. **Model = gemini-3-flash** (NOT gemini-2.5-pro — a reasoning model that truncates mid-JSON → empty). `SCRIBE_MODELS` rotates flash + claude-haiku for cross-model agreement. Verifier-lite re-reads item pages on a sum gap. ~15–75s/$0.01–0.02.
 - **V14 "Atlas"** — an engine MODE in `workflow.py` (`engine="atlas"`): typed→Presto AND handwritten→Scribe (`_call_scribe`) + all gates/judge/learn. `atlas.py` facade is a future refactor.
