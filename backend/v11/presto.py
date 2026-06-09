@@ -56,7 +56,28 @@ Rules:
 - Numbers as numbers (strip thousands separators). Rates as fractions (15% -> 0.15).
 - Keep quantity with its unit as a string (e.g. "108 KG").
 - Include ALL line items — do not merge or drop rows.
-- Return ONLY the JSON object.
+
+Per-field guidance (read carefully — these columns are easy to confuse):
+- origin: ISO 3166-1 alpha-2 country CODE, not the name. ITALY->IT, AUSTRIA->AT,
+  THAILAND->TH, CHINA->CN, MYANMAR->MM, etc.
+- invoice_unit_price: the per-unit price in the INVOICE currency (the small number,
+  same currency as `currency`, e.g. 356.323 THB).
+- cif_unit_price: the CIF per-unit price in the INVOICE currency (same scale as
+  invoice_unit_price, e.g. 356.323). If no separate CIF unit price is shown, set
+  it equal to invoice_unit_price. DO NOT put any MMK figure here.
+- An item row has TWO MMK numbers: a per-unit "unit price of customs value"
+  (e.g. 20452.37) and the item TOTAL "customs value" (= that unit price ×
+  quantity, e.g. 20452.37 × 108 = 2208855.96).
+- customs_value_mmk: the item TOTAL customs value in MMK — the LARGER number
+  (unit-MMK × quantity, e.g. 2208855.96). NEVER the per-unit MMK price. Sanity:
+  the sum of all items' customs_value_mmk must roughly equal the declaration's
+  total_customs_value.
+- invoice_number_customs / invoice_number_commercial: the invoice number(s),
+  typically like "AM-PD-012/2024". NOT a Bill of Lading / container / BoL number
+  (e.g. TCLBIL...). If only one invoice number is shown, use it for both.
+- currency: the invoice currency code (e.g. THB); currency_2 the secondary (e.g. USD).
+
+Return ONLY the JSON object.
 
 PDF TEXT:
 """
