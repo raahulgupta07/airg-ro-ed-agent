@@ -125,6 +125,11 @@ export const api = {
   reviewBulkReject: (job_ids: string[], notes: string) =>
     request<any>('/review/bulk/reject', { method: 'POST', body: JSON.stringify({ job_ids, notes }) }),
 
+  // Engine availability (super-admin enable/disable; all users read)
+  getEngines: () => request<any>('/settings/engines'),
+  saveEngines: (data: { enabled: string[]; default: string }) =>
+    request<any>('/settings/engines', { method: 'PUT', body: JSON.stringify(data) }),
+
   // Auto-approve settings
   getAutoApprove: () => request<any>('/settings/auto-approve'),
   saveAutoApprove: (data: { enabled: boolean; threshold: number }) =>

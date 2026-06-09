@@ -942,17 +942,29 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
         # ─── Final: DONE ───
         total_s = round(time.time() - t0, 2)
 
-        # Derive model_used label from which branches actually ran.
+        # Derive model_used label from the chosen engine + which branches ran.
         _v7_used = bool(out.get("v7_used"))
         _v10_used = bool(out.get("v10_used"))
-        if _v7_used and _v10_used:
-            out["model_used"] = "V11 Maestro (Veritas + Scrivener)"
+        _eng_choice = (engine or "auto").lower()
+        # What actually ran (sub-engine tags).
+        _ran = []
+        if locals().get("_use_presto"):
+            _ran.append("Presto")
         elif _v7_used:
-            out["model_used"] = "V11 Maestro (Veritas)"
+            _ran.append("Veritas")
+        if locals().get("_use_scribe"):
+            _ran.append("Scribe")
         elif _v10_used:
-            out["model_used"] = "V11 Maestro (Scrivener)"
+            _ran.append("Scrivener")
+        _ran_str = (" (" + " + ".join(_ran) + ")") if _ran else ""
+        if _eng_choice == "atlas":
+            out["model_used"] = "ATLAS V14" + _ran_str
+        elif _eng_choice == "presto":
+            out["model_used"] = "Presto V12" + _ran_str
+        elif _eng_choice == "classic":
+            out["model_used"] = "Veritas V7" + _ran_str
         else:
-            out["model_used"] = "V11 Maestro"
+            out["model_used"] = "V11 Maestro" + _ran_str
         out["processed_at"] = datetime.utcnow().isoformat() + "Z"
 
         done_payload = {

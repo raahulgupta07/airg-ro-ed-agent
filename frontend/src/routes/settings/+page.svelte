@@ -11,7 +11,30 @@
   let users = $state<any[]>([]);
   let logs = $state<any[]>([]);
   let groups = $state<any[]>([]);
-  let activeTab = $state<'users' | 'logs' | 'auth' | 'groups' | 'ldap' | 'storage' | 'auto_approve'>('users');
+  let activeTab = $state<'users' | 'logs' | 'auth' | 'groups' | 'ldap' | 'storage' | 'auto_approve' | 'engines'>('users');
+
+  // Engine availability (super-admin: which pipelines users can pick)
+  let engineCfg = $state<{ all: any[]; enabled: string[]; default: string }>({ all: [], enabled: ['atlas'], default: 'atlas' });
+  let engineSaving = $state(false);
+  let engineMsg = $state<{ type: 'ok' | 'err'; msg: string } | null>(null);
+  async function loadEngines() {
+    try { engineCfg = await api.getEngines(); } catch (e: any) { engineMsg = { type: 'err', msg: e?.message || 'load failed' }; }
+  }
+  function toggleEngine(id: string) {
+    const has = engineCfg.enabled.includes(id);
+    let en = has ? engineCfg.enabled.filter(x => x !== id) : [...engineCfg.enabled, id];
+    if (en.length === 0) en = [id]; // never empty
+    engineCfg = { ...engineCfg, enabled: en, default: en.includes(engineCfg.default) ? engineCfg.default : en[0] };
+  }
+  async function saveEngines() {
+    engineSaving = true; engineMsg = null;
+    try {
+      engineCfg = await api.saveEngines({ enabled: engineCfg.enabled, default: engineCfg.default });
+      engineMsg = { type: 'ok', msg: 'Saved' };
+    } catch (e: any) { engineMsg = { type: 'err', msg: e?.message || 'save failed' }; }
+    engineSaving = false;
+  }
+  $effect(() => { if (auth.isAdmin && activeTab === 'engines') loadEngines(); });
 
   // Auto-approve settings state
   let autoApprove = $state<{ enabled: boolean; threshold: number; last_run?: string; last_count?: number }>(
@@ -518,7 +541,7 @@
 {:else}
   <!-- Tab bar -->
   <div class="flex gap-0 mb-4 border-2" style="border-color: var(--on-surface); background: var(--surface-container-highest);">
-    {#each [['users','USERS'],['logs','ACTIVITY_LOG'],['auth','AUTHENTICATION'],['groups','GROUPS'],['ldap','LDAP'],['storage','STORAGE'],['auto_approve','AUTO_APPROVE']] as [key, label]}
+    {#each [['users','USERS'],['logs','ACTIVITY_LOG'],['auth','AUTHENTICATION'],['groups','GROUPS'],['ldap','LDAP'],['storage','STORAGE'],['auto_approve','AUTO_APPROVE'],['engines','ENGINES']] as [key, label]}
       <button class="px-3 py-2 text-[11px] font-bold uppercase tracking-tight cursor-pointer"
         style="{activeTab === key ? 'background: var(--surface-container); color: var(--on-surface);' : 'color: var(--outline);'}"
         onclick={() => activeTab = key as any}
@@ -1218,6 +1241,43 @@
             disabled={autoApproveSaving}
             onclick={saveAutoApprove}>
             {autoApproveSaving ? 'SAVING...' : 'SAVE_SETTINGS'}
+          </Button>
+        </div>
+      </div>
+    </div>
+
+  {:else if activeTab === 'engines'}
+    <div class="border-2 stamp-shadow" style="border-color: var(--on-surface);">
+      <div class="dark-bar text-xs">EXTRACTION_ENGINES</div>
+      <div class="bg-white p-4 space-y-4">
+        <div class="text-[10px] font-mono opacity-70">
+          Choose which extraction engines users can pick on the Agent page, and the default.
+          By default only the latest engine (ATLAS) is enabled; legacy engines are off.
+        </div>
+        {#each engineCfg.all as e}
+          {@const on = engineCfg.enabled.includes(e.id)}
+          <div class="flex items-center gap-3 border-2 p-2" style="border-color: var(--on-surface);">
+            <button class="text-[10px] font-bold uppercase px-3 py-1.5 cursor-pointer"
+              style="border: 1px solid var(--on-surface); background: {on ? '#10b981' : 'white'}; color: {on ? 'white' : 'var(--on-surface)'};"
+              onclick={() => toggleEngine(e.id)}>{on ? '☑ ON' : '☐ OFF'}</button>
+            <div class="flex-1">
+              <div class="text-xs font-bold uppercase">{e.label}</div>
+              <div class="text-[10px] font-mono opacity-60">{e.desc}</div>
+            </div>
+            <button class="text-[10px] font-bold uppercase px-3 py-1.5 cursor-pointer"
+              style="border: 1px solid var(--on-surface); background: {engineCfg.default === e.id ? 'var(--primary)' : 'white'}; color: {engineCfg.default === e.id ? 'white' : 'var(--on-surface)'};"
+              disabled={!on}
+              onclick={() => engineCfg = { ...engineCfg, default: e.id }}>
+              {engineCfg.default === e.id ? '★ DEFAULT' : 'set default'}
+            </button>
+          </div>
+        {/each}
+        {#if engineMsg}
+          <div class="text-[10px] font-mono" style="color: {engineMsg.type === 'ok' ? '#16a34a' : 'var(--error)'};">{engineMsg.msg}</div>
+        {/if}
+        <div class="pt-2">
+          <Button variant="primary" size="md" disabled={engineSaving} onclick={saveEngines}>
+            {engineSaving ? 'SAVING...' : 'SAVE_SETTINGS'}
           </Button>
         </div>
       </div>

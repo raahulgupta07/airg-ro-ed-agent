@@ -60,7 +60,14 @@
   let pipelineMode = $state('ro_ed');
   let selectedPipeline = $state<PipelineKey>('v11');
   // V12: typed-page engine — 'classic' (V7 Veritas) | 'presto' (V12 fast) | 'auto'
-  let selectedEngine = $state<'auto' | 'presto' | 'classic' | 'atlas'>('auto');
+  let selectedEngine = $state<'auto' | 'presto' | 'classic' | 'atlas'>('atlas');
+  // Engine availability — super-admin controls this in Settings; default ATLAS only.
+  const ENGINE_OPTIONS: [string,string,string][] = [
+    ['auto','AUTO','smart default'],['classic','CLASSIC','V7 · accurate'],
+    ['presto','PRESTO','V12 · ~4× faster'],['atlas','ATLAS','V14 · all-new'],
+  ];
+  let enabledEngines = $state<string[]>(['atlas']);
+  const visibleEngines = $derived(ENGINE_OPTIONS.filter(o => enabledEngines.includes(o[0])));
   // V11 review mode toggle: VIEW (read-only ResultAccordion) | REVIEW (editable split view)
   let reviewMode = $state<'view' | 'review'>('view');
   function reviewToast(msg: string) {
@@ -431,6 +438,13 @@
 
   // On mount: restore queue (V11 SSE handles live updates).
   onMount(async () => {
+    // Load which engines the admin enabled + the default selection.
+    try {
+      const cfg = await api.getEngines();
+      if (cfg?.enabled?.length) enabledEngines = cfg.enabled;
+      if (cfg?.default) selectedEngine = cfg.default;
+    } catch {}
+
     // Try restoring saved queue state first
     const restored = restoreQueueState();
 
@@ -549,7 +563,7 @@
       <div class="mt-3 pt-3" style="border-top: 1px solid var(--primary);">
         <div class="text-[11px] uppercase tracking-wider mb-1.5" style="color: var(--on-surface-muted);">Engine</div>
         <div class="flex gap-2 flex-wrap">
-          {#each [['auto','AUTO','smart default'],['classic','CLASSIC','V7 · accurate'],['presto','PRESTO','V12 · ~4× faster'],['atlas','ATLAS','V14 · all-new']] as opt}
+          {#each visibleEngines as opt}
             <button
               type="button"
               class="px-3 py-1.5 cursor-pointer transition-colors text-left"
@@ -627,7 +641,7 @@
       <div class="mb-3">
         <div class="text-[10px] uppercase tracking-wider mb-1" style="color: var(--on-surface-muted);">Typed-page engine</div>
         <div class="flex gap-1">
-          {#each [['auto','AUTO','default'],['classic','CLASSIC','V7 · accurate'],['presto','PRESTO','V12 · ~4× faster'],['atlas','ATLAS','V14 · all-new']] as opt}
+          {#each visibleEngines as opt}
             <button
               class="flex-1 px-2 py-1.5 cursor-pointer transition-colors text-center"
               style="border: 1.5px solid {selectedEngine === opt[0] ? 'var(--primary)' : 'var(--outline)'}; border-radius: var(--radius-md); background: {selectedEngine === opt[0] ? 'var(--primary-container)' : 'var(--surface-container-lowest)'};"
