@@ -65,25 +65,34 @@
   ];
 </script>
 
-<div class="min-h-screen flex flex-col items-center justify-center p-6" style="background: var(--surface);">
+<div class="min-h-screen flex flex-col" style="background: var(--surface);">
 
-  <div class="w-full max-w-md">
+  <!-- Logo top-left -->
+  <div class="px-8 pt-6">
+    <img src="/cityagent-logo.png" alt="CityAgent · Release Order" style="width: 190px; height: auto;" />
+  </div>
 
-    <!-- Brand -->
-    <div class="flex flex-col items-center text-center mb-6">
-      <img src="/cityagent-logo.png" alt="CityAgent" class="mb-4" style="width: 270px; height: auto;" />
-      <h1 class="font-serif text-2xl" style="color: var(--on-surface); letter-spacing: -0.01em; font-weight: 500;">
-        {greeting}
-      </h1>
-      <p class="mt-2 text-sm" style="color: var(--on-surface-muted); line-height: 1.5;">
-        Sign in to CityAgent · Release Order
-      </p>
-    </div>
+  <!-- Two-column hero -->
+  <div class="flex-1 flex items-center justify-center px-6 py-8">
+    <div class="w-full max-w-6xl grid lg:grid-cols-2 gap-10 lg:gap-16 items-center">
 
-    <!-- Form card -->
-    <div class="cl-panel">
-      <div class="cl-hd"><span class="dot">◉</span>Sign In</div>
-      <div class="cl-bd space-y-4">
+      <!-- LEFT: greeting + tagline + stats + form -->
+      <div class="max-w-md w-full mx-auto lg:mx-0">
+        <h1 class="font-serif" style="font-size: 38px; line-height: 1.15; color: var(--on-surface); letter-spacing: -0.02em; font-weight: 500;">
+          {greeting},<br/>sign in to CityAgent
+        </h1>
+        <p class="mt-4 text-base" style="color: var(--on-surface-muted); line-height: 1.55;">
+          Myanmar customs intelligence — classify, extract, reconcile and approve
+          declarations at the desk.
+        </p>
+        <div class="mt-4 flex items-center gap-2 text-sm font-mono" style="color: var(--on-surface-muted);">
+          <span class="w-2 h-2 rounded-full" style="background: var(--success);"></span>
+          Atlas Gen 2 · Maestro router · queue-driven
+        </div>
+
+        <!-- Form card -->
+        <div class="cl-panel mt-7">
+          <div class="cl-bd space-y-4">
 
         {#if error}
           <div class="text-sm" style="color: var(--error);">
@@ -173,12 +182,50 @@
         >
           {loading ? 'Signing in…' : 'Continue with email'}
         </button>
+        </div>
       </div>
-    </div>
+      </div>
 
-    <!-- Footer -->
-    <p class="mt-6 text-center text-xs" style="color: var(--on-surface-subtle);">
-      © 2026 City Holdings Myanmar · RO‑ED Command Center
-    </p>
+      <!-- RIGHT: product preview -->
+      <div class="hidden lg:block">
+        <div class="cl-panel" style="background: var(--surface-container-low);">
+          <div class="p-5" style="background-image: radial-gradient(var(--line) 1px, transparent 1px); background-size: 22px 22px;">
+
+            <!-- sample query bubble -->
+            <div class="inline-block px-4 py-2 mb-6 text-sm font-medium text-white"
+                 style="background: var(--primary); border-radius: 12px 12px 12px 2px;">
+              “Extract this customs declaration”
+            </div>
+
+            <!-- action tiles -->
+            <div class="grid grid-cols-4 gap-3 mb-6">
+              {#each tiles as t}
+                <div class="flex flex-col items-center justify-center gap-1.5 py-4 px-1 text-center transition-colors"
+                     style="background: var(--surface-container-lowest); border: 1px solid {t.accent ? 'var(--primary)' : 'var(--line)'}; border-radius: var(--radius-md); {t.accent ? 'box-shadow: 0 0 0 3px var(--primary-tint);' : ''}">
+                  <span class="material-symbols-outlined" style="font-size: 22px; color: {t.accent ? 'var(--primary)' : 'var(--on-surface-muted)'};">{t.icon}</span>
+                  <span class="text-xs font-medium" style="color: {t.accent ? 'var(--primary-hover)' : 'var(--on-surface)'};">{t.label}</span>
+                </div>
+              {/each}
+            </div>
+
+            <!-- input bar -->
+            <div class="flex items-center gap-2">
+              <div class="flex-1 flex items-center gap-2 px-3 py-2.5"
+                   style="background: var(--surface-container-lowest); border: 1px solid var(--line); border-radius: var(--radius-md);">
+                <span class="material-symbols-outlined" style="font-size: 18px; color: var(--on-surface-subtle);">science</span>
+                <span class="text-sm" style="color: var(--on-surface-muted);">CityAgent · Maestro router</span>
+              </div>
+              <div class="px-4 py-2.5 text-sm font-medium" style="background: var(--primary-soft); color: var(--primary-hover); border-radius: var(--radius-md);">
+                Let's go →
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="mt-4 text-center text-xs" style="color: var(--on-surface-subtle);">
+          © 2026 City Holdings Myanmar · CityAgent · Release Order
+        </p>
+      </div>
+
+    </div>
   </div>
 </div>
