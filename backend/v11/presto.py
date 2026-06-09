@@ -1,0 +1,252 @@
+"""V12 "Presto" — typed fast-path extractor.
+
+For digital (text-layer) typed MACCS pages: pull the exact text + word boxes
+with PyMuPDF, then make ONE schema-constrained LLM call to structure it into a
+declaration + line items. No image render, no per-page vision, no verifier on
+the happy path — the reconcile gate (Phase 2) decides if escalation is needed.
+
+Returns a dict shaped like the V7 pipeline result, so it drops straight into the
+existing V11 merge + save path. NOT wired into routing yet (Phase 3); callable
+directly for shadow-mode comparison (Phase 4).
+"""
+import json
+import re
+import time
+from typing import Dict, List, Optional
+
+import fitz
+import requests
+
+import config
+from v11.presto_schema import PrestoResult
+
+API_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+# Pricing fallback (per 1M tokens) for gemini-3-flash; OpenRouter usage.cost
+# is preferred when present.
+_FLASH_IN_PER_M = 0.50
+_FLASH_OUT_PER_M = 3.00
+
+
+PROMPT = """You are a Myanmar customs declaration parser. You are given the EXACT
+text extracted from the PDF's text layer (already accurate characters — do NOT
+re-read or guess digits; only organize what is given).
+
+Extract the declaration header and every line item into strict JSON matching this
+shape (omit nothing you can find; use null when truly absent):
+
+{
+  "declaration": {
+    "declaration_no","declaration_date","importer_name","consignor_name",
+    "invoice_number","invoice_number_customs","invoice_number_commercial",
+    "currency","currency_2","exchange_rate","invoice_price","total_customs_value",
+    "customs_duty","commercial_tax","advance_income_tax","security_fee",
+    "maccs_service_fee","exemption"
+  },
+  "items": [ {
+    "item_name","hs_code","quantity","invoice_unit_price","cif_unit_price",
+    "customs_value_mmk","customs_duty_rate","commercial_tax_pct","origin",
+    "currency","exchange_rate"
+  } ],
+  "document_format": "MACCS" or "CUSDEC1",
+  "field_confidence": 0.0-1.0
+}
+
+Rules:
+- Numbers as numbers (strip thousands separators). Rates as fractions (15% -> 0.15).
+- Keep quantity with its unit as a string (e.g. "108 KG").
+- Include ALL line items — do not merge or drop rows.
+- Return ONLY the JSON object.
+
+PDF TEXT:
+"""
+
+
+def _extract_words(pdf_path: str, pages: Optional[List[int]] = None):
+    """Return (full_text, words_by_page).
+
+    words_by_page[page] = list of (x0,y0,x1,y1, word). 1-based page numbers.
+    """
+    doc = fitz.open(str(pdf_path))
+    want = set(pages) if pages else None
+    chunks = []
+    words_by_page: Dict[int, list] = {}
+    for i, page in enumerate(doc, 1):
+        if want and i not in want:
+            continue
+        try:
+            words = page.get_text("words") or []  # (x0,y0,x1,y1,word,block,line,word_no)
+        except Exception:
+            words = []
+        words_by_page[i] = [(w[0], w[1], w[2], w[3], w[4]) for w in words]
+        try:
+            txt = page.get_text() or ""
+        except Exception:
+            txt = ""
+        chunks.append(f"\n----- PAGE {i} -----\n{txt}")
+    doc.close()
+    return "".join(chunks), words_by_page
+
+
+def _parse_json(raw: str):
+    if not raw:
+        return None
+    s = raw.strip()
+    if s.startswith("```"):
+        s = s.split("```", 2)[1]
+        if s.startswith("json"):
+            s = s[4:]
+    s = s.strip()
+    if s.endswith("```"):
+        s = s[:-3].strip()
+    if "{" not in s:
+        return None
+    s = s[s.index("{"):s.rindex("}") + 1]
+    for cand in (s, re.sub(r",(\s*[\}\]])", r"\1", s)):
+        try:
+            return json.loads(cand)
+        except Exception:
+            continue
+    return None
+
+
+def _cost_from_usage(usage: dict) -> float:
+    if not usage:
+        return 0.0
+    if usage.get("cost") is not None:
+        try:
+            return float(usage["cost"])
+        except Exception:
+            pass
+    ti = int(usage.get("prompt_tokens", 0) or 0)
+    to = int(usage.get("completion_tokens", 0) or 0)
+    return round(ti / 1_000_000 * _FLASH_IN_PER_M + to / 1_000_000 * _FLASH_OUT_PER_M, 6)
+
+
+def _norm_box(b):
+    return {"x": round(b[0], 2), "y": round(b[1], 2),
+            "w": round(b[2] - b[0], 2), "h": round(b[3] - b[1], 2)}
+
+
+def _find_bbox(value, words_by_page) -> Optional[dict]:
+    """Best-effort: locate a value's words and return a bbox. Cheap, optional."""
+    if value in (None, ""):
+        return None
+    target = re.sub(r"[\s,]", "", str(value)).lower()
+    if not target:
+        return None
+    for page, words in words_by_page.items():
+        toks = [(re.sub(r"[\s,]", "", w[4]).lower(), w[:4]) for w in words]
+        for tok, box in toks:
+            if tok and (tok == target or (len(target) >= 4 and target in tok)):
+                bb = _norm_box(box)
+                bb["page"] = page
+                return bb
+    return None
+
+
+def run(pdf_path: str, pages: Optional[List[int]] = None,
+        model: Optional[str] = None) -> Dict:
+    """Extract a typed/digital PDF via the text layer + one LLM call.
+
+    Returns a V7-shaped dict: declaration, items, document_format, cost_usd,
+    tokens_in/out, cost_breakdown, duration_seconds, plus presto diagnostics.
+    """
+    t0 = time.time()
+    model = model or config.EXTRACTION_MODEL
+    full_text, words_by_page = _extract_words(pdf_path, pages)
+
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": PROMPT + full_text}],
+        "temperature": 0,
+        "max_tokens": 8000,
+        "response_format": {"type": "json_object"},
+    }
+
+    raw, usage = "", {}
+    err = None
+    for attempt in range(3):
+        try:
+            r = requests.post(
+                API_URL,
+                headers={"Authorization": f"Bearer {config.API_KEY}",
+                         "Content-Type": "application/json"},
+                json=payload, timeout=120,
+            )
+            if r.status_code == 200:
+                body = r.json()
+                raw = body["choices"][0]["message"]["content"]
+                usage = body.get("usage", {}) or {}
+                break
+            elif r.status_code == 429:
+                time.sleep(2 ** (attempt + 1)); continue
+            else:
+                err = f"HTTP {r.status_code}: {r.text[:200]}"
+        except Exception as e:
+            err = str(e)
+        if attempt < 2:
+            time.sleep(2 ** (attempt + 1))
+
+    parsed = _parse_json(raw) or {}
+    try:
+        result = PrestoResult.model_validate(parsed)
+    except Exception:
+        result = PrestoResult()
+
+    out = result.to_pipeline_dict()
+    items = out.get("items") or []
+    decl = out.get("declaration") or {}
+
+    # Field bboxes (best-effort, from word positions we already have).
+    bboxes = {"declaration": {}, "items": {}}
+    for f in ("declaration_no", "total_customs_value", "exchange_rate", "invoice_price"):
+        bb = _find_bbox(decl.get(f), words_by_page)
+        if bb:
+            bboxes["declaration"][f] = bb
+    for idx, it in enumerate(items):
+        bb = _find_bbox(it.get("customs_value_mmk"), words_by_page)
+        if bb:
+            bboxes["items"][str(idx)] = {"customs_value_mmk": bb}
+
+    cost = _cost_from_usage(usage)
+    ti = int(usage.get("prompt_tokens", 0) or 0)
+    to = int(usage.get("completion_tokens", 0) or 0)
+
+    return {
+        "pipeline_version": "presto",
+        "pipeline_mode": "v12_presto",
+        "declaration": decl,
+        "items": items,
+        "document_format": out.get("document_format") or "MACCS",
+        "items_count": len(items),
+        "duration_seconds": round(time.time() - t0, 2),
+        "cost_usd": cost,
+        "cost": cost,
+        "tokens_in": ti,
+        "tokens_out": to,
+        "cost_breakdown": [{
+            "step": "presto_structure", "model": model,
+            "input_tokens": ti, "output_tokens": to, "cost": cost,
+            "source": "openrouter", "branch": "presto",
+        }],
+        "field_bboxes": bboxes,
+        "presto": {
+            "pages": sorted(words_by_page.keys()),
+            "field_confidence": result.field_confidence,
+            "text_chars": len(full_text),
+            "error": err,
+        },
+    }
+
+
+# CLI self-test (no routing): python -m v11.presto <pdf> [page,page,...]
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) < 2:
+        print("Usage: python -m v11.presto <pdf_path> [comma,sep,pages]")
+        sys.exit(1)
+    pg = [int(x) for x in sys.argv[2].split(",")] if len(sys.argv) > 2 else None
+    res = run(sys.argv[1], pg)
+    print(json.dumps({k: v for k, v in res.items() if k != "field_bboxes"},
+                     indent=2, ensure_ascii=False, default=str))
