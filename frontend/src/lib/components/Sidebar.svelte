@@ -51,7 +51,7 @@
 
   <!-- Brand -->
   <a href="/agent" class="block no-underline px-4 pt-4 pb-3">
-    <img src="/cityagent-logo.png" alt="CityAgent" style="width: 100%; max-width: 190px; height: auto;" />
+    <img src="/cityagent-logo-web.png" alt="CityAgent" style="width: 100%; max-width: 188px; height: auto;" />
   </a>
 
   <!-- Grouped nav -->
