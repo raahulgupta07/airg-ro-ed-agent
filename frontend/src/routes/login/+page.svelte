@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
   import { api } from '$lib/api';
@@ -54,198 +55,268 @@
   })();
 
   const tiles = [
-    { icon: 'upload_file',    label: 'Upload PDF',     accent: false },
-    { icon: 'auto_awesome',   label: 'Classify pages', accent: true  },
-    { icon: 'description',    label: 'Typed extract',  accent: false },
-    { icon: 'edit_note',      label: 'Handwritten',    accent: false },
-    { icon: 'merge',          label: 'Merge results',  accent: false },
-    { icon: 'checklist',      label: 'Review queue',   accent: false },
-    { icon: 'history_edu',    label: 'Audit edits',    accent: false },
-    { icon: 'file_download',  label: 'Export',         accent: false },
+    { icon: 'upload_file',    label: 'Upload PDF'     },
+    { icon: 'auto_awesome',   label: 'Classify pages' },
+    { icon: 'description',    label: 'Typed extract'  },
+    { icon: 'edit_note',      label: 'Handwritten'    },
+    { icon: 'merge',          label: 'Merge results'  },
+    { icon: 'checklist',      label: 'Review queue'   },
+    { icon: 'history_edu',    label: 'Audit edits'    },
+    { icon: 'file_download',  label: 'Export'         },
   ];
+
+  // ── Decorative preview animation (login marketing panel only) ──
+  // Each step pairs a query with the tile it activates (kept in sync).
+  const steps = [
+    { q: 'Extract this customs declaration', tile: 2 }, // Typed extract
+    { q: 'Classify printed vs handwritten',  tile: 1 }, // Classify pages
+    { q: 'Reconcile the item totals',        tile: 4 }, // Merge results
+    { q: 'Route this to the review queue',   tile: 5 }, // Review queue
+  ];
+  let step = $state(0);
+  const activeTile = $derived(steps[step].tile);
+  const activeQuery = $derived(steps[step].q);
+
+  onMount(() => {
+    const t = setInterval(() => { step = (step + 1) % steps.length; }, 2600);
+    return () => clearInterval(t);
+  });
 </script>
 
-<div class="min-h-screen flex flex-col" style="background: var(--surface);">
+<div class="login-root" style="background: var(--surface);">
 
-  <!-- Top brand bar -->
-  <header class="px-10 py-6 shrink-0">
-    <a href="/login" class="inline-flex items-center gap-2.5 no-underline">
-      <span class="w-9 h-9 flex items-center justify-center text-white font-medium text-sm"
-            style="background: var(--primary); border-radius: 10px;">RO</span>
-      <span class="font-serif text-xl" style="color: var(--on-surface); letter-spacing: -0.01em;">RO‑ED</span>
-      <span class="text-xs" style="color: var(--on-surface-muted);">Command Center</span>
-    </a>
-  </header>
+  <!-- Logo top-left -->
+  <a href="/" class="login-logo no-underline">
+    <img src="/cityagent-logo-web.png" alt="CityAgent · Release Order" />
+  </a>
 
-  <!-- Main split -->
-  <main class="flex-1 px-10 pb-10">
-    <div class="max-w-7xl mx-auto grid lg:grid-cols-2 gap-12 items-center">
+  <!-- Hero: vertically + horizontally centered, responsive -->
+  <div class="login-hero">
+    <div class="login-grid">
 
-      <!-- LEFT: greeting + form -->
-      <section class="max-w-lg w-full lg:pt-6">
-        <h1 class="font-serif text-5xl leading-[1.1]" style="color: var(--on-surface); letter-spacing: -0.02em; font-weight: 500;">
-          {greeting},<br>sign in to RO‑ED
+      <!-- LEFT: greeting + tagline + stats + form -->
+      <div class="login-left">
+        <h1 class="font-serif login-h1">
+          {greeting},<br/>sign in to CityAgent
         </h1>
-        <p class="mt-5 text-base" style="color: var(--on-surface-muted); line-height: 1.6;">
-          AI-powered Myanmar customs declaration extraction. Typed and handwritten, on one queue.
+        <p class="login-sub">
+          Myanmar customs intelligence — classify, extract, reconcile and approve
+          declarations at the desk.
         </p>
-
-        <!-- Stats -->
-        <div class="mt-5 flex items-center gap-2 text-sm" style="color: var(--on-surface-muted);">
-          <span class="inline-block w-2 h-2 rounded-full" style="background: var(--success);"></span>
-          <span>10 concurrent · V11 Maestro queue · 99.9% uptime</span>
+        <div class="login-status">
+          <span class="w-2 h-2 rounded-full" style="background: var(--success);"></span>
+          Atlas Gen 2 · Maestro router · queue-driven
         </div>
 
         <!-- Form card -->
-        <div class="mt-8 p-6 ink-border" style="background: var(--surface-container-lowest); box-shadow: var(--shadow-sm);">
+        <div class="cl-panel login-card">
+          <div class="cl-bd space-y-4">
 
-          {#if error}
-            <div class="mb-4 px-3 py-2 text-sm" style="background: var(--error-container); color: var(--on-error-container); border-radius: var(--radius-md);">
-              {error}
-            </div>
-          {/if}
-
-          <!-- SSO / LDAP top buttons -->
-          {#if auth.isKeycloak}
-            <button
-              type="button"
-              onclick={handleKeycloakLogin}
-              disabled={redirecting}
-              class="w-full flex items-center justify-center gap-2 py-2.5 text-sm font-medium cursor-pointer transition-colors"
-              style="background: var(--surface-container-lowest); color: var(--on-surface); border: 1px solid var(--outline-variant); border-radius: var(--radius-md);"
-              onmouseenter={(e) => e.currentTarget.style.background = 'var(--surface-container-low)'}
-              onmouseleave={(e) => e.currentTarget.style.background = 'var(--surface-container-lowest)'}
-            >
-              <span class="w-1.5 h-1.5 rounded-full" style="background: var(--on-surface-muted);"></span>
-              {redirecting ? 'Redirecting…' : 'Continue with SSO (SAML / OIDC)'}
-            </button>
-          {/if}
-
-          <button
-            type="button"
-            disabled
-            class="mt-2 w-full py-2.5 text-sm font-medium cursor-not-allowed transition-colors"
-            style="background: var(--surface-container-lowest); color: var(--on-surface-muted); border: 1px solid var(--outline-variant); border-radius: var(--radius-md); opacity: 0.65;"
-            title="Use credentials below — LDAP auto-cascade on backend"
-          >
-            Continue with LDAP / Active Directory
-          </button>
-
-          <!-- OR divider -->
-          <div class="flex items-center gap-3 my-5">
-            <div class="flex-1 h-px" style="background: var(--outline-variant);"></div>
-            <span class="text-xs font-medium" style="color: var(--on-surface-subtle); letter-spacing: 0.08em;">OR</span>
-            <div class="flex-1 h-px" style="background: var(--outline-variant);"></div>
-          </div>
-
-          <!-- Username -->
-          <input
-            type="text"
-            placeholder="Username"
-            bind:value={username}
-            class="w-full text-sm focus:outline-none transition-colors"
-            style="padding: 12px 14px; background: var(--surface-container-lowest); border: 1px solid var(--outline-variant); color: var(--on-surface); border-radius: var(--radius-md);"
-            onfocus={(e) => { e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.boxShadow = '0 0 0 3px var(--primary-container)'; }}
-            onblur={(e) => { e.currentTarget.style.borderColor = 'var(--outline-variant)'; e.currentTarget.style.boxShadow = 'none'; }}
-          />
-
-          <!-- Password -->
-          <div class="relative mt-2.5">
-            <input
-              type={showPassword ? 'text' : 'password'}
-              placeholder="Password"
-              bind:value={password}
-              class="w-full text-sm focus:outline-none transition-colors pr-16"
-              style="padding: 12px 14px; background: var(--surface-container-lowest); border: 1px solid var(--outline-variant); color: var(--on-surface); border-radius: var(--radius-md);"
-              onkeydown={(e) => { if (e.key === 'Enter' && username && password) handleLocalLogin(); }}
-              onfocus={(e) => { e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.boxShadow = '0 0 0 3px var(--primary-container)'; }}
-              onblur={(e) => { e.currentTarget.style.borderColor = 'var(--outline-variant)'; e.currentTarget.style.boxShadow = 'none'; }}
-            />
-            <button
-              type="button"
-              class="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium cursor-pointer"
-              style="color: var(--on-surface-muted);"
-              onclick={() => showPassword = !showPassword}
-            >
-              {showPassword ? 'Hide' : 'Show'}
-            </button>
-          </div>
-
-          <!-- Remember -->
-          <label class="flex items-center gap-2 mt-4 cursor-pointer text-sm" style="color: var(--on-surface);">
-            <input type="checkbox" bind:checked={remember}
-                   class="w-4 h-4 cursor-pointer"
-                   style="accent-color: var(--primary);" />
-            Remember me on this device
-          </label>
-
-          <!-- CTA -->
-          <button
-            type="button"
-            onclick={handleLocalLogin}
-            disabled={loading || !username || !password}
-            class="mt-4 w-full press-effect py-3 text-sm font-medium cursor-pointer transition-opacity"
-            class:opacity-50={loading || !username || !password}
-            style="background: var(--secondary); color: #fff; border-radius: var(--radius-md);"
-          >
-            {loading ? 'Signing in…' : 'Continue with email'}
-          </button>
-        </div>
-      </section>
-
-      <!-- RIGHT: pipeline preview -->
-      <aside class="hidden lg:block">
-        <div class="relative p-6 ink-border"
-             style="background-color: var(--surface-container-lowest);
-                    background-image:
-                      linear-gradient(rgba(31,30,29,0.05) 1px, transparent 1px),
-                      linear-gradient(90deg, rgba(31,30,29,0.05) 1px, transparent 1px);
-                    background-size: 32px 32px;
-                    background-position: -1px -1px;
-                    box-shadow: var(--shadow-md);">
-
-          <!-- Tooltip pill -->
-          <div class="mb-5 inline-flex items-center px-3 py-1.5 text-xs font-medium text-white"
-               style="background: var(--primary); border-radius: var(--radius-md); box-shadow: var(--shadow-sm);">
-            "Route this declaration"
-          </div>
-
-          <!-- Tiles grid -->
-          <div class="grid grid-cols-4 gap-3">
-            {#each tiles as t}
-              <div class="aspect-square p-3 flex flex-col justify-between transition-all cursor-default"
-                   style="background: var(--surface-container-lowest);
-                          border: {t.accent ? '1.5px solid var(--primary)' : '1px solid var(--outline-variant)'};
-                          border-radius: var(--radius-md);
-                          box-shadow: {t.accent ? '0 0 0 3px var(--primary-container)' : 'var(--shadow-xs)'};">
-                <span class="material-symbols-outlined text-lg"
-                      style="color: {t.accent ? 'var(--primary)' : 'var(--on-surface-muted)'};">{t.icon}</span>
-                <span class="text-xs font-medium"
-                      style="color: {t.accent ? 'var(--primary)' : 'var(--on-surface)'};">{t.label}</span>
+            {#if error}
+              <div class="text-sm px-3 py-2" style="color: var(--error); background: var(--error-soft); border-radius: var(--radius-sm);">
+                {error}
               </div>
-            {/each}
-          </div>
+            {/if}
 
-          <!-- Bottom prompt strip -->
-          <div class="mt-6 flex items-center gap-2 p-2"
-               style="background: var(--surface-container-lowest); border: 1px solid var(--outline-variant); border-radius: var(--radius-md);">
-            <span class="material-symbols-outlined text-base ml-1" style="color: var(--on-surface-muted);">science</span>
-            <span class="flex-1 text-sm" style="color: var(--on-surface);">Customs declaration · 5 pages</span>
-            <button class="w-7 h-7 flex items-center justify-center text-base cursor-default"
-                    style="background: var(--surface-container); color: var(--on-surface-muted); border-radius: var(--radius-sm);">+</button>
-            <button class="px-3 py-1.5 text-xs font-medium cursor-default"
-                    style="background: var(--primary-container); color: var(--primary-hover); border-radius: var(--radius-sm);">
-              Let's go →
+            <!-- SSO (only when Keycloak configured) -->
+            {#if auth.isKeycloak}
+              <button
+                type="button"
+                onclick={handleKeycloakLogin}
+                disabled={redirecting}
+                class="cl-btn w-full flex items-center justify-center gap-2"
+              >
+                <span class="w-1.5 h-1.5 rounded-full" style="background: var(--on-surface-muted);"></span>
+                {redirecting ? 'Redirecting…' : 'Continue with SSO (SAML / OIDC)'}
+              </button>
+            {/if}
+
+            <!-- Username -->
+            <div>
+              <label class="cl-lbl" for="login-username">Username</label>
+              <input
+                id="login-username"
+                type="text"
+                placeholder="Your username"
+                autocomplete="username"
+                bind:value={username}
+                class="cl-inp"
+              />
+            </div>
+
+            <!-- Password -->
+            <div>
+              <label class="cl-lbl" for="login-password">Password</label>
+              <div class="relative">
+                <input
+                  id="login-password"
+                  type={showPassword ? 'text' : 'password'}
+                  placeholder="Your password"
+                  autocomplete="current-password"
+                  bind:value={password}
+                  class="cl-inp pr-16"
+                  onkeydown={(e) => { if (e.key === 'Enter' && username && password) handleLocalLogin(); }}
+                />
+                <button
+                  type="button"
+                  class="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium cursor-pointer"
+                  style="color: var(--on-surface-muted);"
+                  onclick={() => showPassword = !showPassword}
+                >
+                  {showPassword ? 'Hide' : 'Show'}
+                </button>
+              </div>
+            </div>
+
+            <!-- Remember -->
+            <label class="flex items-center gap-2 cursor-pointer text-sm" style="color: var(--on-surface);">
+              <input type="checkbox" bind:checked={remember}
+                     class="w-4 h-4 cursor-pointer"
+                     style="accent-color: var(--primary);" />
+              Remember me on this device
+            </label>
+
+            <!-- Primary CTA -->
+            <button
+              type="button"
+              onclick={handleLocalLogin}
+              disabled={loading || !username || !password}
+              class="cl-btn primary w-full login-cta"
+            >
+              {loading ? 'Signing in…' : 'Sign in'}
             </button>
+
+            <!-- LDAP note (de-emphasised; backend auto-cascades) -->
+            <p class="text-center text-xs" style="color: var(--on-surface-subtle);">
+              LDAP / Active Directory accounts sign in with the same fields.
+            </p>
           </div>
         </div>
-      </aside>
+
+        <p class="login-foot">© 2026 City Holdings Myanmar · CityAgent · Release Order</p>
+      </div>
+
+      <!-- RIGHT: animated product preview -->
+      <div class="login-preview">
+        <div class="cl-panel" style="background: var(--surface-container-low);">
+          <div class="login-preview-bd">
+
+            <div class="flex items-center justify-between mb-5">
+              <span class="pill clay">Live preview</span>
+              <span class="text-xs font-mono" style="color: var(--on-surface-subtle);">illustrative</span>
+            </div>
+
+            <!-- sample query bubble (synced to active tile) -->
+            <div class="mb-6" style="min-height: 40px;">
+              {#key step}
+                <div class="inline-block px-4 py-2 text-sm font-medium text-white query-bubble"
+                     style="background: var(--primary); border-radius: 12px 12px 12px 2px;">
+                  “{activeQuery}”<span class="caret">▌</span>
+                </div>
+              {/key}
+            </div>
+
+            <!-- action tiles (active one synced to query) -->
+            <div class="grid grid-cols-4 gap-3 mb-6">
+              {#each tiles as t, i}
+                {@const on = i === activeTile}
+                <div class="tile flex flex-col items-center justify-center gap-1.5 py-4 px-1 text-center"
+                     class:tile-on={on}
+                     style="background: var(--surface-container-lowest); border: 1px solid {on ? 'var(--primary)' : 'var(--line)'}; border-radius: var(--radius-md);">
+                  <span class="material-symbols-outlined" style="font-size: 22px; color: {on ? 'var(--primary)' : 'var(--on-surface-muted)'};">{t.icon}</span>
+                  <span class="text-xs font-medium" style="color: {on ? 'var(--primary-hover)' : 'var(--on-surface)'};">{t.label}</span>
+                </div>
+              {/each}
+            </div>
+
+            <!-- input bar -->
+            <div class="flex items-center gap-2">
+              <div class="flex-1 flex items-center gap-2 px-3 py-2.5 min-w-0"
+                   style="background: var(--surface-container-lowest); border: 1px solid var(--line); border-radius: var(--radius-md);">
+                <span class="material-symbols-outlined" style="font-size: 18px; color: var(--on-surface-subtle);">science</span>
+                <span class="text-sm truncate" style="color: var(--on-surface-muted);">CityAgent · Maestro router</span>
+                <span class="ml-auto flex gap-1 shrink-0">
+                  <span class="dot-pulse" style="animation-delay: 0s;"></span>
+                  <span class="dot-pulse" style="animation-delay: .18s;"></span>
+                  <span class="dot-pulse" style="animation-delay: .36s;"></span>
+                </span>
+              </div>
+              <span class="go-btn px-4 py-2.5 text-sm font-medium shrink-0" style="background: var(--primary-soft); color: var(--primary-hover); border-radius: var(--radius-md);">
+                Let's go →
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
 
     </div>
-  </main>
-
-  <!-- Footer -->
-  <footer class="px-10 py-6 text-center text-xs" style="color: var(--on-surface-subtle);">
-    © 2026 City Holdings Myanmar · RO‑ED Command Center
-  </footer>
+  </div>
 </div>
+
+<style>
+  /* ===== Responsive shell — fits any screen ===== */
+  .login-root { position: relative; min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
+  .login-logo { position: absolute; top: clamp(16px, 3vw, 28px); left: clamp(16px, 3vw, 36px); z-index: 10; }
+  .login-logo img { width: clamp(140px, 14vw, 180px); height: auto; display: block; }
+
+  .login-hero { flex: 1; display: grid; place-items: center;
+                padding: clamp(96px, 14vh, 140px) clamp(20px, 5vw, 56px) clamp(32px, 6vh, 64px); }
+  .login-grid { width: 100%; max-width: 1160px; display: grid; grid-template-columns: 1fr;
+                gap: clamp(28px, 5vw, 64px); align-items: center; }
+
+  .login-left { width: 100%; max-width: 440px; justify-self: center; }
+  .login-h1 { font-size: clamp(28px, 4.2vw, 40px); line-height: 1.12; letter-spacing: -0.02em;
+              font-weight: 500; color: var(--on-surface); }
+  .login-sub { margin-top: 16px; font-size: clamp(14px, 1.4vw, 16px); line-height: 1.55; color: var(--on-surface-muted); }
+  .login-status { margin-top: 16px; display: flex; align-items: center; gap: 8px;
+                  font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--on-surface-muted); }
+  .login-card { margin-top: 26px; }
+  .login-foot { margin-top: 20px; font-size: 12px; color: var(--on-surface-subtle); }
+
+  /* Neutral (not faded-primary) disabled CTA — fixes "looks broken" */
+  .login-cta:disabled { background: var(--surface-container-high); color: var(--on-surface-subtle);
+                        border-color: var(--line); cursor: not-allowed; opacity: 1; }
+
+  .login-preview { width: 100%; max-width: 560px; justify-self: center;
+                   animation: previewIn .6s cubic-bezier(.22,1,.36,1) both; }
+  .login-preview-bd { padding: clamp(16px, 2.2vw, 26px);
+                      background-image: radial-gradient(var(--line) 1px, transparent 1px); background-size: 22px 22px; }
+
+  /* Single column under 980px — preview drops below, then hides on small */
+  @media (min-width: 980px) { .login-grid { grid-template-columns: 1.05fr 1fr; }
+                              .login-left { justify-self: start; } }
+  @media (max-width: 979px) { .login-preview { display: none; } }
+
+  @keyframes previewIn {
+    from { opacity: 0; transform: translateY(14px) scale(.985); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  /* Cycling query bubble */
+  .query-bubble { animation: bubbleIn .45s cubic-bezier(.22,1,.36,1) both; box-shadow: var(--shadow-md); }
+  @keyframes bubbleIn {
+    from { opacity: 0; transform: translateY(-8px) scale(.96); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .caret { display: inline-block; margin-left: 1px; animation: caretBlink 1s steps(1) infinite; opacity: .85; }
+  @keyframes caretBlink { 50% { opacity: 0; } }
+
+  /* Active tile pulse + lift */
+  .tile { transition: transform .35s cubic-bezier(.22,1,.36,1), border-color .35s, box-shadow .35s; }
+  .tile-on { transform: translateY(-2px) scale(1.04); box-shadow: 0 0 0 3px var(--primary-tint), var(--shadow-sm); animation: tileGlow 1.5s ease-in-out; }
+  @keyframes tileGlow {
+    0%   { box-shadow: 0 0 0 0 var(--primary-tint), var(--shadow-sm); }
+    40%  { box-shadow: 0 0 0 5px var(--primary-tint), var(--shadow-md); }
+    100% { box-shadow: 0 0 0 3px var(--primary-tint), var(--shadow-sm); }
+  }
+
+  /* Typing dots in input bar */
+  .dot-pulse { width: 5px; height: 5px; border-radius: 50%; background: var(--primary); display: inline-block; animation: dotPulse 1.1s ease-in-out infinite; }
+  @keyframes dotPulse { 0%, 60%, 100% { opacity: .25; transform: scale(.8); } 30% { opacity: 1; transform: scale(1); } }
+
+  .go-btn { transition: background .2s; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .login-preview, .query-bubble, .tile-on, .caret, .dot-pulse { animation: none; }
+  }
+</style>

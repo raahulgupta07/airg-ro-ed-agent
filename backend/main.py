@@ -315,7 +315,7 @@ async def extract_pdf_v10_pro(request: Request, file: UploadFile = File(...)):
 
 @app.post("/api/extract-v11", status_code=202)
 @_maybe_limit(_LIMIT_EXTRACT)
-async def extract_pdf_v11(request: Request, file: UploadFile = File(...), job_id: Optional[str] = Form(None)):
+async def extract_pdf_v11(request: Request, file: UploadFile = File(...), job_id: Optional[str] = Form(None), engine: Optional[str] = Form("auto")):
     """V11 — Master Router. Queues extraction; returns immediately with job_id.
 
     Behavior change: this endpoint no longer blocks for 90-180s. It saves the PDF,
@@ -355,7 +355,8 @@ async def extract_pdf_v11(request: Request, file: UploadFile = File(...), job_id
         from jobs.tasks import run_v11_task
         rq_job = get_queue().enqueue(
             run_v11_task,
-            kwargs={'job_id': sse_job_id, 'pdf_path': str(save_path)},
+            kwargs={'job_id': sse_job_id, 'pdf_path': str(save_path),
+                    'engine': (engine or "auto")},
             job_id=sse_job_id,           # RQ job id matches SSE/stream id
             job_timeout=900,
             result_ttl=3600,

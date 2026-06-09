@@ -3,7 +3,7 @@
   import { onMount } from 'svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { api } from '$lib/api';
-  import Header from '$lib/components/Header.svelte';
+  import Sidebar from '$lib/components/Sidebar.svelte';
   import Footer from '$lib/components/Footer.svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
@@ -79,13 +79,15 @@
 {:else if isLoginPage || isChangePasswordPage || !auth.isAuthenticated}
   {@render children()}
 {:else}
-  <Header
+  <Sidebar
     username={auth.user?.username ?? ''}
     role={auth.user?.role ?? ''}
     onlogout={() => auth.logout()}
   />
-  <main class="pt-16 pb-16 px-6 max-w-[1920px] mx-auto">
-    {@render children()}
-  </main>
-  <Footer totalJobs={totalJobs} totalCost={totalCost} />
+  <div class="ml-[236px] min-h-screen flex flex-col">
+    <main class="flex-1 pt-6 pb-16 px-8 w-full max-w-[1760px] mx-auto">
+      {@render children()}
+    </main>
+    <Footer totalJobs={totalJobs} totalCost={totalCost} />
+  </div>
 {/if}

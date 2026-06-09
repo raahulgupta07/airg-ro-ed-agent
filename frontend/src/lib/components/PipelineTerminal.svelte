@@ -74,12 +74,12 @@
   {#if collapsed}
     <!-- Collapsed bar -->
     <button class="w-full text-left px-3 py-2 flex items-center gap-3 cursor-pointer" style="background: #0a0a0f;">
-      <span style="color: #3b3b4f; font-family: monospace; font-size: 11px;" onclick={() => collapsed = false}>▸ PIPELINE_LOG</span>
+      <span style="color: #3b3b4f; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px;" onclick={() => collapsed = false}>▸ PIPELINE_LOG</span>
       {#if complete}
-        <span style="color: #22c55e; font-family: monospace; font-size: 10px;">DONE {doneCount}/{totalSteps}</span>
+        <span style="color: #22c55e; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px;">DONE {doneCount}/{totalSteps}</span>
       {/if}
       <span style="flex: 1;"></span>
-      <span style="color: #3b3b4f; font-family: monospace; font-size: 9px;">{totalTime.toFixed(1)}s │ ${totalCost.toFixed(3)}</span>
+      <span style="color: #3b3b4f; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 9px;">{totalTime.toFixed(1)}s │ ${totalCost.toFixed(3)}</span>
     </button>
   {:else}
     <!-- Title bar (fixed) -->
@@ -91,11 +91,11 @@
           <span style="width: 8px; height: 8px; border-radius: 50%; background: #eab308; display: inline-block;"></span>
           <span style="width: 8px; height: 8px; border-radius: 50%; background: #22c55e; display: inline-block;"></span>
         </div>
-        <span style="color: #4b5563; font-family: monospace; font-size: 10px; font-weight: bold; cursor: pointer;" onclick={() => collapsed = true}>
+        <span style="color: #4b5563; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; font-weight: bold; cursor: pointer;" onclick={() => collapsed = true}>
           ro-ed-agent — {filename || 'idle'}
         </span>
       </div>
-      <div style="display: flex; align-items: center; gap: 12px; font-family: monospace; font-size: 9px;">
+      <div style="display: flex; align-items: center; gap: 12px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 9px;">
         {#if !complete && steps.some(s => s.status === 'running')}
           <span style="color: #38bdf8;">{spinner} RUNNING</span>
         {:else if complete}

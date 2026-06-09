@@ -81,39 +81,63 @@
 />
 
 <!-- Filters -->
-<div class="flex flex-wrap gap-3 items-end mb-4">
+<div class="flex flex-wrap gap-3 items-end mb-5">
   <div class="flex-1 min-w-[200px]">
-    <input type="text" placeholder="Search any column..."
-           bind:value={searchQuery}
-           class="w-full text-xs font-bold uppercase px-3 py-2 focus:outline-none"
-           style="border: 1px solid var(--on-surface); background: white; color: var(--on-surface);" />
+    <label class="cl-lbl" for="item-search">Search</label>
+    <input id="item-search" type="text" placeholder="Search any column..."
+           bind:value={searchQuery} class="cl-inp" />
   </div>
   <div>
-    <div class="tag-label mb-1 text-[8px]">FROM</div>
-    <input type="date" bind:value={dateFrom}
-           class="text-[10px] font-mono px-2 py-1.5 focus:outline-none"
-           style="border: 1px solid var(--on-surface); background: white; color: var(--on-surface);" />
+    <label class="cl-lbl" for="item-from">From</label>
+    <input id="item-from" type="date" bind:value={dateFrom} class="cl-inp" />
   </div>
   <div>
-    <div class="tag-label mb-1 text-[8px]">TO</div>
-    <input type="date" bind:value={dateTo}
-           class="text-[10px] font-mono px-2 py-1.5 focus:outline-none"
-           style="border: 1px solid var(--on-surface); background: white; color: var(--on-surface);" />
+    <label class="cl-lbl" for="item-to">To</label>
+    <input id="item-to" type="date" bind:value={dateTo} class="cl-inp" />
   </div>
   {#if searchQuery || dateFrom || dateTo}
-    <button class="text-[8px] font-medium uppercase px-2 py-1.5 cursor-pointer"
-            style="border: 1px solid var(--outline); color: var(--outline); background: transparent;"
-            onclick={clearFilters}>CLEAR</button>
+    <button class="cl-btn sm" onclick={clearFilters}>Clear</button>
   {/if}
-  <Button variant="secondary" size="sm" onclick={downloadExcel}>
-    <span class="flex items-center gap-1">
-      <span class="material-symbols-outlined text-xs">download</span> DOWNLOAD_XLSX
+  <button class="cl-btn sm" onclick={downloadExcel}>
+    <span class="inline-flex items-center gap-1">
+      <span class="material-symbols-outlined text-xs">download</span> Download XLSX
     </span>
-  </Button>
+  </button>
 </div>
 
 {#if loading}
   <div class="skeleton h-64 w-full"></div>
 {:else}
-  <DataTable title="PRODUCT_ITEMS" count={filteredItems().length} {columns} rows={filteredItems()} />
+  {@const rows = filteredItems()}
+  <div class="cl-panel">
+    <div class="cl-hd">
+      <span class="dot">◉</span>Product Items
+      <span class="ct">{rows.length} {rows.length === 1 ? 'record' : 'records'}</span>
+    </div>
+    <div class="overflow-x-auto custom-scrollbar" style="max-height: 500px; overflow-y: auto;">
+      <table class="cl-table">
+        <thead class="sticky top-0 z-[1]">
+          <tr>
+            {#each columns as col}
+              <th style="text-align: {col.align || 'left'}; white-space: nowrap;">{col.label}</th>
+            {/each}
+          </tr>
+        </thead>
+        <tbody>
+          {#each rows as row}
+            <tr>
+              {#each columns as col}
+                <td class="mono" style="text-align: {col.align || 'left'};">{row[col.key] ?? '—'}</td>
+              {/each}
+            </tr>
+          {/each}
+          {#if rows.length === 0}
+            <tr>
+              <td colspan={columns.length} class="px-4 py-12 text-center" style="color: var(--on-surface-subtle);">No data</td>
+            </tr>
+          {/if}
+        </tbody>
+      </table>
+    </div>
+  </div>
 {/if}

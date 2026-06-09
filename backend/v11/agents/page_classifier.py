@@ -7,7 +7,7 @@ import fitz
 import requests
 from PIL import Image
 
-from v11.config import CLASSIFIER_MODEL, OPENROUTER_API_KEY
+from v11.config import CLASSIFIER_MODEL, OPENROUTER_API_KEY, PRESTO_TEXT_LAYER_MIN_CHARS
 
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -42,6 +42,39 @@ def _render_thumbnails(pdf_path: str, dpi: int = 70) -> List[str]:
     return out
 
 
+def _probe_text_layers(pdf_path: str) -> Dict[int, int]:
+    """V12 Presto rail: per-page count of extractable text characters.
+
+    A digital PDF (computer-generated MACCS) carries its text in a text layer;
+    a scanned PDF does not. Used downstream to route TYPED+digital pages to the
+    Presto fast-path (text-layer extraction) instead of image+vision. Probe only
+    — does not change classification or routing in Phase 0.
+
+    Returns {page_number(1-based): char_count}. Never raises.
+    """
+    out: Dict[int, int] = {}
+    try:
+        doc = fitz.open(str(pdf_path))
+        for i, page in enumerate(doc, 1):
+            try:
+                out[i] = len((page.get_text() or "").strip())
+            except Exception:
+                out[i] = 0
+        doc.close()
+    except Exception:
+        pass
+    return out
+
+
+def _attach_text_layer(pages: List[Dict], probe: Dict[int, int]) -> List[Dict]:
+    """Annotate each page dict with text-layer info (additive, non-breaking)."""
+    for p in pages:
+        chars = probe.get(p.get("page"), 0)
+        p["text_chars"] = chars
+        p["has_text_layer"] = chars >= PRESTO_TEXT_LAYER_MIN_CHARS
+    return pages
+
+
 def _parse_json(raw: str):
     if not raw: return None
     s = raw.strip()
@@ -69,6 +102,9 @@ def classify_pages(pdf_path: str) -> Dict:
     Falls back to all-TYPED if classification fails."""
     thumbs = _render_thumbnails(pdf_path)
     n = len(thumbs)
+    # V12 Presto rail: probe text layers once (cheap, no API). Attached to pages
+    # below; does not affect classification or routing in Phase 0.
+    text_probe = _probe_text_layers(pdf_path)
     if n == 0:
         return {"pages": [], "n_pages": 0,
                 "summary": {"TYPED": 0, "HANDWRITTEN": 0, "ATTACHMENT": 0}}
@@ -113,6 +149,7 @@ def classify_pages(pdf_path: str) -> Dict:
                             "reason": p.get("reason", "")[:80],
                         })
                         summary[label] += 1
+                    _attach_text_layer(pages, text_probe)
                     return {"pages": pages, "n_pages": n, "summary": summary}
             elif r.status_code == 429:
                 time.sleep(2 ** (attempt + 1)); continue
@@ -124,7 +161,11 @@ def classify_pages(pdf_path: str) -> Dict:
             time.sleep(2 ** (attempt + 1))
 
     # Fallback: all-TYPED
-    return {"pages": [{"page": i, "label": "TYPED", "confidence": "low",
-                       "reason": "classifier fallback"} for i in range(1, n + 1)],
+    fallback_pages = _attach_text_layer(
+        [{"page": i, "label": "TYPED", "confidence": "low",
+          "reason": "classifier fallback"} for i in range(1, n + 1)],
+        text_probe,
+    )
+    return {"pages": fallback_pages,
             "n_pages": n,
             "summary": {"TYPED": n, "HANDWRITTEN": 0, "ATTACHMENT": 0}}

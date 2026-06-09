@@ -55,15 +55,26 @@
   --tertiary-container: #EFE3F1;
 
   /* Status */
-  --success: #5C8A5C;
-  --warning: #C68E3F;
-  --error: #B5483C;
+  --success: #15803D;
+  --success-soft: #E8F1E9;
+  --warning: #B45309;
+  --warning-soft: #F7EEDF;
+  --error: #BE2D06;
+  --error-soft: #F8E7E1;
   --error-container: #F4DCD8;
   --on-error-container: #7A2C24;
-  --info: #6B7F8E;
+  --info: #5B7A99;
+  --info-soft: #E7EDF3;
+  --plum-soft: #F0E9F1;
+
+  /* Accent soft tints (Claude clay) */
+  --primary-soft: #F6EAE3;
+  --primary-tint: #FBF3EE;
 
   /* Lines */
   --outline: #C9C4B5;
+  --line: #E9E5DA;          /* soft warm border — replaces black outlines project-wide */
+  --line-2: #F0ECE2;        /* faint inner divider */
   --outline-variant: #E8E4DA;
 
   /* Radii */
@@ -111,7 +122,7 @@ code, pre, .font-mono {
 
 /* --- Card (replaces ink-border + stamp-shadow) --- */
 .ink-border {
-  border: 1px solid var(--outline-variant);
+  border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   background: var(--surface-container-lowest);
 }
@@ -122,18 +133,119 @@ code, pre, .font-mono {
 
 /* --- Section header (replaces dark-bar) --- */
 .dark-bar {
-  padding: 12px 20px;
-  background: var(--surface-container);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 14px 18px;
+  background: var(--surface-container-lowest);
   color: var(--on-surface);
   font-family: 'Source Serif 4', Georgia, serif;
   font-weight: 500;
-  font-size: 0.95rem;
+  font-size: 1rem;
   letter-spacing: -0.005em;
   text-transform: none;
-  border-bottom: 1px solid var(--outline-variant);
+  border-bottom: 1px solid var(--line-2);
   border-top-left-radius: var(--radius-lg);
   border-top-right-radius: var(--radius-lg);
 }
+
+/* ============================================================
+   CLAUDE COMPONENT LAYER (cl-*) — shared primitives for all pages
+   Mirrors design-claude-full.html. Soft, warm, serif headings.
+   ============================================================ */
+
+/* Panel = card + header + body */
+.cl-panel {
+  background: var(--surface-container-lowest);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.cl-hd {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line-2);
+  font-family: 'Source Serif 4', Georgia, serif;
+  font-weight: 500;
+  font-size: 1rem;
+  color: var(--on-surface);
+}
+.cl-hd .dot { color: var(--primary); font-size: 11px; }
+.cl-hd .ct { margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--on-surface-muted); font-weight: 400; }
+.cl-bd { padding: 18px; }
+
+/* Page header */
+.cl-ph { margin-bottom: 22px; }
+.cl-ph h1 { font-size: 27px; }
+.cl-ph .sub { color: var(--on-surface-muted); font-size: 14px; margin-top: 3px; }
+
+/* Stat card */
+.cl-stat {
+  background: var(--surface-container-lowest);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 16px 18px;
+  box-shadow: var(--shadow-sm);
+}
+.cl-stat .n { font-family: 'Source Serif 4', serif; font-size: 28px; font-weight: 600; letter-spacing: -0.02em; color: var(--on-surface); }
+.cl-stat .l { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--on-surface-muted); margin-top: 3px; }
+
+/* Pill / badge */
+.pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px; border-radius: 999px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+}
+.pill.ok   { background: var(--success-soft); color: var(--success); }
+.pill.warn { background: var(--warning-soft); color: var(--warning); }
+.pill.err  { background: var(--error-soft);   color: var(--error); }
+.pill.info { background: var(--info-soft);    color: var(--info); }
+.pill.plum { background: var(--plum-soft);    color: var(--tertiary); }
+.pill.clay { background: var(--primary-soft); color: var(--primary-hover); }
+.pill.muted{ background: var(--surface-container); color: var(--on-surface-muted); }
+
+/* Form */
+.cl-lbl { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--on-surface-muted); display: block; margin-bottom: 6px; }
+.cl-inp { width: 100%; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 12px; background: var(--surface-container-lowest); font-family: 'Inter', sans-serif; font-size: 13.5px; color: var(--on-surface); }
+.cl-inp:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-tint); }
+
+/* Button */
+.cl-btn { font-size: 13px; font-weight: 600; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 9px 16px; background: var(--surface-container-lowest); cursor: pointer; color: var(--on-surface); transition: background .12s, opacity .12s; }
+.cl-btn:hover { background: var(--surface-container-low); }
+.cl-btn.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+.cl-btn.primary:hover { background: var(--primary-hover); }
+.cl-btn.sm { padding: 6px 12px; font-size: 12px; }
+
+/* Table */
+.cl-table { width: 100%; border-collapse: collapse; }
+.cl-table th { text-align: left; padding: 10px 14px; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--on-surface-muted); border-bottom: 1px solid var(--line-2); font-weight: 500; background: var(--surface-container-low); }
+.cl-table td { padding: 11px 14px; border-bottom: 1px solid var(--line-2); font-size: 13px; color: var(--on-surface); }
+.cl-table td.k { font-weight: 600; }
+.cl-table td.mono { font-family: 'JetBrains Mono', monospace; font-size: 12.5px; }
+.cl-table tr:last-child td { border-bottom: none; }
+.cl-table tbody tr:hover { background: var(--surface-container-low); }
+
+/* Segmented control */
+.seg { display: inline-flex; background: var(--surface-container); border-radius: 999px; padding: 3px; }
+.seg button { border: none; background: none; padding: 6px 16px; border-radius: 999px; font-size: 12.5px; font-weight: 600; cursor: pointer; color: var(--on-surface-muted); transition: .12s; }
+.seg button.on { background: var(--surface-container-lowest); color: var(--on-surface); box-shadow: var(--shadow-sm); }
+
+/* Toggle switch */
+.cl-toggle { width: 38px; height: 22px; border-radius: 999px; background: var(--line); position: relative; cursor: pointer; flex-shrink: 0; transition: background .15s; border: none; padding: 0; }
+.cl-toggle.on { background: var(--primary); }
+.cl-toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: left .15s; box-shadow: var(--shadow-sm); }
+.cl-toggle.on::after { left: 18px; }
+
+/* Upload drop zone */
+.cl-drop { border: 1.5px dashed var(--line); border-radius: var(--radius-lg); background: var(--surface-container-low); padding: 40px; text-align: center; cursor: pointer; transition: .15s; }
+.cl-drop:hover { border-color: var(--primary); background: var(--primary-tint); }
+
+/* Mini bar */
+.cl-bar { height: 7px; border-radius: 999px; background: var(--surface-container); overflow: hidden; }
+.cl-bar > i { display: block; height: 100%; background: var(--primary); border-radius: 999px; }
 
 /* --- Tag / label --- */
 .tag-label {

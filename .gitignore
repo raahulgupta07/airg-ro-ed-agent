@@ -35,3 +35,7 @@ nginx/logs/
 backups/
 backend/data/extraction_history.db-shm
 backend/data/extraction_history.db-wal
+_pdfpage*.png
+_pdfpages/
+design-*.html
+design-claude-full.html

@@ -385,7 +385,7 @@
       </div>
     </div>
   {/if}
-  <div class="border-2 mb-3" style="border-color: var(--on-surface);">
+  <div class="border-2 mb-3" style="border-color: var(--line);">
     <!-- Header (clickable) -->
     <button
       class="w-full text-left px-4 py-2.5 flex items-center gap-3 cursor-pointer transition-colors"
@@ -407,7 +407,7 @@
 
     <!-- Body (expandable) -->
     {#if open}
-      <div class="border-t-2 animate-slideDown" style="border-color: var(--on-surface); background: var(--surface);">
+      <div class="border-t-2 animate-slideDown" style="border-color: var(--line); background: var(--surface);">
         <!-- Tab bar -->
         <div class="flex gap-0 border-b" style="border-color: rgba(56,56,50,0.15);">
           {#each [['results', 'RESULTS'], ['annotated', 'PDF (ANNOTATED)'], ['log', 'PIPELINE LOG']] as [key, label]}
@@ -439,7 +439,7 @@
 
             <!-- Status Badges Row -->
             {#if documentFormat || !crossValPassed || !verifiedFlag || sanityFlags().length > 0}
-              <div class="border-2 bg-white p-2 space-y-2" style="border-color: var(--on-surface);">
+              <div class="border-2 bg-white p-2 space-y-2" style="border-color: var(--line);">
                 <div class="flex flex-wrap items-center gap-2">
                   <span class="text-[9px] font-medium uppercase" style="color: var(--on-surface);">STATUS</span>
                   {#if documentFormat === 'CUSDEC1'}
@@ -558,7 +558,7 @@
 
             <!-- Confidence Summary -->
             {#if confidence?.summary}
-              <div class="border-2 bg-white p-3" style="border-color: var(--on-surface);">
+              <div class="border-2 bg-white p-3" style="border-color: var(--line);">
                 <div class="flex items-center justify-between mb-2">
                   <span class="text-[9px] font-medium uppercase" style="color: var(--on-surface);">FIELD CONFIDENCE</span>
                   <span class="text-[10px] font-bold" style="color: {confidence.summary.average_confidence >= 0.8 ? 'var(--success)' : confidence.summary.average_confidence >= 0.5 ? 'var(--warning)' : 'var(--error)'};">
@@ -584,7 +584,7 @@
             <!-- Cross-validation removed — not in current pipeline -->
 
             <!-- Quick insights -->
-            <div class="border-2 bg-white" style="border-color: var(--on-surface);">
+            <div class="border-2 bg-white" style="border-color: var(--line);">
               <div class="dark-bar text-xs">DOCUMENT_INSIGHTS</div>
               <div class="grid grid-cols-2 md:grid-cols-4 gap-0">
                 {#if true}{@const dc = confidence?.declaration || {}}
@@ -643,7 +643,7 @@
                       {l:'CUSTOMS VALUE (MMK)', ck:'Customs Value (MMK)', def:'Value in local currency (MMK)', pg:'pg1'},
                     ]}
               {@const itemConfAvg = confidence?.summary?.average_confidence || 0.9}
-              <div class="border-2" style="border-color: var(--on-surface);">
+              <div class="border-2" style="border-color: var(--line);">
                 <div class="dark-bar flex justify-between items-center text-xs">
                   <div class="flex items-center gap-2">
                     <span>PRODUCT_ITEMS</span>
@@ -701,11 +701,11 @@
                             {item.item_name || '—'}
                           </td>
                           <!-- Duty -->
-                          <td class="px-2 py-1.5 text-right" style="font-size: 10px; font-family: monospace;">
+                          <td class="px-2 py-1.5 text-right" style="font-size: 10px; font-family: 'JetBrains Mono', ui-monospace, monospace;">
                             {item.customs_duty_rate ?? '—'}
                           </td>
                           <!-- Qty Number -->
-                          <td class="px-2 py-1.5 text-right" style="font-size: 10px; font-family: monospace;">
+                          <td class="px-2 py-1.5 text-right" style="font-size: 10px; font-family: 'JetBrains Mono', ui-monospace, monospace;">
                             {qtyNum || '—'}
                           </td>
                           <!-- Qty Unit -->
@@ -713,7 +713,7 @@
                             {qtyUnit || '—'}
                           </td>
                           <!-- Price Number -->
-                          <td class="px-2 py-1.5 text-right" style="font-size: 10px; font-family: monospace;">
+                          <td class="px-2 py-1.5 text-right" style="font-size: 10px; font-family: 'JetBrains Mono', ui-monospace, monospace;">
                             {priceNum || '—'}
                           </td>
                           <!-- Price Currency (fallback to declaration currency) -->
@@ -721,15 +721,15 @@
                             {priceCcy || decl?.currency || '—'}
                           </td>
                           <!-- Tax % -->
-                          <td class="px-2 py-1.5 text-right" style="font-size: 10px; font-family: monospace;">
+                          <td class="px-2 py-1.5 text-right" style="font-size: 10px; font-family: 'JetBrains Mono', ui-monospace, monospace;">
                             {item.commercial_tax_percent ?? '—'}
                           </td>
                           <!-- FX Rate -->
-                          <td class="px-2 py-1.5 text-right" style="font-size: 10px; font-family: monospace;">
+                          <td class="px-2 py-1.5 text-right" style="font-size: 10px; font-family: 'JetBrains Mono', ui-monospace, monospace;">
                             {item.exchange_rate ?? '—'}
                           </td>
                           <!-- HS Code -->
-                          <td class="px-2 py-1.5" style="font-size: 10px; font-family: monospace;">
+                          <td class="px-2 py-1.5" style="font-size: 10px; font-family: 'JetBrains Mono', ui-monospace, monospace;">
                             {item.hs_code || '—'}
                           </td>
                           <!-- Origin -->
@@ -737,7 +737,7 @@
                             {item.origin_country || '—'}
                           </td>
                           <!-- Customs Value -->
-                          <td class="px-2 py-1.5 text-right" style="font-size: 10px; font-family: monospace;">
+                          <td class="px-2 py-1.5 text-right" style="font-size: 10px; font-family: 'JetBrains Mono', ui-monospace, monospace;">
                             {typeof item.customs_value_mmk === 'number' ? item.customs_value_mmk?.toLocaleString() : item.customs_value_mmk || '—'}
                           </td>
                         </tr>
@@ -773,7 +773,7 @@
                   {k:'exemption_reduction', l:'EXEMPTION', ck:'Exemption/Reduction', def:'Tax exemption amount', pg:'pg1'},
                   {k:'created_at', l:'PROCESSED', ck:'Processed', def:'Processing timestamp', pg:'—'},
                 ]}
-              <div class="border-2" style="border-color: var(--on-surface);">
+              <div class="border-2" style="border-color: var(--line);">
                 <div class="dark-bar flex justify-between items-center text-xs">
                   <div class="flex items-center gap-2">
                     <span>CUSTOMS_DECLARATION</span>
@@ -818,7 +818,7 @@
                     <tbody>
                       <tr>
                         {#each dCols as col}
-                          <td class="px-2 py-1.5 cursor-pointer" style="font-family: monospace; font-size: 10px;"
+                          <td class="px-2 py-1.5 cursor-pointer" style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px;"
                             ondblclick={() => startEdit('declaration', col.ck, 0, declRow[col.k])}
                             title="Double-click to edit">
                             {#if isEditing('declaration', col.ck, 0)}
@@ -843,7 +843,7 @@
 
             <!-- Audit Trail (corrections made on this job) -->
             {#if auditLog.length > 0}
-              <div class="border-2" style="border-color: var(--on-surface);">
+              <div class="border-2" style="border-color: var(--line);">
                 <div class="dark-bar flex justify-between items-center text-xs">
                   <span>CORRECTIONS_LOG</span>
                   <span>{auditLog.length} corrections (feeds into AI learning)</span>
@@ -863,11 +863,11 @@
                     <tbody>
                       {#each auditLog as c}
                         <tr style="border-bottom: 1px solid rgba(56,56,50,0.08);">
-                          <td style="padding: 5px 10px; font-family: monospace; font-size: 9px; white-space: nowrap; color: var(--outline);">{c.created_at?.split(' ')[1]?.slice(0,5) || c.created_at || ''}</td>
+                          <td style="padding: 5px 10px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 9px; white-space: nowrap; color: var(--outline);">{c.created_at?.split(' ')[1]?.slice(0,5) || c.created_at || ''}</td>
                           <td style="padding: 5px 10px; font-size: 9px; font-weight: bold;">{c.table_key}</td>
                           <td style="padding: 5px 10px; font-size: 10px; font-weight: bold; color: var(--secondary);">{c.field_key}</td>
-                          <td style="padding: 5px 10px; font-family: monospace; font-size: 10px; text-decoration: line-through; color: var(--error);">{c.original_value || '—'}</td>
-                          <td style="padding: 5px 10px; font-family: monospace; font-size: 10px; font-weight: bold; color: var(--success);">{c.corrected_value}</td>
+                          <td style="padding: 5px 10px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; text-decoration: line-through; color: var(--error);">{c.original_value || '—'}</td>
+                          <td style="padding: 5px 10px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; font-weight: bold; color: var(--success);">{c.corrected_value}</td>
                           <td style="padding: 5px 10px; font-size: 9px; color: var(--outline);">{c.username || '—'}</td>
                         </tr>
                       {/each}
@@ -883,7 +883,7 @@
               {@const invPages = pageData.filter(p => (p.page_type||'').toLowerCase().includes('invoice'))}
               {@const insPages = pageData.filter(p => (p.page_type||'').toLowerCase().includes('insurance'))}
               {@const certPages = pageData.filter(p => ['certificate','fda','import_license','import licence'].some(t => (p.page_type||'').toLowerCase().includes(t.toLowerCase())))}
-              <div class="border-2" style="border-color: var(--on-surface);">
+              <div class="border-2" style="border-color: var(--line);">
                 <div class="dark-bar flex justify-between items-center text-xs">
                   <span>DOCUMENT_SUMMARY</span>
                   <span>{pageData.length} PAGES ANALYZED</span>
@@ -927,7 +927,7 @@
 
             <!-- Field Search -->
             {#if pageData.length > 0}
-              <div class="border-2" style="border-color: var(--on-surface);">
+              <div class="border-2" style="border-color: var(--line);">
                 <div class="dark-bar flex justify-between items-center text-xs">
                   <span>FIELD_SEARCH</span>
                   <span>SEARCH ACROSS ALL {pageData.length} PAGES</span>
@@ -937,8 +937,8 @@
                     <span class="material-symbols-outlined text-sm" style="color: var(--outline);">search</span>
                     <input type="text" placeholder="Search any field or value across all pages..."
                       bind:value={fieldSearch}
-                      class="flex-1 text-xs font-bold uppercase px-3 py-2 focus:outline-none"
-                      style="border: 1px solid var(--on-surface); background: white;" />
+                      class="flex-1 text-xs px-3 py-2 focus:outline-none"
+                      style="border: 1px solid var(--line); border-radius: var(--radius-sm); background: white;" />
                     {#if fieldSearch}
                       <button class="text-[9px] font-medium uppercase px-2 py-1 cursor-pointer" style="border: 1px solid var(--outline); color: var(--outline);" onclick={() => fieldSearch = ''}>CLEAR</button>
                     {/if}
@@ -949,7 +949,7 @@
                     <div class="mt-3 flex items-center justify-between mb-2">
                       <span class="text-[10px] font-bold uppercase" style="color: var(--outline);">{results.length} matches across {Object.keys(groupedByPage).length} pages</span>
                       <button class="text-[9px] font-medium uppercase px-2 py-1 cursor-pointer border"
-                        style="border-color: var(--on-surface); color: var(--on-surface);"
+                        style="border-color: var(--line); color: var(--on-surface);"
                         onclick={() => { const text = results.map(r => `Page ${r.page} | ${r.field}: ${r.value}`).join('\n'); navigator.clipboard.writeText(text); }}
                       >COPY ALL</button>
                     </div>
@@ -990,7 +990,7 @@
 
             <!-- Document Map -->
             {#if pageData.length > 0}
-              <div class="border-2" style="border-color: var(--on-surface);">
+              <div class="border-2" style="border-color: var(--line);">
                 <div class="dark-bar flex justify-between items-center text-xs">
                   <span>DOCUMENT MAP</span>
                   <span>{pageData.length} PAGES</span>
@@ -1063,7 +1063,7 @@
 
           {:else if activeTab === 'annotated'}
             <!-- PDF Viewer with annotated/original toggle -->
-            <div class="border-2" style="border-color: var(--on-surface);">
+            <div class="border-2" style="border-color: var(--line);">
               <div class="dark-bar flex justify-between items-center text-xs">
                 <div class="flex items-center gap-3">
                   <span>PDF — {job.pdf_name}</span>

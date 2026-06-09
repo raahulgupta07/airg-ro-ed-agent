@@ -104,6 +104,55 @@ def _call_v7(pdf_path: str) -> Dict:
     return run_pipeline(pdf_path)
 
 
+def _call_typed(typed_pdf: str, use_presto: bool = False,
+                full_pdf: str = None, presto_pages=None) -> Dict:
+    """Typed-page extraction with the V12 Presto fast-path + math-gated fallback.
+
+    When `use_presto` (flag on AND every typed page is digital), try Presto first:
+    read the text layer of the typed + attachment pages (`presto_pages` of the
+    ORIGINAL `full_pdf`, so misrouted item pages the classifier dropped into
+    ATTACHMENT are still seen) → one schema call. Keep it ONLY if the reconcile
+    equation balances (Σ item customs values == declared total); otherwise fall
+    back to V7 Veritas on the typed slice so accuracy never regresses.
+    `use_presto=False` → behaves exactly like V7.
+    """
+    if use_presto:
+        try:
+            from v11.presto import run as presto_run
+            from v11.tools import reconcile as _rc
+            from v11.tools import self_correct as _sc
+            res = presto_run(full_pdf or typed_pdf, pages=presto_pages)
+            v = _rc.reconcile(res.get("declaration") or {}, res.get("items") or [])
+            if v.get("checked") and v.get("balanced"):
+                res["_engine"] = "presto"
+                return res
+            # Gate failed → try targeted self-correction (fix only the broken
+            # header field) BEFORE any slow fallback.
+            cor = _sc.correct(full_pdf or typed_pdf, res.get("declaration") or {},
+                              res.get("items") or [], v, header_page=1)
+            if cor.get("corrected") and cor["verdict"].get("balanced"):
+                res["declaration"] = cor["declaration"]
+                res["_engine"] = "presto+selfcorrect"
+                res.setdefault("trace", []).append({"phase": "self_correct", "log": cor["log"]})
+                return res
+            print(f"[Presto] gap {v.get('gap_pct')}% — falling back to V7 Veritas")
+        except Exception as e:
+            print(f"[Presto] fast-path error, falling back to V7: {e}")
+    res = _call_v7(typed_pdf)
+    if isinstance(res, dict):
+        res.setdefault("_engine", "v7")
+    return res
+
+
+def _call_scribe(pdf_path: str) -> Dict:
+    """V14 Atlas handwriting engine — V13 Scribe (vision vote + math gates)."""
+    from v13.scribe import run as run_scribe
+    res = run_scribe(pdf_path)
+    if isinstance(res, dict):
+        res.setdefault("_engine", "scribe")
+    return res
+
+
 def _call_v10(pdf_path: str) -> Dict:
     """Use V10 PRO (shape-validated, memory-aware, cost-tracked)."""
     from v10_pro.workflow import run as run_v10_pro
@@ -291,7 +340,7 @@ def _save_to_db(out: Dict, pdf_path: str) -> str:
     return job_id
 
 
-def run(pdf_path: str, job_id: Optional[str] = None) -> Dict:
+def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Dict:
     """End-to-end V11 dispatch. Returns merged result + trace.
 
     Args:
@@ -484,14 +533,39 @@ def run(pdf_path: str, job_id: Optional[str] = None) -> Dict:
         # spec forbids modifying their internals. To wire this up later, either:
         #   (a) thread `job_id` + an emit callback into both workflows, or
         #   (b) tail their structured logs and re-emit as STAGE_DETAIL.
+        # V12 Presto eligibility: flag ON and every TYPED page is digital (has a
+        # text layer). Flag off → identical to today's V7 path.
+        from v11.config import PRESTO_ENABLED
+        _typed_meta = [p for p in cls.get("pages", []) if (p.get("label") or "").upper() == "TYPED"]
+        _typed_digital = bool(_typed_meta) and all(p.get("has_text_layer") for p in _typed_meta)
+        # Per-job engine choice overrides the global flag:
+        #   "presto" → force fast-path (only takes effect if typed pages digital)
+        #   "classic" → force V7 Veritas
+        #   "auto"   → follow PRESTO_ENABLED
+        _eng = (engine or "auto").lower()
+        if _eng in ("presto", "atlas"):
+            _use_presto = _typed_digital
+        elif _eng == "classic":
+            _use_presto = False
+        else:
+            _use_presto = bool(PRESTO_ENABLED and _typed_digital)
+        # V14 Atlas: also route handwritten pages to Scribe (V13) instead of V10 PRO.
+        _use_scribe = (_eng == "atlas")
+        # Presto reads typed + attachment pages of the ORIGINAL pdf so misrouted
+        # item pages (classifier put them in ATTACHMENT) are still captured.
+        _presto_pages = sorted(set((buckets.get("TYPED") or []) + (buckets.get("ATTACHMENT") or [])))
+        if _use_presto:
+            out["trace"].append({"phase": "route_typed", "engine": "presto",
+                                  "pages": _presto_pages})
+
         with ThreadPoolExecutor(max_workers=2) as ex:
             futs = {}
             if typed_pdf:
                 v7_t0 = time.time()
-                futs[ex.submit(_call_v7, typed_pdf)] = "v7"
+                futs[ex.submit(_call_typed, typed_pdf, _use_presto, pdf_path, _presto_pages)] = "v7"
             if hw_pdf:
                 v10_t0 = time.time()
-                futs[ex.submit(_call_v10, hw_pdf)] = "v10"
+                futs[ex.submit(_call_scribe if _use_scribe else _call_v10, hw_pdf)] = "v10"
             for f in futs:
                 label = futs[f]
                 try:
@@ -749,6 +823,33 @@ def run(pdf_path: str, job_id: Optional[str] = None) -> Dict:
             if not out["cross_val_passed"]:
                 out["needs_review"] = True
 
+            # Per-row math gate: a suspect individual item (value ≠ qty×price×rate)
+            # → force review even if the total balances.
+            if verdict.get("rows_checked") and not verdict.get("rows_ok"):
+                out["needs_review"] = True
+                out["bad_rows"] = verdict.get("bad_rows")
+
+            # JUDGE — confidence score → auto-ok vs review (additive, advisory).
+            try:
+                from v11.tools import judge as _judge
+                jv = _judge.judge(out, verdict)
+                out["confidence"] = jv
+                if jv.get("needs_review"):
+                    out["needs_review"] = True
+            except Exception:
+                pass
+
+            # LEARNER priors — advisory cross-check (e.g. exchange rate out of the
+            # importer's learned range). Warnings only; never blocks. Safe on empty DB.
+            try:
+                from v11.learn import priors as _priors
+                warns = _priors.check_against_priors(out.get("declaration") or {})
+                if warns:
+                    out["prior_warnings"] = warns
+                    out["needs_review"] = True
+            except Exception:
+                pass
+
             out["trace"].append({"phase": "reconcile",
                                  "balanced": verdict["balanced"],
                                  "checked": verdict["checked"],
@@ -802,6 +903,29 @@ def run(pdf_path: str, job_id: Optional[str] = None) -> Dict:
             out["field_bboxes"] = {}
             out["trace"].append({"phase": "bbox", "error": str(_bbe)})
 
+        # Derive model_used label BEFORE save (DB stores it; History reads it).
+        _v7_used = bool(out.get("v7_used"))
+        _v10_used = bool(out.get("v10_used"))
+        _eng_choice = (engine or "auto").lower()
+        _ran = []
+        if locals().get("_use_presto"):
+            _ran.append("Atlas Swift")
+        elif _v7_used:
+            _ran.append("Atlas Classic")
+        if locals().get("_use_scribe"):
+            _ran.append("Atlas Vision")
+        elif _v10_used:
+            _ran.append("Atlas Heritage")
+        _ran_str = (" (" + " + ".join(_ran) + ")") if _ran else ""
+        if _eng_choice == "atlas":
+            out["model_used"] = "Atlas Gen 2" + _ran_str
+        elif _eng_choice == "presto":
+            out["model_used"] = "Atlas Swift" + _ran_str
+        elif _eng_choice == "classic":
+            out["model_used"] = "Atlas Classic" + _ran_str
+        else:
+            out["model_used"] = "Atlas Core" + _ran_str
+
         # ─── Phase 5: Save merged result to DB ───
         current_stage = "db_save"
         db_job_id = None
@@ -841,17 +965,7 @@ def run(pdf_path: str, job_id: Optional[str] = None) -> Dict:
         # ─── Final: DONE ───
         total_s = round(time.time() - t0, 2)
 
-        # Derive model_used label from which branches actually ran.
-        _v7_used = bool(out.get("v7_used"))
-        _v10_used = bool(out.get("v10_used"))
-        if _v7_used and _v10_used:
-            out["model_used"] = "V11 Maestro (Veritas + Scrivener)"
-        elif _v7_used:
-            out["model_used"] = "V11 Maestro (Veritas)"
-        elif _v10_used:
-            out["model_used"] = "V11 Maestro (Scrivener)"
-        else:
-            out["model_used"] = "V11 Maestro"
+        # (model_used label already computed before save above.)
         out["processed_at"] = datetime.utcnow().isoformat() + "Z"
 
         done_payload = {

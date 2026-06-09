@@ -200,7 +200,7 @@
     + (enableRowActions ? 90 : 0));
 </script>
 
-<div class="border-2 stamp-shadow" style="border-color: var(--on-surface); background: var(--surface);">
+<div class="border-2 stamp-shadow" style="border-color: var(--line); background: var(--surface);">
   <div class="flex items-center justify-between p-3" style="background: var(--surface-container); color: var(--on-surface);">
     <span class="text-xs font-medium uppercase tracking-wider">{title}</span>
     <div class="flex gap-2 items-center">

@@ -299,6 +299,40 @@ Some of these are already wired by the documented prod setup (see [Production de
 
 ---
 
+## Extraction engines (V12–V14) — branch `feature/v13-scribe`
+
+A new, faster, self-checking extraction stack. Additive — the legacy V7/V10/V11
+engines are kept as a fallback. Users pick an engine per upload (or the admin
+restricts the choice); **the default is ATLAS only**.
+
+| Engine | Handles | How | Speed / cost |
+|---|---|---|---|
+| **ATLAS** (V14) | everything | typed→Presto + handwritten→Scribe + all gates | mixed |
+| **PRESTO** (V12) | typed (digital) | PDF text layer → 1 schema call | ~20s / $0.01 |
+| **SCRIBE** (V13) | handwriting / scans | high-DPI → 2-model vote + verifier | ~15–75s / $0.01–0.02 |
+| **CLASSIC** (V7) | typed (legacy) | vision ensemble | ~85s / $0.16 |
+
+**Self-checking, self-correcting, self-learning:**
+- **Math gates** — item-sum, CIF (invoice×rate≈total), duty, and per-row
+  (value≈qty×price×rate) closures. A field is auto-trusted only if the math
+  closes **and** two independent models agree.
+- **Self-correct** — a gate failure re-reads only the broken field (not a slow
+  full redo), with few-shot hints from past corrections.
+- **JUDGE** — a confidence score routes each doc to auto-approve or human review.
+- **LEARNER** — importer priors, few-shot memory, weak-spot tracking, and a
+  prompt-critic that proposes improvements for human approval (read-only,
+  auditable; activates as review data accrues).
+
+**Engine control (super-admin):** Settings → **ENGINES** tab enables/disables
+engines and sets the default; the API is `GET/PUT /api/settings/engines`. Default
+when unset = only ATLAS (legacy engines off). Tuning env vars: `SCRIBE_MODEL`,
+`SCRIBE_VOTES`, `JUDGE_AUTO_THRESHOLD`, `RECONCILE_*_TOLERANCE_PCT`.
+
+> Note: Scribe must use a non-reasoning vision model (e.g. `gemini-3-flash`) —
+> reasoning models truncate JSON output on dense forms.
+
+---
+
 ## Features
 
 ### V11 Maestro pipeline

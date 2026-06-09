@@ -56,7 +56,7 @@
   </div>
 
   {#if status === 'processing' && progress > 0}
-    <div class="mt-1.5 h-1 border" style="border-color: var(--on-surface); background: var(--surface-container-highest);">
+    <div class="mt-1.5 h-1 border" style="border-color: var(--line); background: var(--surface-container-highest);">
       <div class="h-full transition-all" style="width: {Math.min(progress, 100)}%; background: {cfg.color};"></div>
     </div>
     {#if stepLabel}

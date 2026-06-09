@@ -10,8 +10,8 @@
   const modelLabel  = $derived(model.toString().toLowerCase());
 </script>
 
-<footer class="fixed bottom-0 left-0 w-full h-10 z-50 flex items-center px-6 gap-5 text-xs"
-        style="background: rgba(245,244,238,0.85); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-top: 1px solid var(--outline-variant); color: var(--on-surface-muted);">
+<footer class="fixed bottom-0 left-[236px] right-0 h-10 z-40 flex items-center px-6 gap-5 text-xs"
+        style="background: rgba(245,244,238,0.85); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-top: 1px solid var(--line); color: var(--on-surface-muted);">
 
   <!-- System ok -->
   <div class="flex items-center gap-1.5">

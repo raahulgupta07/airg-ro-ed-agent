@@ -52,6 +52,66 @@ async def set_auto_approve(body: AutoApproveSettings, admin: dict = Depends(requ
     return {"enabled": body.enabled, "threshold": body.threshold}
 
 
+# ─── Engine availability (super-admin controls which pipelines users can pick) ──
+
+import json as _json
+
+ALL_ENGINES = [
+    {"id": "atlas",   "label": "ATLAS",         "desc": "Gen 2 · flagship — auto typed + handwriting + gates"},
+    {"id": "presto",  "label": "ATLAS SWIFT",   "desc": "Gen 2 · fast typed-digital"},
+    {"id": "classic", "label": "ATLAS CLASSIC", "desc": "Gen 1 · legacy typed ensemble"},
+    {"id": "auto",    "label": "AUTO",          "desc": "follows the admin default"},
+]
+# By default ONLY the latest engine is enabled; legacy ones are off.
+_DEFAULT_ENABLED = ["atlas"]
+_DEFAULT_ENGINE = "atlas"
+
+
+def _engine_config() -> dict:
+    raw = database.get_app_setting("engines_enabled", None)
+    try:
+        enabled = _json.loads(raw) if raw else list(_DEFAULT_ENABLED)
+    except Exception:
+        enabled = list(_DEFAULT_ENABLED)
+    if not enabled:
+        enabled = list(_DEFAULT_ENABLED)
+    default = database.get_app_setting("engine_default", None) or _DEFAULT_ENGINE
+    if default not in enabled:
+        default = enabled[0]
+    return {"all": ALL_ENGINES, "enabled": enabled, "default": default}
+
+
+class EngineSettings(BaseModel):
+    enabled: list[str] = Field(default_factory=lambda: ["atlas"])
+    default: str = "atlas"
+
+
+@router.get("/engines")
+async def get_engines(current_user: dict = Depends(get_current_user)):
+    """Which extraction engines are available to pick + the default. All users
+    read this (the agent page uses it); only admins can change it."""
+    return _engine_config()
+
+
+@router.put("/engines")
+async def set_engines(body: EngineSettings, admin: dict = Depends(require_admin)):
+    """Super-admin: enable/disable engines + set the default. Default unset =
+    only ATLAS enabled (legacy off)."""
+    valid_ids = {e["id"] for e in ALL_ENGINES}
+    enabled = [e for e in body.enabled if e in valid_ids]
+    if not enabled:
+        enabled = list(_DEFAULT_ENABLED)
+    default = body.default if body.default in enabled else enabled[0]
+    database.set_app_setting("engines_enabled", _json.dumps(enabled), updated_by=admin.get("username", "admin"))
+    database.set_app_setting("engine_default", default, updated_by=admin.get("username", "admin"))
+    try:
+        database.log_activity(admin["id"], admin["username"], "UPDATE_SETTINGS",
+                              f"engines enabled={enabled} default={default}")
+    except Exception:
+        pass
+    return _engine_config()
+
+
 @router.get("/keycloak", response_model=KeycloakSettingsResponse)
 async def get_keycloak_settings(admin: dict = Depends(require_admin)):
     """Get current Keycloak settings (admin only)."""

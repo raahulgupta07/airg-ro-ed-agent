@@ -125,6 +125,11 @@ export const api = {
   reviewBulkReject: (job_ids: string[], notes: string) =>
     request<any>('/review/bulk/reject', { method: 'POST', body: JSON.stringify({ job_ids, notes }) }),
 
+  // Engine availability (super-admin enable/disable; all users read)
+  getEngines: () => request<any>('/settings/engines'),
+  saveEngines: (data: { enabled: string[]; default: string }) =>
+    request<any>('/settings/engines', { method: 'PUT', body: JSON.stringify(data) }),
+
   // Auto-approve settings
   getAutoApprove: () => request<any>('/settings/auto-approve'),
   saveAutoApprove: (data: { enabled: boolean; threshold: number }) =>
@@ -138,7 +143,8 @@ export async function extractPDF(
   file: File,
   pipeline: PipelineKey = 'v11',
   token?: string,
-  jobId?: string
+  jobId?: string,
+  engine: 'auto' | 'presto' | 'classic' | 'atlas' = 'auto'
 ): Promise<any> {
   const config = PIPELINES[pipeline];
   if (!config) throw new Error(`Unknown pipeline: ${pipeline}`);
@@ -146,6 +152,8 @@ export async function extractPDF(
   const formData = new FormData();
   formData.append('file', file);
   if (jobId) formData.append('job_id', jobId);
+  // V12: typed-page engine choice — 'classic' (V7 Veritas) | 'presto' (fast) | 'auto'
+  formData.append('engine', engine);
 
   const headers: Record<string, string> = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
