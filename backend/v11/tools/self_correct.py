@@ -107,8 +107,11 @@ def correct(pdf_path: str, declaration: Dict, items: List[Dict], verdict: Dict,
     CIF closure failed; otherwise returns the input unchanged.
     """
     log = []
-    # Only act when the gate localized a HEADER (CIF) failure.
-    if verdict.get("balanced") or not (verdict.get("cif_checked") and not verdict.get("cif_ok")):
+    cif_fail = verdict.get("cif_checked") and not verdict.get("cif_ok")
+    duty_fail = verdict.get("duty_checked") and not verdict.get("duty_ok")
+    # Act when the gate localized a HEADER (CIF) or DUTY closure failure — both
+    # are fixed by re-reading the header fields (rate / invoice / total / duty).
+    if not (cif_fail or duty_fail):
         return {"declaration": declaration, "verdict": verdict, "corrected": False, "log": log}
 
     model = model or config.EXTRACTION_MODEL
@@ -126,13 +129,15 @@ def correct(pdf_path: str, declaration: Dict, items: List[Dict], verdict: Dict,
             cand[f] = v
     new_verdict = _rc.reconcile(cand, items)
 
-    # Keep the correction only if it actually closes the books better.
-    if new_verdict.get("balanced") or (
-            new_verdict.get("cif_gap_pct", 1e9) < verdict.get("cif_gap_pct", 1e9)):
+    # Keep the correction only if it actually closes the books better (CIF or duty).
+    cif_better = new_verdict.get("cif_gap_pct", 1e9) < verdict.get("cif_gap_pct", 1e9)
+    duty_better = new_verdict.get("duty_gap_pct", 1e9) < verdict.get("duty_gap_pct", 1e9)
+    if new_verdict.get("balanced") or cif_better or duty_better:
         changed = {f: (declaration.get(f), cand.get(f)) for f in _HEADER_FIELDS
                    if _rc._to_float(declaration.get(f)) != _rc._to_float(cand.get(f))}
         log.append(f"corrected {list(changed.keys())}; cif_gap "
-                   f"{verdict.get('cif_gap_pct')}%→{new_verdict.get('cif_gap_pct')}%")
+                   f"{verdict.get('cif_gap_pct')}%→{new_verdict.get('cif_gap_pct')}% "
+                   f"duty_gap {verdict.get('duty_gap_pct')}%→{new_verdict.get('duty_gap_pct')}%")
         return {"declaration": cand, "verdict": new_verdict, "corrected": True,
                 "log": log, "changed": changed}
 

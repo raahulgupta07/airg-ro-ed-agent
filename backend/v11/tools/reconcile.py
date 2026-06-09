@@ -83,6 +83,41 @@ def _cif_closure(decl: Dict, declared) -> Dict:
             "cif_gap_pct": gap_pct}
 
 
+def duty_tolerance_pct() -> float:
+    """Allowed |declared_duty − Σ(item value × rate)| as percent. Looser than the
+    others because exemptions/reductions legitimately shift duty."""
+    try:
+        return float(os.environ.get("RECONCILE_DUTY_TOLERANCE_PCT", "20.0"))
+    except Exception:
+        return 20.0
+
+
+def _duty_closure(decl: Dict, items: List[Dict]) -> Dict:
+    """Advisory invariant: declared customs_duty ≈ Σ(item customs_value × duty_rate).
+
+    Localizes a wrong duty or a wrong per-item duty_rate. ADVISORY only (exemptions
+    legitimately break it), so it does NOT flip `balanced`; it just flags for the
+    FIXER / review. Returns {duty_checked, duty_ok, duty_gap_pct, duty_expected}.
+    """
+    declared_duty = _to_float(decl.get("customs_duty")
+                              or decl.get("import_export_customs_duty")
+                              or decl.get("Import/Export Customs Duty"))
+    expected = 0.0
+    seen = False
+    for it in items or []:
+        cv = _to_float(it.get("customs_value_mmk") or it.get("Customs Value (MMK)"))
+        rate = _to_float(it.get("customs_duty_rate") or it.get("Customs duty rate"))
+        if cv and rate is not None:
+            expected += cv * rate
+            seen = True
+    if not (declared_duty and declared_duty > 0 and seen and expected > 0):
+        return {"duty_checked": False, "duty_ok": True, "duty_gap_pct": 0.0,
+                "duty_expected": None}
+    gap_pct = round(abs(declared_duty - expected) / declared_duty * 100, 2)
+    return {"duty_checked": True, "duty_ok": gap_pct <= duty_tolerance_pct(),
+            "duty_gap_pct": gap_pct, "duty_expected": round(expected, 2)}
+
+
 def reconcile(declaration: Dict, items: List[Dict]) -> Dict:
     """Check items value sum against the declared customs-value total, AND that
     invoice_price × exchange_rate ≈ total (catches a wrong exchange rate).
@@ -126,6 +161,7 @@ def reconcile(declaration: Dict, items: List[Dict]) -> Dict:
 
     tol = tolerance_pct()
     cif = _cif_closure(decl, declared)
+    duty = _duty_closure(decl, items)
     if not declared or declared <= 0:
         # No trustworthy anchor → cannot judge. Don't fake a pass.
         return {
@@ -139,6 +175,7 @@ def reconcile(declaration: Dict, items: List[Dict]) -> Dict:
             "anchor": "none",
             "n_items": len(items or []),
             **cif,
+            **duty,
         }
 
     gap = round(declared - isum, 2)
@@ -155,6 +192,7 @@ def reconcile(declaration: Dict, items: List[Dict]) -> Dict:
         "anchor": anchor,
         "n_items": len(items or []),
         **cif,
+        **duty,
     }
 
 
