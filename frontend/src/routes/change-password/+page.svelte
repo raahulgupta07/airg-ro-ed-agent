@@ -40,44 +40,41 @@
 </script>
 
 <div class="min-h-screen flex items-center justify-center p-6" style="background: var(--surface);">
-  <div class="w-full max-w-md border-2 stamp-shadow" style="border-color: var(--line); background: var(--surface);">
-    <div class="dark-bar text-xs">⚠ PASSWORD_CHANGE_REQUIRED</div>
-    <form onsubmit={submit} class="bg-white p-6 space-y-3">
-      <div class="text-[10px] font-bold uppercase" style="color: var(--outline);">
+  <div class="cl-panel w-full max-w-md">
+    <div class="cl-hd"><span class="dot">◉</span>Change Password</div>
+    <form onsubmit={submit} class="cl-bd space-y-4">
+      <p class="text-sm" style="color: var(--on-surface-muted); line-height: 1.5;">
         For security, you must set a new password before continuing.
+      </p>
+
+      <div>
+        <label class="cl-lbl" for="cp-current">Current Password</label>
+        <input id="cp-current" type="password" bind:value={current} required autofocus
+               class="cl-inp" />
       </div>
 
       <div>
-        <div class="text-[8px] font-medium uppercase mb-1" style="color: var(--outline);">CURRENT PASSWORD</div>
-        <input type="password" bind:value={current} required autofocus
-               class="w-full text-xs font-mono px-3 py-2 focus:outline-none"
-               style="border: 1px solid var(--on-surface); background: white;" />
+        <label class="cl-lbl" for="cp-new">New Password (≥8 chars)</label>
+        <input id="cp-new" type="password" bind:value={newPw} required minlength="8"
+               class="cl-inp" />
       </div>
 
       <div>
-        <div class="text-[8px] font-medium uppercase mb-1" style="color: var(--outline);">NEW PASSWORD (≥8 chars)</div>
-        <input type="password" bind:value={newPw} required minlength="8"
-               class="w-full text-xs font-mono px-3 py-2 focus:outline-none"
-               style="border: 1px solid var(--on-surface); background: white;" />
-      </div>
-
-      <div>
-        <div class="text-[8px] font-medium uppercase mb-1" style="color: var(--outline);">CONFIRM NEW PASSWORD</div>
-        <input type="password" bind:value={confirm} required
-               class="w-full text-xs font-mono px-3 py-2 focus:outline-none"
-               style="border: 1px solid var(--on-surface); background: white;" />
+        <label class="cl-lbl" for="cp-confirm">Confirm New Password</label>
+        <input id="cp-confirm" type="password" bind:value={confirm} required
+               class="cl-inp" />
       </div>
 
       {#if error}
-        <div class="p-2 text-[10px] font-bold uppercase" style="background: var(--error); color: white;">
+        <div class="text-sm" style="color: var(--error);">
           {error}
         </div>
       {/if}
 
       <button type="submit" disabled={busy}
-              class="w-full px-3 py-2.5 text-[11px] font-medium uppercase border-2 cursor-pointer"
-              style="border-color: var(--line); background: {busy ? '#9ca3af' : 'var(--primary-container)'}; box-shadow: var(--shadow-sm);">
-        {busy ? '… SAVING' : 'CHANGE_PASSWORD'}
+              class="cl-btn primary w-full"
+              class:opacity-50={busy}>
+        {busy ? 'Saving…' : 'Change Password'}
       </button>
     </form>
   </div>

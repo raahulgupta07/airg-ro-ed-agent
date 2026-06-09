@@ -937,8 +937,8 @@
                     <span class="material-symbols-outlined text-sm" style="color: var(--outline);">search</span>
                     <input type="text" placeholder="Search any field or value across all pages..."
                       bind:value={fieldSearch}
-                      class="flex-1 text-xs font-bold uppercase px-3 py-2 focus:outline-none"
-                      style="border: 1px solid var(--on-surface); background: white;" />
+                      class="flex-1 text-xs px-3 py-2 focus:outline-none"
+                      style="border: 1px solid var(--line); border-radius: var(--radius-sm); background: white;" />
                     {#if fieldSearch}
                       <button class="text-[9px] font-medium uppercase px-2 py-1 cursor-pointer" style="border: 1px solid var(--outline); color: var(--outline);" onclick={() => fieldSearch = ''}>CLEAR</button>
                     {/if}

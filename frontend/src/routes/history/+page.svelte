@@ -188,83 +188,76 @@
   <ChapterHeading icon="history" title="EXTRACTION_HISTORY" subtitle="Review past extraction jobs" question="Click any job to view details" />
 
   <!-- Filters -->
-  <div class="flex flex-wrap gap-3 items-end mb-4 p-3 border-2 bg-white" style="border-color: var(--line);">
+  <div class="flex flex-wrap gap-3 items-end mb-5">
     <div class="flex-1 min-w-[180px]">
-      <div class="tag-label mb-1 text-[8px]">SEARCH</div>
-      <input type="text" placeholder="Document name or number..." bind:value={searchQuery}
-             class="w-full text-xs font-bold uppercase px-3 py-1.5 focus:outline-none"
-             style="border: 1px solid var(--on-surface); background: white;" />
+      <label class="cl-lbl" for="hist-search">Search</label>
+      <input id="hist-search" type="text" placeholder="Document name or number..." bind:value={searchQuery} class="cl-inp" />
     </div>
     <div>
-      <div class="tag-label mb-1 text-[8px]">USER</div>
-      <select bind:value={selectedUser} class="text-[10px] font-mono font-bold uppercase px-2 py-1.5 focus:outline-none"
-              style="border: 1px solid var(--on-surface); background: white;">
-        <option value="">ALL USERS</option>
+      <label class="cl-lbl" for="hist-user">User</label>
+      <select id="hist-user" bind:value={selectedUser} class="cl-inp">
+        <option value="">All users</option>
         {#each allUsers as u}<option value={u}>{u}</option>{/each}
       </select>
     </div>
     <div>
-      <div class="tag-label mb-1 text-[8px]">FROM</div>
-      <input type="date" bind:value={dateFrom} class="text-[10px] font-mono px-2 py-1.5 focus:outline-none"
-             style="border: 1px solid var(--on-surface); background: white;" />
+      <label class="cl-lbl" for="hist-from">From</label>
+      <input id="hist-from" type="date" bind:value={dateFrom} class="cl-inp" />
     </div>
     <div>
-      <div class="tag-label mb-1 text-[8px]">TO</div>
-      <input type="date" bind:value={dateTo} class="text-[10px] font-mono px-2 py-1.5 focus:outline-none"
-             style="border: 1px solid var(--on-surface); background: white;" />
+      <label class="cl-lbl" for="hist-to">To</label>
+      <input id="hist-to" type="date" bind:value={dateTo} class="cl-inp" />
     </div>
-    <div class="text-[10px] font-mono font-bold" style="color: var(--outline);">{filteredJobs().length} / {jobs.length} JOBS</div>
   </div>
 
   <!-- Jobs Table -->
-  <div class="border-2" style="border-color: var(--line);">
-    <div class="dark-bar flex justify-between items-center text-xs">
-      <span>JOBS</span>
-      <span>{filteredJobs().length} TOTAL</span>
+  {@const jobRows = filteredJobs()}
+  <div class="cl-panel">
+    <div class="cl-hd">
+      <span class="dot">◉</span>Jobs
+      <span class="ct">{jobRows.length} / {jobs.length} jobs</span>
     </div>
-    <div class="overflow-x-auto bg-white">
-      <table class="w-full text-[11px]">
+    <div class="overflow-x-auto custom-scrollbar">
+      <table class="cl-table">
         <thead>
-          <tr style="background: var(--surface-container);">
-            <th class="px-3 py-2 text-left whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--on-surface); width: 40px;">#</th>
-            <th class="px-3 py-2 text-left whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--on-surface);">PDF NAME</th>
-            <th class="px-3 py-2 text-left whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--on-surface); width: 90px;">USER</th>
-            <th class="px-3 py-2 text-left whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--on-surface); width: 150px;">TIMESTAMP</th>
-            <th class="px-3 py-2 text-right whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--on-surface); width: 70px;">ITEMS</th>
-            <th class="px-3 py-2 text-right whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--on-surface); width: 90px;">ACCURACY</th>
-            <th class="px-3 py-2 text-right whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--on-surface); width: 70px;">PAGES</th>
-            <th class="px-3 py-2 text-right whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--on-surface); width: 70px;">TIME</th>
-            <th class="px-3 py-2 text-right whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--on-surface); width: 80px;">COST</th>
-            <th class="px-3 py-2 text-center whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--on-surface); width: 80px;">STATUS</th>
+          <tr>
+            <th style="width: 40px;">#</th>
+            <th>PDF Name</th>
+            <th style="width: 90px;">User</th>
+            <th style="width: 150px;">Timestamp</th>
+            <th style="width: 70px; text-align: right;">Items</th>
+            <th style="width: 90px; text-align: right;">Accuracy</th>
+            <th style="width: 70px; text-align: right;">Pages</th>
+            <th style="width: 70px; text-align: right;">Time</th>
+            <th style="width: 80px; text-align: right;">Cost</th>
+            <th style="width: 80px; text-align: center;">Status</th>
           </tr>
         </thead>
         <tbody>
-          {#each filteredJobs() as job, i}
+          {#each jobRows as job, i}
             {@const acc = job.accuracy_percent ?? 0}
-            <tr class="border-t cursor-pointer transition-colors"
-                style="border-color: rgba(56,56,50,0.1);"
-                onmouseenter={(e) => (e.currentTarget as HTMLElement).style.background = 'var(--surface-container)'}
-                onmouseleave={(e) => (e.currentTarget as HTMLElement).style.background = 'white'}
-                onclick={() => openJob(job.job_id)}>
-              <td class="px-3 py-2 font-mono text-[9px]" style="color: var(--outline);">{i+1}</td>
-              <td class="px-3 py-2 font-bold" style="color: var(--on-surface);">{job.pdf_name}</td>
-              <td class="px-3 py-2"><span class="text-[8px] font-medium uppercase px-1 py-0.5 text-white" style="background: var(--secondary);">{job.username ?? '?'}</span></td>
-              <td class="px-3 py-2 font-mono text-[10px]" style="color: var(--on-surface-muted);">{job.created_at ?? ''}</td>
-              <td class="px-3 py-2 text-right font-bold" style="color: var(--on-surface);">{job.items?.length ?? '—'}</td>
-              <td class="px-3 py-2 text-right font-mono font-bold" style="color: {getAccuracyColor(acc)};">{acc.toFixed(1)}%</td>
-              <td class="px-3 py-2 text-right font-mono" style="color: var(--outline);">{job.total_pages ?? '—'}</td>
-              <td class="px-3 py-2 text-right font-mono" style="color: var(--outline);">{job.processing_time_seconds?.toFixed(0) ?? '—'}s</td>
-              <td class="px-3 py-2 text-right font-mono" style="color: var(--warning);">${(job.cost_usd || 0).toFixed(3)}</td>
-              <td class="px-3 py-2 text-center">
-                <Badge text={job.status === 'COMPLETED' ? '✓' : '✗'} variant={job.status === 'COMPLETED' ? 'success' : 'critical'} />
+            <tr class="cursor-pointer" onclick={() => openJob(job.job_id)}>
+              <td class="mono" style="color: var(--on-surface-subtle);">{i+1}</td>
+              <td class="k">{job.pdf_name}</td>
+              <td><span class="pill muted">{job.username ?? '?'}</span></td>
+              <td class="mono" style="color: var(--on-surface-muted);">{job.created_at ?? ''}</td>
+              <td style="text-align: right; font-weight: 600;">{job.items?.length ?? '—'}</td>
+              <td class="mono" style="text-align: right; font-weight: 600; color: {getAccuracyColor(acc)};">{acc.toFixed(1)}%</td>
+              <td class="mono" style="text-align: right; color: var(--on-surface-muted);">{job.total_pages ?? '—'}</td>
+              <td class="mono" style="text-align: right; color: var(--on-surface-muted);">{job.processing_time_seconds?.toFixed(0) ?? '—'}s</td>
+              <td class="mono" style="text-align: right; color: var(--warning);">${(job.cost_usd || 0).toFixed(3)}</td>
+              <td style="text-align: center;">
+                <span class="pill {job.status === 'COMPLETED' ? 'ok' : 'err'}">{job.status === 'COMPLETED' ? '✓' : '✗'}</span>
               </td>
             </tr>
           {/each}
+          {#if jobRows.length === 0}
+            <tr>
+              <td colspan="10" class="px-4 py-12 text-center" style="color: var(--on-surface-subtle);">No jobs</td>
+            </tr>
+          {/if}
         </tbody>
       </table>
-      {#if filteredJobs().length === 0}
-        <div class="p-8 text-center text-sm font-bold uppercase" style="color: var(--on-surface);">NO JOBS</div>
-      {/if}
     </div>
   </div>
 
@@ -283,15 +276,12 @@
       <span class="text-sm font-bold uppercase" style="color: var(--on-surface);">FAILED TO LOAD</span>
       <span class="text-[10px] font-mono" style="color: var(--outline);">{detailError}</span>
       <div class="flex gap-3">
-        <button class="text-[10px] font-bold uppercase px-3 py-2 border-2 cursor-pointer"
-          style="border-color: var(--primary); color: var(--primary); background: transparent;"
+        <button class="cl-btn sm primary"
           onclick={() => { if (selectedJobId) openJob(selectedJobId); }}>
-          RETRY
+          Retry
         </button>
-        <button class="text-[10px] font-bold uppercase px-3 py-2 border-2 cursor-pointer"
-          style="border-color: var(--line); color: var(--on-surface); background: transparent;"
-          onclick={backToList}>
-          BACK TO LIST
+        <button class="cl-btn sm" onclick={backToList}>
+          Back to list
         </button>
       </div>
     </div>
@@ -305,15 +295,14 @@
     {@const _model = selectedJob.model_used || (selectedJob.pipeline_mode || '').toUpperCase() || '—'}
 
     <!-- Header bar -->
-    <div class="flex items-center justify-between mb-4 p-3 border-2 bg-white" style="border-color: var(--line);">
+    <div class="flex items-center justify-between mb-4 p-3 cl-panel" style="padding: 12px;">
       <div class="flex items-center gap-3">
-        <button class="flex items-center gap-1 text-[10px] font-medium uppercase cursor-pointer px-2 py-1 border"
-          style="border-color: var(--line); color: var(--on-surface);" onclick={backToList}>
-          <span class="material-symbols-outlined text-sm">arrow_back</span> HISTORY
+        <button class="cl-btn sm flex items-center gap-1" onclick={backToList}>
+          <span class="material-symbols-outlined text-sm">arrow_back</span> History
         </button>
         <span class="text-sm font-bold" style="color: var(--on-surface);">{selectedJob.pdf_name}</span>
-        <span class="text-[8px] font-medium uppercase px-1 py-0.5 text-white" style="background: var(--secondary);">{selectedJob.username ?? '?'}</span>
-        <Badge text={selectedJob.status} variant={selectedJob.status === 'COMPLETED' ? 'success' : 'critical'} />
+        <span class="pill muted">{selectedJob.username ?? '?'}</span>
+        <span class="pill {selectedJob.status === 'COMPLETED' ? 'ok' : 'err'}">{selectedJob.status}</span>
       </div>
       <div class="flex items-center gap-2">
         <span class="text-[9px] font-mono" style="color: var(--outline);">{selectedJob.created_at?.split(' ')[0] ?? ''}</span>
@@ -348,10 +337,10 @@
     </div>
 
     <!-- Tab bar -->
-    <div class="flex gap-0 mb-4 border-2" style="border-color: var(--line); background: var(--surface-container-highest);">
+    <div class="flex gap-0 mb-4 overflow-hidden" style="border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-container-low);">
       {#each [['data','DATA'],['log','PIPELINE LOG']] as [key, label]}
-        <button class="px-3 py-2 text-[11px] font-bold uppercase tracking-tight cursor-pointer"
-          style="{historyTab === key ? 'background: var(--surface-container); color: var(--on-surface);' : 'color: var(--outline);'}"
+        <button class="px-4 py-2 text-[11px] font-bold uppercase tracking-tight cursor-pointer"
+          style="{historyTab === key ? 'background: var(--surface-container-lowest); color: var(--on-surface);' : 'color: var(--on-surface-muted); background: transparent;'}"
           onclick={() => historyTab = key as any}
         >{label}</button>
       {/each}
@@ -360,10 +349,10 @@
     {#if historyTab === 'data'}
     <!-- PDF Viewer (collapsible) -->
     {#if showPdf}
-      <div class="border-2 mb-4" style="border-color: var(--line);">
-        <div class="dark-bar flex items-center justify-between text-xs">
-          <span>ORIGINAL_PDF — {selectedJob.pdf_name}</span>
-          <button class="text-[10px] font-bold uppercase cursor-pointer" style="color: var(--primary-container);" onclick={() => showPdf = false}>CLOSE</button>
+      <div class="cl-panel mb-4">
+        <div class="cl-hd">
+          <span class="dot">◉</span>Original PDF — {selectedJob.pdf_name}
+          <button class="ct cursor-pointer" style="border: none; background: none;" onclick={() => showPdf = false}>Close</button>
         </div>
         <iframe src="/api/jobs/{selectedJob.job_id}/pdf?token={auth.token}" title="PDF" style="width: 100%; height: 600px; border: none;"></iframe>
       </div>

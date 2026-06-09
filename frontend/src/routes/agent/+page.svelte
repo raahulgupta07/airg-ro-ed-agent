@@ -544,8 +544,8 @@
 {#if queue.length === 0}
   <div class="flex flex-col items-center justify-center" style="min-height: calc(100vh - 180px);">
     <!-- Smart Router info card (auto-routing, no choice exposed) -->
-    <div class="w-full max-w-4xl mb-5 p-4"
-         style="background: var(--primary-container); border: 1px solid var(--primary); border-radius: var(--radius-lg); box-shadow: var(--shadow-xs);">
+    <div class="cl-panel w-full max-w-4xl mb-5">
+      <div class="cl-bd">
       <div class="flex items-start gap-3 flex-wrap">
         <span class="material-symbols-outlined" style="color: var(--primary); font-size: 22px;">auto_awesome</span>
         <div class="flex-1 min-w-[200px]">
@@ -560,28 +560,30 @@
         </div>
       </div>
       <!-- Engine selector -->
-      <div class="mt-3 pt-3" style="border-top: 1px solid var(--primary);">
+      <div class="mt-3 pt-3" style="border-top: 1px solid var(--line-2);">
         <div class="text-[11px] uppercase tracking-wider mb-1.5" style="color: var(--on-surface-muted);">Engine</div>
         <div class="flex gap-2 flex-wrap">
           {#each visibleEngines as opt}
             <button
               type="button"
-              class="px-3 py-1.5 cursor-pointer transition-colors text-left"
-              style="border: 1.5px solid {selectedEngine === opt[0] ? 'var(--primary)' : 'var(--outline)'}; border-radius: var(--radius-md); background: {selectedEngine === opt[0] ? 'var(--primary)' : 'var(--surface-container-lowest)'};"
+              class="px-3 py-1.5 cursor-pointer transition-all text-left"
+              style="border: 1.5px solid {selectedEngine === opt[0] ? 'var(--primary)' : 'var(--line)'}; border-radius: var(--radius-md); background: {selectedEngine === opt[0] ? 'var(--primary-tint)' : 'var(--surface-container-lowest)'}; {selectedEngine === opt[0] ? 'box-shadow: 0 0 0 3px var(--primary-tint);' : ''}"
               onclick={() => (selectedEngine = opt[0] as 'auto' | 'presto' | 'classic' | 'atlas')}>
-              <div class="text-xs font-bold" style="color: {selectedEngine === opt[0] ? 'var(--on-primary)' : 'var(--on-surface)'};">{opt[1]}</div>
-              <div class="text-[10px]" style="color: {selectedEngine === opt[0] ? 'var(--on-primary)' : 'var(--on-surface-muted)'};">{opt[2]}</div>
+              <div class="flex items-center gap-1.5">
+                <div class="text-xs font-bold" style="color: var(--on-surface);">{opt[1]}</div>
+                {#if selectedEngine === opt[0]}<span class="pill clay" style="padding: 1px 7px; font-size: 9px;">SELECTED</span>{/if}
+              </div>
+              <div class="text-[10px]" style="color: var(--on-surface-muted);">{opt[2]}</div>
             </button>
           {/each}
         </div>
       </div>
+      </div>
     </div>
     <!-- Big drop zone -->
     <button
-      class="w-full max-w-4xl cursor-pointer transition-all p-16 group"
-      style="border: 1.5px dashed var(--outline); background: var(--surface-container-lowest); border-radius: var(--radius-xl);"
-      onmouseenter={(e) => { e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.background = 'var(--primary-container)'; }}
-      onmouseleave={(e) => { e.currentTarget.style.borderColor = 'var(--outline)'; e.currentTarget.style.background = 'var(--surface-container-lowest)'; }}
+      class="cl-drop w-full max-w-4xl group"
+      style="padding: 64px;"
       onclick={() => fileInput.click()}
     >
       <div class="text-center">
@@ -631,7 +633,7 @@
     <div class="flex flex-col">
       <!-- Smart Router info banner (compact for left panel) -->
       <div class="mb-3 px-3 py-2 flex items-center gap-2"
-           style="background: var(--primary-container); border: 1px solid var(--primary); border-radius: var(--radius-md);">
+           style="background: var(--primary-tint); border: 1px solid var(--line); border-radius: var(--radius-md);">
         <span class="material-symbols-outlined text-sm" style="color: var(--primary);">auto_awesome</span>
         <span class="text-xs font-medium" style="color: var(--on-surface);">Maestro Router</span>
         <span class="text-[11px] flex-1" style="color: var(--on-surface-muted);">auto · PRINTED→Veritas · INKED→Scrivener</span>
@@ -643,8 +645,8 @@
         <div class="flex gap-1">
           {#each visibleEngines as opt}
             <button
-              class="flex-1 px-2 py-1.5 cursor-pointer transition-colors text-center"
-              style="border: 1.5px solid {selectedEngine === opt[0] ? 'var(--primary)' : 'var(--outline)'}; border-radius: var(--radius-md); background: {selectedEngine === opt[0] ? 'var(--primary-container)' : 'var(--surface-container-lowest)'};"
+              class="flex-1 px-2 py-1.5 cursor-pointer transition-all text-center"
+              style="border: 1.5px solid {selectedEngine === opt[0] ? 'var(--primary)' : 'var(--line)'}; border-radius: var(--radius-md); background: {selectedEngine === opt[0] ? 'var(--primary-tint)' : 'var(--surface-container-lowest)'}; {selectedEngine === opt[0] ? 'box-shadow: 0 0 0 3px var(--primary-tint);' : ''}"
               onclick={() => (selectedEngine = opt[0] as 'auto' | 'presto' | 'classic' | 'atlas')}>
               <div class="text-[11px] font-bold" style="color: var(--on-surface);">{opt[1]}</div>
               <div class="text-[9px]" style="color: var(--on-surface-muted);">{opt[2]}</div>
@@ -655,10 +657,8 @@
       <!-- Add more / New job buttons -->
       <div class="flex gap-2 mb-3">
         <button
-          class="flex-1 px-3 py-2.5 cursor-pointer transition-colors"
-          style="border: 1.5px dashed var(--outline); background: var(--surface-container-lowest); border-radius: var(--radius-md);"
-          onmouseenter={(e) => { e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.background = 'var(--primary-container)'; }}
-          onmouseleave={(e) => { e.currentTarget.style.borderColor = 'var(--outline)'; e.currentTarget.style.background = 'var(--surface-container-lowest)'; }}
+          class="cl-drop flex-1"
+          style="padding: 10px 12px;"
           onclick={() => fileInput.click()}
         >
           <div class="flex items-center justify-center gap-1.5">
@@ -679,16 +679,14 @@
       </div>
 
       <!-- Queue -->
-      <div class="border-2 flex-1 flex flex-col" style="border-color: var(--line);">
-        <div class="dark-bar flex justify-between items-center text-xs">
-          <span>QUEUE</span>
-          <span class="text-[10px] py-0.5 px-2" style="background: var(--surface); color: var(--on-surface);">
-            {doneCount}/{totalCount}
-          </span>
+      <div class="cl-panel flex-1 flex flex-col">
+        <div class="cl-hd">
+          <span class="dot">◉</span>Queue
+          <span class="ct">{doneCount}/{totalCount}</span>
         </div>
 
         <!-- Queue list -->
-        <div class="flex-1 overflow-y-auto custom-scrollbar bg-white" style="max-height: 400px;">
+        <div class="flex-1 overflow-y-auto custom-scrollbar" style="max-height: 400px; background: var(--surface-container-lowest);">
           {#each queue as entry, i}
             <QueueItem
               filename={entry.filename}
@@ -705,9 +703,9 @@
         </div>
 
         <!-- Pipeline Mode -->
-        <div class="px-2 pt-2 flex items-center gap-2" style="border-top: 1px solid rgba(56,56,50,0.15);">
-          <span class="px-2 py-1 text-[9px] font-medium uppercase" style="background: var(--success); color: white;">RO-ED AI</span>
-          <span class="text-[7px] font-mono" style="color: var(--outline);">SMART EXTRACTION · HD VISION</span>
+        <div class="px-3 pt-2 flex items-center gap-2" style="border-top: 1px solid var(--line-2);">
+          <span class="pill ok" style="padding: 2px 8px; font-size: 9px;">RO-ED AI</span>
+          <span class="text-[7px] font-mono" style="color: var(--on-surface-subtle);">SMART EXTRACTION · HD VISION</span>
         </div>
 
         <!-- Actions -->
@@ -734,39 +732,38 @@
       <!-- Duplicate actions for selected file -->
       {#if selectedFile?.status === 'duplicate'}
         {@const ej = selectedFile.existingJob}
-        <div class="mt-2 border-2" style="border-color: var(--line);">
-          <div class="px-3 py-2 text-xs font-bold uppercase text-white" style="background: #b45309;">
-            THIS DOCUMENT WAS ALREADY PROCESSED
+        <div class="cl-panel mt-2">
+          <div class="cl-hd">
+            <span class="dot" style="color: var(--warning);">◉</span>This Document Was Already Processed
           </div>
-          <div class="p-3 bg-white space-y-3">
+          <div class="cl-bd space-y-3">
             <!-- Previous result info -->
-            <div class="border p-2" style="border-color: rgba(56,56,50,0.15); background: var(--surface-container);">
-              <div class="text-[9px] font-bold uppercase" style="color: var(--outline);">PREVIOUS EXTRACTION</div>
+            <div class="p-2" style="border: 1px solid var(--line-2); border-radius: var(--radius-sm); background: var(--surface-container-low);">
+              <div class="text-[9px] font-bold uppercase" style="color: var(--on-surface-subtle);">PREVIOUS EXTRACTION</div>
               <div class="mt-1 grid grid-cols-3 gap-2 text-[10px]" style="color: var(--on-surface);">
                 <div>Processed: <span class="font-bold">{ej?.created_at?.split(' ')[0] ?? '—'}</span></div>
                 <div>By: <span class="font-bold">{ej?.username ?? '—'}</span></div>
                 <div>Accuracy: <span class="font-bold" style="color: var(--success);">{ej?.accuracy_percent?.toFixed(1) ?? '—'}%</span></div>
                 <div>Items: <span class="font-bold">{ej?.items?.length ?? '—'}</span></div>
                 <div>Pages: <span class="font-bold">{ej?.total_pages ?? '—'}</span></div>
-                <div>Cost: <span class="font-bold" style="color: #eab308;">${ej?.cost_usd?.toFixed(3) ?? '—'}</span></div>
+                <div>Cost: <span class="font-bold" style="color: var(--warning);">${ej?.cost_usd?.toFixed(3) ?? '—'}</span></div>
               </div>
             </div>
 
             <!-- Action buttons -->
             <div class="text-[10px] font-bold uppercase" style="color: var(--on-surface);">What would you like to do?</div>
             <div class="flex gap-2">
-              <button class="flex items-center gap-1 px-3 py-2 text-[10px] font-bold uppercase cursor-pointer border-2"
-                style="border-color: var(--line); background: var(--surface-container); color: var(--on-surface);"
+              <button class="cl-btn sm flex items-center gap-1"
                 onclick={() => viewDuplicateResult(selectedIndex)}>
                 <span class="material-symbols-outlined text-xs">visibility</span> VIEW RESULTS (free)
               </button>
-              <button class="flex items-center gap-1 px-3 py-2 text-[10px] font-bold uppercase cursor-pointer border-2"
-                style="border-color: #b45309; color: #b45309; background: white;"
+              <button class="cl-btn sm flex items-center gap-1"
+                style="border-color: var(--warning); color: var(--warning);"
                 onclick={() => showReprocessConfirm = true}>
                 <span class="material-symbols-outlined text-xs">refresh</span> RE-PROCESS (~$0.04)
               </button>
-              <button class="flex items-center gap-1 px-3 py-2 text-[10px] font-bold uppercase cursor-pointer border"
-                style="border-color: var(--outline); color: var(--outline);"
+              <button class="cl-btn sm flex items-center gap-1"
+                style="color: var(--on-surface-muted);"
                 onclick={() => { queue = queue.filter((_, i) => i !== selectedIndex); selectedIndex = -1; }}>
                 <span class="material-symbols-outlined text-xs">close</span> CANCEL
               </button>
@@ -776,21 +773,21 @@
 
         <!-- Re-process confirmation dialog -->
         {#if showReprocessConfirm}
-          <div class="mt-2 border-2 p-3" style="border-color: #ef4444; background: #fef2f2;">
-            <div class="text-xs font-bold uppercase" style="color: #ef4444;">Are you sure you want to re-process?</div>
+          <div class="mt-2 p-3" style="border: 1px solid var(--error); border-radius: var(--radius-md); background: var(--error-soft);">
+            <div class="text-xs font-bold uppercase" style="color: var(--error);">Are you sure you want to re-process?</div>
             <div class="mt-2 text-[10px] space-y-1" style="color: var(--on-surface);">
               <div>• Run the full pipeline again (~60s)</div>
               <div>• Cost approximately $0.04-0.15</div>
               <div>• Creates a new job (old results kept)</div>
             </div>
             <div class="flex gap-2 mt-3">
-              <button class="flex items-center gap-1 px-3 py-2 text-[10px] font-bold uppercase cursor-pointer"
-                style="background: #ef4444; color: white; border: none;"
+              <button class="cl-btn sm flex items-center gap-1"
+                style="background: var(--error); color: white; border-color: var(--error);"
                 onclick={() => { showReprocessConfirm = false; selectedFile.status = 'queued'; queue = [...queue]; startPipeline(); }}>
                 <span class="material-symbols-outlined text-xs">check</span> YES, RE-RUN
               </button>
-              <button class="px-3 py-2 text-[10px] font-bold uppercase cursor-pointer border"
-                style="border-color: var(--outline); color: var(--outline);"
+              <button class="cl-btn sm"
+                style="color: var(--on-surface-muted);"
                 onclick={() => showReprocessConfirm = false}>
                 CANCEL
               </button>
@@ -801,9 +798,9 @@
 
       <!-- Batch Summary -->
       {#if batchSummary}
-        <div class="mt-3 border-2 p-3" style="border-color: var(--line); background: white;">
-          <div class="tag-label mb-2">BATCH_SUMMARY</div>
-          <div class="space-y-1 text-[10px] font-mono">
+        <div class="cl-panel mt-3">
+          <div class="cl-hd"><span class="dot">◉</span>Batch Summary</div>
+          <div class="cl-bd space-y-1 text-[10px] font-mono">
             <div>COMPLETED: {batchSummary.completed}/{batchSummary.total}</div>
             <div>FAILED: {batchSummary.failed}</div>
             {#if batchSummary.stopped > 0}<div style="color: var(--warning);">STOPPED: {batchSummary.stopped}</div>{/if}
@@ -824,8 +821,8 @@
         <div class="mb-4 flex items-center justify-between">
           <div class="flex items-center gap-2">
             <span class="text-xs font-bold uppercase" style="color: var(--on-surface);">Processing: {selectedFile?.filename ?? ''}</span>
-            <Badge text="RUNNING" variant="secondary" />
-            <Badge text="RO-ED AI" variant="success" />
+            <span class="pill clay">RUNNING</span>
+            <span class="pill ok">RO-ED AI</span>
           </div>
           {#if running}
             <Button variant="danger" size="sm" onclick={stopPipeline}>
@@ -860,18 +857,17 @@
         <!-- Results for selected file -->
         {#if loadError && !selectedJob}
           <div class="flex flex-col items-center gap-4 p-12 justify-center">
-            <span class="material-symbols-outlined text-3xl" style="color: var(--tertiary);">error</span>
+            <span class="material-symbols-outlined text-3xl" style="color: var(--error);">error</span>
             <span class="text-sm font-bold uppercase" style="color: var(--on-surface);">FAILED TO LOAD RESULTS</span>
-            <span class="text-[10px] font-mono" style="color: var(--outline);">{loadError}</span>
+            <span class="text-[10px] font-mono" style="color: var(--on-surface-muted);">{loadError}</span>
             <div class="flex gap-3">
               {#if selectedFile?.jobId}
-                <button class="text-[10px] font-bold uppercase px-3 py-2 border-2 cursor-pointer"
-                  style="border-color: var(--primary); color: var(--primary); background: transparent;"
+                <button class="cl-btn sm"
+                  style="border-color: var(--primary); color: var(--primary);"
                   onclick={() => { loadError = ''; loadJobResult(selectedFile.jobId); }}>
                   RETRY
                 </button>
-                <a href="/history?job={selectedFile.jobId}" class="text-[10px] font-bold uppercase no-underline px-3 py-2 border-2"
-                  style="border-color: var(--line); color: var(--on-surface);">
+                <a href="/history?job={selectedFile.jobId}" class="cl-btn sm no-underline">
                   VIEW IN HISTORY →
                 </a>
               {/if}
@@ -921,12 +917,12 @@
       {:else if selectedFile?.status === 'error'}
         <!-- Error state -->
         <div class="flex flex-col items-center justify-center h-64">
-          <span class="material-symbols-outlined text-4xl" style="color: var(--tertiary);">error</span>
+          <span class="material-symbols-outlined text-4xl" style="color: var(--error);">error</span>
           <div class="mt-2 text-sm font-bold uppercase" style="color: var(--on-surface);">{selectedFile.filename}</div>
-          <div class="text-xs mt-1 font-mono" style="color: var(--tertiary);">
+          <div class="text-xs mt-1 font-mono" style="color: var(--error);">
             {selectedFile.stepLabel || 'FAILED — pipeline error'}
           </div>
-          <div class="mt-3 text-[10px] uppercase" style="color: var(--outline);">
+          <div class="mt-3 text-[10px] uppercase" style="color: var(--on-surface-subtle);">
             Clear queue and re-upload to retry
           </div>
         </div>
@@ -935,10 +931,10 @@
         <!-- Selected file waiting — show PDF preview -->
         {#if selectedFile.savedPath}
           {@const previewFilename = selectedFile.savedPath.split('/').pop()}
-          <div class="border-2" style="border-color: var(--line);">
-            <div class="dark-bar flex items-center justify-between text-xs">
-              <span>PDF_PREVIEW — {selectedFile.filename}</span>
-              <span class="text-[10px]" style="color: var(--primary-container);">
+          <div class="cl-panel">
+            <div class="cl-hd">
+              <span class="dot">◉</span>PDF Preview — {selectedFile.filename}
+              <span class="ct">
                 {selectedFile.status === 'queued' ? 'Click EXECUTE to process' : selectedFile.status === 'duplicate' ? 'Duplicate — view results or reprocess' : selectedFile.status.toUpperCase()}
               </span>
             </div>
@@ -954,7 +950,7 @@
               {selectedFile.status === 'duplicate' ? 'content_copy' : 'schedule'}
             </span>
             <div class="mt-2 text-sm font-bold uppercase" style="color: var(--on-surface);">{selectedFile.filename}</div>
-            <div class="text-xs mt-1" style="color: var(--outline);">
+            <div class="text-xs mt-1" style="color: var(--on-surface-muted);">
               {selectedFile.status === 'queued' ? 'Waiting to process — click EXECUTE' : selectedFile.status === 'duplicate' ? 'Duplicate — view results or reprocess' : selectedFile.status}
             </div>
           </div>
@@ -965,7 +961,7 @@
         <div class="flex flex-col items-center justify-center h-64 opacity-20">
           <span class="material-symbols-outlined text-4xl" style="color: var(--on-surface);">arrow_back</span>
           <div class="mt-2 text-sm font-bold uppercase" style="color: var(--on-surface);">SELECT A FILE</div>
-          <div class="text-xs mt-1" style="color: var(--outline);">Click a file in the queue to view details</div>
+          <div class="text-xs mt-1" style="color: var(--on-surface-muted);">Click a file in the queue to view details</div>
         </div>
       {/if}
     </div>

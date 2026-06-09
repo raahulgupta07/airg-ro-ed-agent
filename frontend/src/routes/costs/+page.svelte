@@ -230,22 +230,22 @@ const filteredJobs = $derived(() => {
   <!-- Filters (above KPIs) -->
   <div class="flex flex-wrap gap-3 items-end mb-4">
     <div>
-      <div class="tag-label mb-1 text-[8px]">FROM</div>
-      <input type="date" bind:value={dateFrom}
-             class="text-[10px] font-mono px-2 py-1.5 focus:outline-none"
-             style="border: 1px solid var(--on-surface); background: white; color: var(--on-surface);" />
+      <label class="cl-lbl" for="cost-from">From</label>
+      <input id="cost-from" type="date" bind:value={dateFrom}
+             class="cl-inp font-mono"
+             style="width: auto;" />
     </div>
     <div>
-      <div class="tag-label mb-1 text-[8px]">TO</div>
-      <input type="date" bind:value={dateTo}
-             class="text-[10px] font-mono px-2 py-1.5 focus:outline-none"
-             style="border: 1px solid var(--on-surface); background: white; color: var(--on-surface);" />
+      <label class="cl-lbl" for="cost-to">To</label>
+      <input id="cost-to" type="date" bind:value={dateTo}
+             class="cl-inp font-mono"
+             style="width: auto;" />
     </div>
     <div>
-      <div class="tag-label mb-1 text-[8px]">USER</div>
-      <select bind:value={selectedUser}
-              class="text-[10px] font-mono font-bold uppercase px-2 py-1.5 focus:outline-none"
-              style="border: 1px solid var(--on-surface); background: white; color: var(--on-surface);">
+      <label class="cl-lbl" for="cost-user">User</label>
+      <select id="cost-user" bind:value={selectedUser}
+              class="cl-inp font-mono"
+              style="width: auto;">
         <option value="">ALL USERS</option>
         {#each users as u}
           <option value={u}>{u}</option>
@@ -253,24 +253,21 @@ const filteredJobs = $derived(() => {
       </select>
     </div>
     {#if dateFrom || dateTo || selectedUser}
-      <button class="text-[8px] font-medium uppercase px-2 py-1.5 cursor-pointer"
-              style="border: 1px solid var(--outline); color: var(--outline); background: transparent;"
-              onclick={clearFilters}>CLEAR</button>
+      <button class="cl-btn sm"
+              onclick={clearFilters}>Clear</button>
     {/if}
     <div class="flex-1"></div>
     {#if dateFrom || dateTo || selectedUser}
-      <div class="text-xs font-mono font-bold" style="color: var(--warning);">
+      <span class="pill warn">
         FILTERED: ${filteredTotalCost().toFixed(4)} ({filteredJobs().length} PDFs)
-      </div>
+      </span>
     {/if}
     <button
-      class="text-[10px] font-medium uppercase px-3 py-1.5 cursor-pointer border-2 press-effect"
-      style="border-color: var(--line); background: var(--primary-container); color: var(--on-surface); box-shadow: var(--shadow-sm);"
+      class="cl-btn sm primary"
       onclick={downloadXlsx}
-    >↓ DOWNLOAD XLSX</button>
+    >↓ Download XLSX</button>
     <button
-      class="text-[10px] font-medium uppercase px-3 py-1.5 cursor-pointer border-2"
-      style="border-color: var(--line); background: var(--surface); color: var(--on-surface);"
+      class="cl-btn sm"
       onclick={downloadCsv}
     >↓ CSV</button>
   </div>
@@ -305,9 +302,9 @@ const filteredJobs = $derived(() => {
   {/if}
 
   <!-- Daily Cost Chart -->
-  <div class="border-2 stamp-shadow mb-6" style="border-color: var(--line);">
-    <div class="dark-bar">DAILY_COST_TREND</div>
-    <div class="bg-white p-4">
+  <div class="cl-panel mb-6">
+    <div class="cl-hd"><span class="dot">◉</span>Daily Cost Trend</div>
+    <div class="cl-bd">
       <div bind:this={chartContainer} style="width: 100%; height: 250px;"></div>
     </div>
   </div>
@@ -320,9 +317,9 @@ const filteredJobs = $derived(() => {
 
   <!-- Projections + Model Info -->
   <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-    <div class="border-2 stamp-shadow" style="border-color: var(--line);">
-      <div class="dark-bar text-xs">COST_PROJECTIONS</div>
-      <div class="bg-white p-4 space-y-3">
+    <div class="cl-panel">
+      <div class="cl-hd"><span class="dot">◉</span>Cost Projections</div>
+      <div class="cl-bd space-y-3">
         {#if costStats}
           {@const avg = costStats.avg_per_pdf}
           {#each [
@@ -333,7 +330,7 @@ const filteredJobs = $derived(() => {
             { label: '5,000 PDFs/month', value: avg * 5000 },
           ] as proj}
             <div class="flex items-center justify-between">
-              <span class="text-[10px] font-bold uppercase" style="color: var(--outline);">{proj.label}</span>
+              <span class="text-[10px] font-bold uppercase" style="color: var(--on-surface-muted);">{proj.label}</span>
               <span class="text-sm font-mono font-bold" style="color: var(--warning);">${proj.value.toFixed(2)}</span>
             </div>
           {/each}
@@ -341,31 +338,31 @@ const filteredJobs = $derived(() => {
       </div>
     </div>
 
-    <div class="border-2 stamp-shadow" style="border-color: var(--line);">
-      <div class="dark-bar text-xs">MODEL_INFO</div>
-      <div class="bg-white p-4 space-y-3">
+    <div class="cl-panel">
+      <div class="cl-hd"><span class="dot">◉</span>Model Info</div>
+      <div class="cl-bd space-y-3">
         <div class="flex justify-between">
-          <span class="text-[10px] font-bold uppercase" style="color: var(--outline);">MODEL</span>
+          <span class="text-[10px] font-bold uppercase" style="color: var(--on-surface-muted);">MODEL</span>
           <span class="text-[11px] font-mono font-bold" style="color: var(--on-surface);">google/gemini-3.1-flash-lite</span>
         </div>
         <div class="flex justify-between">
-          <span class="text-[10px] font-bold uppercase" style="color: var(--outline);">INPUT PRICE</span>
+          <span class="text-[10px] font-bold uppercase" style="color: var(--on-surface-muted);">INPUT PRICE</span>
           <span class="text-[11px] font-mono font-bold" style="color: var(--on-surface);">$0.30 / M tokens</span>
         </div>
         <div class="flex justify-between">
-          <span class="text-[10px] font-bold uppercase" style="color: var(--outline);">OUTPUT PRICE</span>
+          <span class="text-[10px] font-bold uppercase" style="color: var(--on-surface-muted);">OUTPUT PRICE</span>
           <span class="text-[11px] font-mono font-bold" style="color: var(--on-surface);">$2.50 / M tokens</span>
         </div>
         <div class="flex justify-between">
-          <span class="text-[10px] font-bold uppercase" style="color: var(--outline);">AVG TOKENS/PDF</span>
+          <span class="text-[10px] font-bold uppercase" style="color: var(--on-surface-muted);">AVG TOKENS/PDF</span>
           <span class="text-[11px] font-mono font-bold" style="color: var(--on-surface);">~15,000</span>
         </div>
         <div class="flex justify-between">
-          <span class="text-[10px] font-bold uppercase" style="color: var(--outline);">PIPELINE</span>
+          <span class="text-[10px] font-bold uppercase" style="color: var(--on-surface-muted);">PIPELINE</span>
           <span class="text-[11px] font-mono font-bold" style="color: var(--on-surface);">10 agents / 4 API calls</span>
         </div>
         <div class="flex justify-between">
-          <span class="text-[10px] font-bold uppercase" style="color: var(--outline);">API PROVIDER</span>
+          <span class="text-[10px] font-bold uppercase" style="color: var(--on-surface-muted);">API PROVIDER</span>
           <span class="text-[11px] font-mono font-bold" style="color: var(--on-surface);">OpenRouter</span>
         </div>
       </div>

@@ -537,18 +537,22 @@
 <ChapterHeading icon="settings" title="ADMIN_PANEL" subtitle="System settings, user management, and authentication" question="Configure the system" />
 
 {#if !auth.isAdmin}
-  <div class="p-8 text-center font-bold uppercase" style="color: var(--error);">ADMIN ACCESS REQUIRED</div>
+  <div class="p-8 text-center"><span class="pill err">Admin access required</span></div>
 {:else}
   <!-- Left menu + content -->
   <div class="flex gap-4 items-start">
-    <nav class="border-2 stamp-shadow shrink-0" style="border-color: var(--line); background: var(--surface); width: 190px;">
-      <div class="dark-bar text-xs">ADMIN</div>
-      {#each [['users','USERS'],['logs','ACTIVITY_LOG'],['auth','AUTHENTICATION'],['groups','GROUPS'],['ldap','LDAP'],['storage','STORAGE'],['auto_approve','AUTO_APPROVE'],['engines','ENGINES']] as [key, label]}
-        <button class="block w-full text-left px-3 py-2.5 text-[11px] font-bold uppercase tracking-tight cursor-pointer border-b"
-          style="border-color: var(--outline); {activeTab === key ? 'background: var(--primary); color: white;' : 'color: var(--on-surface);'}"
+    <nav class="cl-panel shrink-0" style="width: 200px;">
+      <div class="cl-hd"><span class="dot">◉</span>Admin</div>
+      <div class="cl-bd" style="padding: 8px;">
+      {#each [['users','Users'],['logs','Activity Log'],['auth','Authentication'],['groups','Groups'],['ldap','LDAP'],['storage','Storage'],['auto_approve','Auto Approve'],['engines','Engines']] as [key, label]}
+        <button class="block w-full text-left cursor-pointer"
+          style="padding: 8px 12px; font-size: 13px; border-radius: var(--radius-sm); margin-bottom: 2px; transition: background .12s; {activeTab === key ? 'background: var(--primary-soft); color: var(--primary-hover); font-weight: 600;' : 'color: var(--on-surface-muted);'}"
+          onmouseenter={(e) => { if (activeTab !== key) e.currentTarget.style.background = 'var(--surface-container-low)'; }}
+          onmouseleave={(e) => { if (activeTab !== key) e.currentTarget.style.background = 'transparent'; }}
           onclick={() => activeTab = key as any}
         >{label}</button>
       {/each}
+      </div>
     </nav>
     <div class="flex-1 min-w-0">
 
@@ -561,11 +565,11 @@
         <DataTable title="REGISTERED_USERS" count={users.length} columns={userColumns} rows={userRows} />
 
         {#if !auth.isKeycloak && auth.user?.auth_type !== 'keycloak'}
-          <div class="border-2 stamp-shadow" style="border-color: var(--line);">
-            <div class="dark-bar">CHANGE_MY_PASSWORD</div>
-            <div class="bg-white p-3 space-y-2">
-              {#if myPwError}<div class="p-2 text-xs font-bold uppercase text-white" style="background: var(--error);">{myPwError}</div>{/if}
-              {#if myPwSuccess}<div class="p-2 text-xs font-bold uppercase text-white" style="background: var(--primary);">{myPwSuccess}</div>{/if}
+          <div class="cl-panel">
+            <div class="cl-hd"><span class="dot">◉</span>Change My Password</div>
+            <div class="cl-bd space-y-2">
+              {#if myPwError}<div><span class="pill err">{myPwError}</span></div>{/if}
+              {#if myPwSuccess}<div><span class="pill ok">{myPwSuccess}</span></div>{/if}
               <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
                 <FormInput label="CURRENT_PASSWORD" type="password" bind:value={myCurrentPw} placeholder="current" />
                 <FormInput label="NEW_PASSWORD" type="password" bind:value={myNewPw} placeholder="≥8 chars" />
@@ -577,33 +581,32 @@
         {/if}
       </div>
       {#if !auth.isKeycloak}
-        <div class="border-2 stamp-shadow" style="border-color: var(--line);">
-          <div class="dark-bar">CREATE_USER</div>
-          <div class="bg-white p-3 space-y-3">
-            {#if createError}<div class="p-2 text-xs font-bold uppercase text-white" style="background: var(--error);">{createError}</div>{/if}
-            {#if createSuccess}<div class="p-2 text-xs font-bold uppercase text-white" style="background: var(--primary);">{createSuccess}</div>{/if}
+        <div class="cl-panel">
+          <div class="cl-hd"><span class="dot">◉</span>Create User</div>
+          <div class="cl-bd space-y-3">
+            {#if createError}<div><span class="pill err">{createError}</span></div>{/if}
+            {#if createSuccess}<div><span class="pill ok">{createSuccess}</span></div>{/if}
             <FormInput label="USERNAME" bind:value={newUsername} placeholder="username" />
             <FormInput label="PASSWORD" type="password" bind:value={newPassword} placeholder="password" />
             <FormInput label="DISPLAY_NAME" bind:value={newDisplayName} placeholder="Display Name" />
             <div>
-              <div class="tag-label mb-0.5">ROLE</div>
-              <select bind:value={newRole} class="w-full px-2 py-1.5 text-sm font-bold uppercase border-2" style="border-color: var(--line);">
+              <div class="cl-lbl">ROLE</div>
+              <select bind:value={newRole} class="cl-inp">
                 <option value="user">USER</option>
                 <option value="admin">ADMIN</option>
               </select>
             </div>
-            <Button variant="secondary" size="md" onclick={createUser}>CREATE_OPERATOR</Button>
+            <button class="cl-btn primary" onclick={createUser}>Create Operator</button>
           </div>
         </div>
       {:else}
-        <div class="border-2 stamp-shadow" style="border-color: var(--line);">
-          <div class="dark-bar">AUTH_PROVIDER</div>
-          <div class="bg-white p-3">
+        <div class="cl-panel">
+          <div class="cl-hd"><span class="dot">◉</span>Auth Provider</div>
+          <div class="cl-bd">
             <div class="flex items-center gap-2 mb-2">
-              <span class="inline-block w-2 h-2" style="background: var(--primary);"></span>
-              <span class="text-xs font-bold uppercase" style="color: var(--primary);">KEYCLOAK_ACTIVE</span>
+              <span class="pill clay">Keycloak Active</span>
             </div>
-            <p class="text-[10px] font-bold uppercase" style="color: var(--outline);">Users auto-provisioned on first login via Keycloak.</p>
+            <p class="text-xs" style="color: var(--on-surface-muted);">Users auto-provisioned on first login via Keycloak.</p>
           </div>
         </div>
       {/if}
@@ -620,49 +623,44 @@
         ['Unique Users', logStats?.unique_users ?? '—'],
         ['Top Action', logStats?.top_action ?? '—'],
       ] as [label, val]}
-        <div class="border-2 p-2" style="border-color: var(--line); background: var(--surface);">
-          <div class="text-[8px] font-medium uppercase opacity-60">{label}</div>
-          <div class="text-sm font-mono font-bold">{val}</div>
+        <div class="cl-stat" style="padding: 12px 14px;">
+          <div class="n" style="font-size: 18px;">{val}</div>
+          <div class="l">{label}</div>
         </div>
       {/each}
     </div>
 
     <!-- Compact 1-row filter bar (auto-apply on change, no APPLY button) -->
-    <div class="border-2 p-2 mb-3 flex flex-wrap items-center gap-2" style="border-color: var(--line); background: var(--surface);">
-      <span class="text-[8px] font-medium uppercase opacity-60 px-1">VIEW</span>
+    <div class="cl-panel mb-3 flex flex-wrap items-center gap-2" style="padding: 12px;">
+      <span class="cl-lbl" style="margin-bottom: 0;">VIEW</span>
       <select bind:value={logSubTab}
-        class="text-[10px] font-mono px-2 py-1.5 cursor-pointer"
-        style="border: 1px solid var(--on-surface); background: white; color: var(--on-surface);">
+        class="cl-inp cursor-pointer" style="width: auto;">
         <option value="all">ALL</option>
         <option value="security">SECURITY</option>
         <option value="jobs">JOBS</option>
         <option value="users">USERS</option>
       </select>
 
-      <span class="text-[8px] font-medium uppercase opacity-60 px-1 ml-2">FROM</span>
+      <span class="cl-lbl ml-2" style="margin-bottom: 0;">FROM</span>
       <input type="date" bind:value={logFilter.date_from}
-        class="text-[10px] font-mono px-2 py-1.5"
-        style="border: 1px solid var(--on-surface); background: white;" />
+        class="cl-inp" style="width: auto;" />
 
-      <span class="text-[8px] font-medium uppercase opacity-60 px-1">TO</span>
+      <span class="cl-lbl" style="margin-bottom: 0;">TO</span>
       <input type="date" bind:value={logFilter.date_to}
-        class="text-[10px] font-mono px-2 py-1.5"
-        style="border: 1px solid var(--on-surface); background: white;" />
+        class="cl-inp" style="width: auto;" />
 
-      <span class="text-[8px] font-medium uppercase opacity-60 px-1 ml-2">ACTION</span>
+      <span class="cl-lbl ml-2" style="margin-bottom: 0;">ACTION</span>
       <select bind:value={logFilter.action}
-        class="text-[10px] font-mono px-2 py-1.5 cursor-pointer"
-        style="border: 1px solid var(--on-surface); background: white;">
+        class="cl-inp cursor-pointer" style="width: auto;">
         <option value="">ALL</option>
         {#each ['LOGIN','LOGIN_FAILED','LOGOUT','RUN_JOB','JOB_START','JOB_SUCCESS','JOB_FAIL','LDAP_TEST','LDAP_CREATE','LDAP_DELETE','USER_CREATE','USER_DELETE','ROLE_CHANGE','CONFIG_CHANGE'] as a}
           <option>{a}</option>
         {/each}
       </select>
 
-      <span class="text-[8px] font-medium uppercase opacity-60 px-1">STATUS</span>
+      <span class="cl-lbl" style="margin-bottom: 0;">STATUS</span>
       <select bind:value={logFilter.status}
-        class="text-[10px] font-mono px-2 py-1.5 cursor-pointer"
-        style="border: 1px solid var(--on-surface); background: white;">
+        class="cl-inp cursor-pointer" style="width: auto;">
         <option value="">ALL</option>
         <option>OK</option>
         <option>FAILED</option>
@@ -671,16 +669,11 @@
 
       <input type="text" placeholder="🔍 search user / details / resource / error" bind:value={logFilter.search}
         onkeydown={(e) => { if (e.key === 'Enter') applyLogFilters(); }}
-        class="flex-1 min-w-[180px] text-[10px] font-mono px-2 py-1.5"
-        style="border: 1px solid var(--on-surface); background: white;" />
+        class="cl-inp flex-1 min-w-[180px]" />
 
-      <button class="text-[8px] font-medium uppercase px-3 py-1.5 cursor-pointer"
-        style="border: 1px solid var(--on-surface); background: var(--surface-container); color: var(--on-surface);"
-        onclick={applyLogFilters}>APPLY</button>
+      <button class="cl-btn sm" onclick={applyLogFilters}>Apply</button>
 
-      <button class="text-[8px] font-medium uppercase px-3 py-1.5 cursor-pointer"
-        style="border: 1px solid var(--on-surface); background: transparent;"
-        onclick={exportCsv}>↓ CSV</button>
+      <button class="cl-btn sm" onclick={exportCsv}>↓ CSV</button>
     </div>
 
     <!-- Excel-style Table -->
@@ -705,85 +698,84 @@
       onRowClick={(r: any) => openDrawer(r.id)}
       rowClass={(r: any) => r.status === 'FAILED' ? 'bg-red-50/50' : (r.action || '').startsWith('JOB_') ? 'bg-blue-50/30' : ''}
     />
-    <div class="flex justify-between items-center p-3 border-2 border-t-0 stamp-shadow" style="border-color: var(--line); background: var(--surface);">
-      <button class="text-[8px] font-medium uppercase px-2 py-1 cursor-pointer"
-        style="border: 1px solid var(--on-surface);" disabled={logOffset === 0}
-        onclick={() => { logOffset = Math.max(0, logOffset - logLimit); loadLogs(); }}>« PREV</button>
-      <span class="text-[10px] font-mono">{logOffset + 1} – {Math.min(logOffset + logLimit, logTotal)} of {logTotal}</span>
-      <button class="text-[8px] font-medium uppercase px-2 py-1 cursor-pointer"
-        style="border: 1px solid var(--on-surface);" disabled={logOffset + logLimit >= logTotal}
-        onclick={() => { logOffset += logLimit; loadLogs(); }}>NEXT »</button>
+    <div class="flex justify-between items-center cl-panel" style="padding: 12px; margin-top: 8px;">
+      <button class="cl-btn sm" disabled={logOffset === 0}
+        onclick={() => { logOffset = Math.max(0, logOffset - logLimit); loadLogs(); }}>« Prev</button>
+      <span class="text-xs" style="font-family: 'JetBrains Mono', monospace; color: var(--on-surface-muted);">{logOffset + 1} – {Math.min(logOffset + logLimit, logTotal)} of {logTotal}</span>
+      <button class="cl-btn sm" disabled={logOffset + logLimit >= logTotal}
+        onclick={() => { logOffset += logLimit; loadLogs(); }}>Next »</button>
     </div>
 
   {:else if activeTab === 'auth'}
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
       <!-- LEFT: Keycloak config form (2 cols wide) -->
-      <div class="lg:col-span-2 border-2 stamp-shadow" style="border-color: var(--line);">
-        <div class="dark-bar flex items-center justify-between">
-          <span>KEYCLOAK_CONFIGURATION</span>
-          <button class="px-3 py-1 text-[10px] font-medium uppercase cursor-pointer border-2"
-            style="border-color: {kcEnabled ? 'white' : 'rgba(255,255,255,0.4)'}; background: {kcEnabled ? 'var(--primary)' : 'transparent'}; color: white;"
-            onclick={() => kcEnabled = !kcEnabled}>{kcEnabled ? 'ENABLED' : 'DISABLED'}</button>
+      <div class="lg:col-span-2 cl-panel">
+        <div class="cl-hd">
+          <span class="dot">◉</span><span>Keycloak Configuration</span>
+          <span class="ct">
+            <button class="cl-btn sm" style="{kcEnabled ? 'background: var(--primary); color: #fff; border-color: var(--primary);' : ''}"
+              onclick={() => kcEnabled = !kcEnabled}>{kcEnabled ? 'Enabled' : 'Disabled'}</button>
+          </span>
         </div>
-        <div class="bg-white p-4">
-          {#if kcMessage}<div class="mb-3 p-2 text-xs font-bold uppercase text-white border-2" style="background: {kcMessageType === 'success' ? 'var(--primary)' : 'var(--error)'}; border-color: var(--line);">{kcMessage}</div>{/if}
-          {#if kcTestResult}<div class="mb-3 p-2 text-xs font-bold uppercase border-2" style="background: {kcTestType === 'success' ? '#C6EFCE' : '#FFC7CE'}; border-color: var(--line);">{kcTestResult}</div>{/if}
+        <div class="cl-bd">
+          {#if kcMessage}<div class="mb-3"><span class="pill {kcMessageType === 'success' ? 'ok' : 'err'}">{kcMessage}</span></div>{/if}
+          {#if kcTestResult}<div class="mb-3"><span class="pill {kcTestType === 'success' ? 'ok' : 'err'}">{kcTestResult}</span></div>{/if}
           <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-3">
             <div>
-              <div class="tag-label mb-0.5" style="font-size: 9px;">REALM_URL</div>
-              <input bind:value={kcRealmUrl} placeholder="https://keycloak.example.com/realms/myapp" class="w-full font-bold text-sm focus:outline-none" style="padding: 8px 10px; font-family: 'Inter', sans-serif; background: white; border: 1px solid var(--on-surface);" />
+              <div class="cl-lbl">REALM_URL</div>
+              <input bind:value={kcRealmUrl} placeholder="https://keycloak.example.com/realms/myapp" class="cl-inp" />
             </div>
             <div>
-              <div class="tag-label mb-0.5" style="font-size: 9px;">CLIENT_ID</div>
-              <input bind:value={kcClientId} placeholder="ro-ed-frontend" class="w-full font-bold text-sm focus:outline-none" style="padding: 8px 10px; font-family: 'Inter', sans-serif; background: white; border: 1px solid var(--on-surface);" />
+              <div class="cl-lbl">CLIENT_ID</div>
+              <input bind:value={kcClientId} placeholder="ro-ed-frontend" class="cl-inp" />
             </div>
             <div>
-              <div class="tag-label mb-0.5" style="font-size: 9px;">CLIENT_SECRET <span style="color: var(--outline); font-weight: 500;">(optional)</span></div>
-              <input bind:value={kcClientSecret} placeholder="Leave empty for public client (PKCE)" class="w-full font-bold text-sm focus:outline-none" style="padding: 8px 10px; font-family: 'Inter', sans-serif; background: white; border: 1px solid var(--on-surface);" />
+              <div class="cl-lbl">CLIENT_SECRET <span style="text-transform: none; color: var(--on-surface-subtle);">(optional)</span></div>
+              <input bind:value={kcClientSecret} placeholder="Leave empty for public client (PKCE)" class="cl-inp" />
             </div>
             <div>
-              <div class="tag-label mb-0.5" style="font-size: 9px;">ADMIN_ROLE_NAME</div>
-              <input bind:value={kcAdminRole} placeholder="admin" class="w-full font-bold text-sm focus:outline-none" style="padding: 8px 10px; font-family: 'Inter', sans-serif; background: white; border: 1px solid var(--on-surface);" />
+              <div class="cl-lbl">ADMIN_ROLE_NAME</div>
+              <input bind:value={kcAdminRole} placeholder="admin" class="cl-inp" />
             </div>
           </div>
           <div class="flex gap-3 mt-4">
-            <button onclick={testKeycloakConnection} disabled={kcTesting || !kcRealmUrl} class="px-4 py-2.5 text-xs font-medium uppercase cursor-pointer border-2" class:opacity-50={kcTesting || !kcRealmUrl} style="border-color: var(--line); background: var(--surface-container-highest);">{kcTesting ? 'TESTING...' : 'TEST_CONNECTION'}</button>
-            <button onclick={saveKeycloakSettings} disabled={kcSaving} class="flex-1 px-4 py-2.5 text-xs font-medium uppercase cursor-pointer border-2 press-effect" class:opacity-50={kcSaving} style="border-color: var(--line); background: var(--primary-container); box-shadow: var(--shadow-sm);">{kcSaving ? 'SAVING...' : 'SAVE_CONFIGURATION'}</button>
+            <button onclick={testKeycloakConnection} disabled={kcTesting || !kcRealmUrl} class="cl-btn" class:opacity-50={kcTesting || !kcRealmUrl}>{kcTesting ? 'Testing...' : 'Test Connection'}</button>
+            <button onclick={saveKeycloakSettings} disabled={kcSaving} class="cl-btn primary flex-1" class:opacity-50={kcSaving}>{kcSaving ? 'Saving...' : 'Save Configuration'}</button>
           </div>
         </div>
       </div>
 
       <!-- RIGHT: Keycloak setup guide -->
-      <div class="border-2" style="border-color: var(--line);">
-        <div class="dark-bar">KEYCLOAK_SETUP_GUIDE</div>
-        <div class="bg-white p-3 space-y-3 text-[10px] font-bold uppercase" style="color: var(--on-surface);">
+      <div class="cl-panel">
+        <div class="cl-hd"><span class="dot">◉</span>Keycloak Setup Guide</div>
+        <div class="cl-bd space-y-3 text-xs" style="color: var(--on-surface);">
           <div>
-            <div style="color: var(--secondary);">1. CLIENT_TYPE</div>
-            <div style="color: var(--outline);">Public (PKCE) or Confidential (with secret)</div>
+            <div style="color: var(--primary);">1. CLIENT_TYPE</div>
+            <div style="color: var(--on-surface-muted);">Public (PKCE) or Confidential (with secret)</div>
           </div>
           <div>
-            <div style="color: var(--secondary);">2. VALID_REDIRECT_URIS</div>
-            <div class="px-2 py-1 mt-0.5 font-mono text-[9px]" style="background: var(--surface-container); color: var(--on-surface); word-break: break-all;">{typeof window !== 'undefined' ? window.location.origin : 'https://your-app'}/*</div>
+            <div style="color: var(--primary);">2. VALID_REDIRECT_URIS</div>
+            <div class="px-2 py-1 mt-0.5 font-mono text-[10px]" style="background: var(--surface-container-low); border-radius: var(--radius-sm); color: var(--on-surface); word-break: break-all;">{typeof window !== 'undefined' ? window.location.origin : 'https://your-app'}/*</div>
           </div>
           <div>
-            <div style="color: var(--secondary);">3. POST_LOGOUT_REDIRECT_URIS</div>
-            <div class="px-2 py-1 mt-0.5 font-mono text-[9px]" style="background: var(--surface-container); word-break: break-all;">{typeof window !== 'undefined' ? window.location.origin : 'https://your-app'}/*</div>
+            <div style="color: var(--primary);">3. POST_LOGOUT_REDIRECT_URIS</div>
+            <div class="px-2 py-1 mt-0.5 font-mono text-[10px]" style="background: var(--surface-container-low); border-radius: var(--radius-sm); word-break: break-all;">{typeof window !== 'undefined' ? window.location.origin : 'https://your-app'}/*</div>
           </div>
           <div>
-            <div style="color: var(--secondary);">4. WEB_ORIGINS</div>
-            <div class="px-2 py-1 mt-0.5 font-mono text-[9px]" style="background: var(--surface-container); word-break: break-all;">{typeof window !== 'undefined' ? window.location.origin : 'https://your-app'}</div>
+            <div style="color: var(--primary);">4. WEB_ORIGINS</div>
+            <div class="px-2 py-1 mt-0.5 font-mono text-[10px]" style="background: var(--surface-container-low); border-radius: var(--radius-sm); word-break: break-all;">{typeof window !== 'undefined' ? window.location.origin : 'https://your-app'}</div>
           </div>
           <div>
-            <div style="color: var(--secondary);">5. REALM_ROLES_NEEDED</div>
+            <div style="color: var(--primary);">5. REALM_ROLES_NEEDED</div>
             <div class="flex gap-1 mt-0.5">
-              <span class="px-1.5 py-0.5 text-[9px]" style="background: var(--surface-container); color: var(--on-surface);">{kcAdminRole || 'admin'}</span>
-              <span class="px-1.5 py-0.5 text-[9px]" style="background: var(--outline); color: white;">user</span>
+              <span class="pill clay">{kcAdminRole || 'admin'}</span>
+              <span class="pill muted">user</span>
             </div>
-            <div class="mt-0.5" style="color: var(--outline);">Users without "{kcAdminRole || 'admin'}" role get "user" role</div>
+            <div class="mt-0.5" style="color: var(--on-surface-muted);">Users without "{kcAdminRole || 'admin'}" role get "user" role</div>
           </div>
-          <div class="pt-1" style="border-top: 1px solid var(--surface-container-highest);">
-            <div style="color: var(--secondary);">IMPLEMENTATION</div>
-            <div class="space-y-1 mt-1" style="color: var(--outline);">
+          <div class="pt-1" style="border-top: 1px solid var(--line-2);">
+            <div style="color: var(--primary);">IMPLEMENTATION</div>
+            <div class="space-y-1 mt-1" style="color: var(--on-surface-muted);">
               <div>OIDC Auth Code + PKCE (no keycloak-js needed)</div>
               <div>Session init on app start via auth.init()</div>
               <div>Routes protected by layout guard</div>
@@ -800,24 +792,24 @@
     <!-- GROUPS MANAGEMENT -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
       <!-- Group list -->
-      <div class="border-2 stamp-shadow" style="border-color: var(--line);">
-        <div class="dark-bar flex items-center justify-between">
-          <span>GROUPS</span>
-          <button class="px-2 py-0.5 text-[10px] font-medium uppercase cursor-pointer" style="color: var(--primary-container);" onclick={startNewGroup}>+ NEW</button>
+      <div class="cl-panel">
+        <div class="cl-hd">
+          <span class="dot">◉</span><span>Groups</span>
+          <span class="ct"><button class="cl-btn sm" onclick={startNewGroup}>+ New</button></span>
         </div>
-        <div class="bg-white">
+        <div>
           {#if groups.length === 0}
-            <div class="p-4 text-xs font-bold uppercase text-center" style="color: var(--outline);">No groups created yet</div>
+            <div class="p-4 text-sm text-center" style="color: var(--on-surface-muted);">No groups created yet</div>
           {:else}
             {#each groups as g}
               <button class="w-full text-left px-4 py-3 flex items-center justify-between cursor-pointer"
-                style="border-bottom: 1px solid var(--surface-container-highest); {editingGroup?.id === g.id ? 'background: var(--surface-container);' : ''}"
+                style="border-bottom: 1px solid var(--line-2); {editingGroup?.id === g.id ? 'background: var(--primary-soft);' : ''}"
                 onclick={() => editGroup(g)}>
                 <div>
-                  <div class="text-sm font-bold uppercase" style="color: var(--on-surface);">{g.name}</div>
-                  <div class="text-[10px] font-bold uppercase" style="color: var(--outline);">{g.member_count} member{g.member_count !== 1 ? 's' : ''}</div>
+                  <div class="text-sm font-semibold" style="color: var(--on-surface);">{g.name}</div>
+                  <div class="text-xs" style="color: var(--on-surface-muted);">{g.member_count} member{g.member_count !== 1 ? 's' : ''}</div>
                 </div>
-                <span class="text-[10px] font-bold uppercase" style="color: var(--secondary);">EDIT</span>
+                <span class="pill clay">Edit</span>
               </button>
             {/each}
           {/if}
@@ -826,23 +818,23 @@
 
       <!-- Group editor -->
       {#if editingGroup}
-        <div class="border-2 stamp-shadow" style="border-color: var(--line);">
-          <div class="dark-bar">{editingGroup.id ? 'EDIT_GROUP' : 'CREATE_GROUP'}</div>
-          <div class="bg-white p-4 space-y-3">
-            {#if groupMessage}<div class="p-2 text-xs font-bold uppercase" style="color: var(--primary);">{groupMessage}</div>{/if}
+        <div class="cl-panel">
+          <div class="cl-hd"><span class="dot">◉</span>{editingGroup.id ? 'Edit Group' : 'Create Group'}</div>
+          <div class="cl-bd space-y-3">
+            {#if groupMessage}<div><span class="pill clay">{groupMessage}</span></div>{/if}
 
             <div>
-              <div class="tag-label mb-0.5" style="font-size: 9px;">GROUP_NAME</div>
-              <input bind:value={groupName} placeholder="e.g. Operators" class="w-full font-bold text-sm focus:outline-none" style="padding: 6px 10px; font-family: 'Inter', sans-serif; background: white; border: 1px solid var(--on-surface);" />
+              <div class="cl-lbl">GROUP_NAME</div>
+              <input bind:value={groupName} placeholder="e.g. Operators" class="cl-inp" />
             </div>
 
             <!-- Pages -->
             <div>
-              <div class="tag-label mb-1" style="font-size: 9px;">PAGES</div>
+              <div class="cl-lbl">PAGES</div>
               <div class="flex flex-wrap gap-2">
                 {#each Object.entries(groupPages) as [key, val]}
-                  <button class="px-2 py-1 text-[10px] font-medium uppercase cursor-pointer border"
-                    style="border-color: var(--line); background: {val ? 'var(--primary)' : 'white'}; color: {val ? 'white' : 'var(--outline)'};"
+                  <button class="px-3 py-1.5 text-xs cursor-pointer"
+                    style="border: 1px solid var(--line); border-radius: var(--radius-sm); background: {val ? 'var(--primary-soft)' : 'var(--surface-container-lowest)'}; color: {val ? 'var(--primary-hover)' : 'var(--on-surface-muted)'}; font-weight: {val ? '600' : '400'};"
                     onclick={() => groupPages = {...groupPages, [key]: !val}}>{key}</button>
                 {/each}
               </div>
@@ -850,11 +842,11 @@
 
             <!-- Actions -->
             <div>
-              <div class="tag-label mb-1" style="font-size: 9px;">ACTIONS</div>
+              <div class="cl-lbl">ACTIONS</div>
               <div class="flex flex-wrap gap-2">
                 {#each Object.entries(groupActions) as [key, val]}
-                  <button class="px-2 py-1 text-[10px] font-medium uppercase cursor-pointer border"
-                    style="border-color: var(--line); background: {val ? 'var(--secondary)' : 'white'}; color: {val ? 'white' : 'var(--outline)'};"
+                  <button class="px-3 py-1.5 text-xs cursor-pointer"
+                    style="border: 1px solid var(--line); border-radius: var(--radius-sm); background: {val ? 'var(--plum-soft)' : 'var(--surface-container-lowest)'}; color: {val ? 'var(--tertiary)' : 'var(--on-surface-muted)'}; font-weight: {val ? '600' : '400'};"
                     onclick={() => groupActions = {...groupActions, [key]: !val}}>{key.replace(/_/g, ' ')}</button>
                 {/each}
               </div>
@@ -862,11 +854,11 @@
 
             <!-- Data scope -->
             <div>
-              <div class="tag-label mb-1" style="font-size: 9px;">DATA_SCOPE</div>
+              <div class="cl-lbl">DATA_SCOPE</div>
               <div class="flex gap-2">
                 {#each [['own', 'OWN DATA'], ['all_readonly', 'ALL (READ)'], ['all_full', 'ALL (FULL)']] as [val, label]}
-                  <button class="px-2 py-1 text-[10px] font-medium uppercase cursor-pointer border"
-                    style="border-color: var(--line); background: {groupScope === val ? 'var(--on-surface)' : 'white'}; color: {groupScope === val ? 'var(--surface)' : 'var(--outline)'};"
+                  <button class="px-3 py-1.5 text-xs cursor-pointer"
+                    style="border: 1px solid var(--line); border-radius: var(--radius-sm); background: {groupScope === val ? 'var(--primary)' : 'var(--surface-container-lowest)'}; color: {groupScope === val ? '#fff' : 'var(--on-surface-muted)'}; font-weight: {groupScope === val ? '600' : '400'};"
                     onclick={() => groupScope = val}>{label}</button>
                 {/each}
               </div>
@@ -874,15 +866,15 @@
 
             <!-- Members -->
             <div>
-              <div class="tag-label mb-1" style="font-size: 9px;">MEMBERS</div>
+              <div class="cl-lbl">MEMBERS</div>
               <div class="flex flex-wrap gap-2 max-h-24 overflow-y-auto">
                 {#each users.filter(u => u.role !== 'admin') as u}
-                  <button class="px-2 py-1 text-[10px] font-bold uppercase cursor-pointer border"
-                    style="border-color: var(--line); background: {groupMembers.includes(u.id) ? 'var(--tertiary)' : 'white'}; color: {groupMembers.includes(u.id) ? 'white' : 'var(--outline)'};"
+                  <button class="px-3 py-1.5 text-xs cursor-pointer"
+                    style="border: 1px solid var(--line); border-radius: var(--radius-sm); background: {groupMembers.includes(u.id) ? 'var(--info-soft)' : 'var(--surface-container-lowest)'}; color: {groupMembers.includes(u.id) ? 'var(--info)' : 'var(--on-surface-muted)'}; font-weight: {groupMembers.includes(u.id) ? '600' : '400'};"
                     onclick={() => toggleMember(u.id)}>{u.username}</button>
                 {/each}
                 {#if users.filter(u => u.role !== 'admin').length === 0}
-                  <span class="text-[10px] font-bold uppercase" style="color: var(--outline);">No non-admin users yet</span>
+                  <span class="text-xs" style="color: var(--on-surface-muted);">No non-admin users yet</span>
                 {/if}
               </div>
             </div>
@@ -890,25 +882,22 @@
             <!-- Buttons -->
             <div class="flex gap-2 pt-1">
               {#if editingGroup.id}
-                <button onclick={deleteGroup} class="px-3 py-2 text-[10px] font-medium uppercase cursor-pointer border-2" style="border-color: var(--error); color: var(--error);">DELETE</button>
+                <button onclick={deleteGroup} class="cl-btn" style="color: var(--error); border-color: var(--error-soft);">Delete</button>
               {/if}
               <button onclick={saveGroup} disabled={groupSaving || !groupName.trim()}
-                class="flex-1 px-3 py-2 text-[10px] font-medium uppercase cursor-pointer border-2 press-effect"
-                class:opacity-50={groupSaving || !groupName.trim()}
-                style="border-color: var(--line); background: var(--primary-container); box-shadow: var(--shadow-sm);">
-                {groupSaving ? 'SAVING...' : 'SAVE_GROUP'}
+                class="cl-btn primary flex-1"
+                class:opacity-50={groupSaving || !groupName.trim()}>
+                {groupSaving ? 'Saving...' : 'Save Group'}
               </button>
-              <button onclick={() => editingGroup = null} class="px-3 py-2 text-[10px] font-medium uppercase cursor-pointer border-2" style="border-color: var(--line); color: var(--outline);">CANCEL</button>
+              <button onclick={() => editingGroup = null} class="cl-btn">Cancel</button>
             </div>
           </div>
         </div>
       {:else}
-        <div class="border-2 flex items-center justify-center p-8" style="border-color: var(--surface-container-highest); border-style: dashed;">
+        <div class="cl-drop flex items-center justify-center">
           <div class="text-center">
-            <div class="text-xs font-bold uppercase" style="color: var(--outline);">Select a group to edit or</div>
-            <button class="mt-2 px-4 py-2 text-xs font-medium uppercase cursor-pointer border-2 press-effect"
-              style="border-color: var(--line); background: var(--primary-container); box-shadow: var(--shadow-sm);"
-              onclick={startNewGroup}>CREATE_NEW_GROUP</button>
+            <div class="text-sm" style="color: var(--on-surface-muted);">Select a group to edit or</div>
+            <button class="cl-btn primary mt-2" onclick={startNewGroup}>Create New Group</button>
           </div>
         </div>
       {/if}
@@ -916,19 +905,16 @@
 
   {:else if activeTab === 'ldap'}
     {#if ldapToast}
-      <div class="mb-3 p-2 text-xs font-mono border-2"
-           style="border-color: {ldapToast.type === 'ok' ? '#10b981' : '#ef4444'}; background: {ldapToast.type === 'ok' ? '#d1fae5' : '#fee2e2'}; color: var(--on-surface);">
-        [{ldapToast.type === 'ok' ? 'OK' : 'ERR'}] {ldapToast.msg}
-        <button class="ml-2 underline cursor-pointer" onclick={() => ldapToast = null}>×</button>
+      <div class="mb-3"><span class="pill {ldapToast.type === 'ok' ? 'ok' : 'err'}">{ldapToast.msg}
+        <button class="ml-1 cursor-pointer" onclick={() => ldapToast = null}>×</button></span>
       </div>
     {/if}
 
     <div class="flex justify-end mb-2">
       <button
-        class="text-[8px] font-medium uppercase px-3 py-1.5 cursor-pointer"
-        style="background: #10b981; color: white; border: 1px solid var(--on-surface);"
+        class="cl-btn primary sm"
         onclick={() => ldapEditing = { port: 389, attr_username: 'uid', attr_mail: 'mail', attr_groups: 'memberOf', priority: 50, active: true, use_tls: false, validate_cert: true }}
-      >+ ADD_LDAP</button>
+      >+ Add LDAP</button>
     </div>
 
     <ExcelTable
@@ -955,21 +941,21 @@
       exportFilename="ldap_configs.csv"
       onRowClick={(r) => ldapEditing = { ...r, bind_password: '' }}
     />
-    <div class="text-[9px] font-mono opacity-60 mt-1 px-1">click row to edit</div>
+    <div class="text-xs mt-1 px-1" style="color: var(--on-surface-subtle);">click row to edit</div>
 
     {#if ldapEditing !== null}
       <div class="fixed inset-0 z-50 flex items-center justify-center p-4"
-           style="background: rgba(0,0,0,0.5);"
+           style="background: rgba(0,0,0,0.4);"
            onclick={() => ldapEditing = null}>
-        <div class="border-2 stamp-shadow max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6"
-             style="border-color: var(--line); background: var(--surface);"
+        <div class="cl-panel max-w-2xl w-full max-h-[90vh] overflow-y-auto"
+             style="box-shadow: var(--shadow-lg, 0 20px 50px rgba(0,0,0,0.2));"
              onclick={(e) => e.stopPropagation()}>
-          <div class="flex items-center justify-between mb-4 -mx-6 -mt-6 px-6 py-3"
-               style="background: var(--surface-container); color: var(--on-surface);">
-            <span class="text-xs font-medium uppercase tracking-wider">{ldapEditing.id ? 'EDIT_LDAP' : 'ADD_LDAP'}</span>
-            <button class="text-[10px] font-medium uppercase cursor-pointer" style="color: var(--surface);"
-                    onclick={() => ldapEditing = null}>×</button>
+          <div class="cl-hd">
+            <span class="dot">◉</span><span>{ldapEditing.id ? 'Edit LDAP' : 'Add LDAP'}</span>
+            <span class="ct"><button class="cursor-pointer" style="color: var(--on-surface-muted);"
+                    onclick={() => ldapEditing = null}>×</button></span>
           </div>
+          <div class="cl-bd">
           <div class="grid grid-cols-2 gap-3">
             {#each [
               ['label','LABEL','text', 'My LDAP'],
@@ -986,14 +972,13 @@
               ['priority','PRIORITY','number', '50'],
             ] as [k, label, type, ph]}
               <label class="block">
-                <span class="text-[8px] font-medium uppercase tag-label">{label}</span>
+                <span class="cl-lbl">{label}</span>
                 <input
                   type={type}
                   value={ldapEditing[k] ?? ''}
                   placeholder={ph}
                   oninput={(e) => ldapEditing[k] = type === 'number' ? +e.currentTarget.value : e.currentTarget.value}
-                  class="w-full mt-1 px-2 py-1.5 text-[10px] font-mono focus:outline-none"
-                  style="border: 1px solid var(--on-surface); background: white; color: var(--on-surface);"
+                  class="cl-inp"
                 />
               </label>
             {/each}
@@ -1002,20 +987,17 @@
           <div class="mt-4 flex flex-wrap gap-2">
             {#each [['use_tls','USE_TLS'],['validate_cert','VALIDATE_CERT'],['active','ACTIVE']] as [k, label]}
               <button
-                class="text-[8px] font-medium uppercase px-3 py-1.5 cursor-pointer"
-                style="border: 1px solid var(--on-surface); background: {ldapEditing[k] ? 'var(--primary)' : 'white'}; color: {ldapEditing[k] ? 'white' : 'var(--outline)'};"
+                class="px-3 py-1.5 text-xs cursor-pointer"
+                style="border: 1px solid var(--line); border-radius: var(--radius-sm); background: {ldapEditing[k] ? 'var(--primary-soft)' : 'var(--surface-container-lowest)'}; color: {ldapEditing[k] ? 'var(--primary-hover)' : 'var(--on-surface-muted)'}; font-weight: {ldapEditing[k] ? '600' : '400'};"
                 onclick={() => ldapEditing[k] = !ldapEditing[k]}
-              >[{ldapEditing[k] ? 'X' : ' '}] {label}</button>
+              >{label}</button>
             {/each}
           </div>
 
           <div class="flex justify-end gap-2 mt-4">
-            <button class="text-[8px] font-medium uppercase px-3 py-1.5 cursor-pointer"
-                    style="border: 1px solid var(--on-surface); background: transparent; color: var(--on-surface);"
-                    onclick={() => ldapEditing = null}>CANCEL</button>
-            <button class="text-[8px] font-medium uppercase px-3 py-1.5 cursor-pointer"
-                    style="background: #10b981; color: white; border: 1px solid var(--on-surface);"
-                    onclick={saveLdap}>{ldapEditing.id ? 'UPDATE' : 'CREATE'}</button>
+            <button class="cl-btn" onclick={() => ldapEditing = null}>Cancel</button>
+            <button class="cl-btn primary" onclick={saveLdap}>{ldapEditing.id ? 'Update' : 'Create'}</button>
+          </div>
           </div>
         </div>
       </div>
@@ -1023,19 +1005,16 @@
 
   {:else if activeTab === 'storage'}
     {#if storageToast}
-      <div class="mb-3 p-2 text-xs font-mono border-2"
-           style="border-color: {storageToast.type === 'ok' ? '#10b981' : '#ef4444'}; background: {storageToast.type === 'ok' ? '#d1fae5' : '#fee2e2'}; color: var(--on-surface);">
-        [{storageToast.type === 'ok' ? 'OK' : 'ERR'}] {storageToast.msg}
-        <button class="ml-2 underline cursor-pointer" onclick={() => storageToast = null}>×</button>
+      <div class="mb-3"><span class="pill {storageToast.type === 'ok' ? 'ok' : 'err'}">{storageToast.msg}
+        <button class="ml-1 cursor-pointer" onclick={() => storageToast = null}>×</button></span>
       </div>
     {/if}
 
     <div class="flex justify-end mb-2">
       <button
-        class="text-[8px] font-medium uppercase px-3 py-1.5 cursor-pointer"
-        style="background: #10b981; color: white; border: 1px solid var(--on-surface);"
+        class="cl-btn primary sm"
         onclick={() => storageEditing = { provider: 'aws', label: '', endpoint_url: '', region_name: '', bucket_name: '', access_key_id: '', secret_access_key: '', key_prefix: '', use_ssl: true, addressing_style: 'auto', signature_version: 's3v4', use_for_uploads: true, use_for_exports: true, use_for_cache: false, use_for_archive: false, active: true }}
-      >+ ADD_STORAGE</button>
+      >+ Add Storage</button>
     </div>
 
     <ExcelTable
@@ -1066,32 +1045,28 @@
       onRowClick={(r) => storageEditing = { ...r, secret_access_key: '' }}
     />
 
-    <div class="text-[9px] font-mono opacity-60 mt-1 px-1">click row to edit</div>
+    <div class="text-xs mt-1 px-1" style="color: var(--on-surface-subtle);">click row to edit</div>
 
     <!-- Per-row action buttons strip -->
     {#if storageConfigs.length > 0}
-      <div class="mt-2 border-2" style="border-color: var(--line); background: var(--surface);">
+      <div class="mt-2 cl-panel">
         {#each storageConfigs as c}
-          <div class="flex items-center gap-2 px-3 py-2" style="border-bottom: 1px solid var(--surface-container-highest);">
-            <span class="text-[10px] font-mono font-bold flex-1" style="color: var(--on-surface);">
-              {c.label} <span class="opacity-60">[{(c.provider||'').toUpperCase()}]</span>
-              {#if c.active}<span class="ml-2 px-1.5 py-0.5 text-[8px]" style="background: #10b981; color: white;">ACTIVE</span>{/if}
+          <div class="flex items-center gap-2 px-3 py-2" style="border-bottom: 1px solid var(--line-2);">
+            <span class="text-sm flex-1" style="color: var(--on-surface);">
+              {c.label} <span style="color: var(--on-surface-subtle); font-family: 'JetBrains Mono', monospace; font-size: 12px;">[{(c.provider||'').toUpperCase()}]</span>
+              {#if c.active}<span class="pill ok ml-2">Active</span>{/if}
             </span>
-            <button class="text-[8px] font-medium uppercase px-2 py-1 cursor-pointer"
-                    style="border: 1px solid var(--on-surface); background: white;"
+            <button class="cl-btn sm"
                     disabled={storageTesting === c.id}
-                    onclick={() => testStorage(c.id)}>{storageTesting === c.id ? 'TESTING…' : 'TEST'}</button>
+                    onclick={() => testStorage(c.id)}>{storageTesting === c.id ? 'Testing…' : 'Test'}</button>
             {#if !c.active}
-              <button class="text-[8px] font-medium uppercase px-2 py-1 cursor-pointer"
-                      style="border: 1px solid var(--on-surface); background: var(--primary-container);"
-                      onclick={() => activateStorage(c.id)}>ACTIVATE</button>
+              <button class="cl-btn sm" style="background: var(--primary-soft); color: var(--primary-hover); border-color: var(--primary-soft);"
+                      onclick={() => activateStorage(c.id)}>Activate</button>
             {/if}
-            <button class="text-[8px] font-medium uppercase px-2 py-1 cursor-pointer"
-                    style="border: 1px solid var(--on-surface); background: white;"
-                    onclick={() => storageEditing = { ...c, secret_access_key: '' }}>EDIT</button>
-            <button class="text-[8px] font-medium uppercase px-2 py-1 cursor-pointer"
-                    style="border: 1px solid var(--error); color: var(--error); background: white;"
-                    onclick={() => deleteStorage(c.id)}>DELETE</button>
+            <button class="cl-btn sm"
+                    onclick={() => storageEditing = { ...c, secret_access_key: '' }}>Edit</button>
+            <button class="cl-btn sm" style="color: var(--error); border-color: var(--error-soft);"
+                    onclick={() => deleteStorage(c.id)}>Delete</button>
           </div>
         {/each}
       </div>
@@ -1099,25 +1074,25 @@
 
     {#if storageEditing !== null}
       <div class="fixed inset-0 z-50 flex items-center justify-center p-4"
-           style="background: rgba(0,0,0,0.5);"
+           style="background: rgba(0,0,0,0.4);"
            onclick={() => storageEditing = null}>
-        <div class="border-2 stamp-shadow max-w-3xl w-full max-h-[90vh] overflow-y-auto p-6"
-             style="border-color: var(--line); background: var(--surface);"
+        <div class="cl-panel max-w-3xl w-full max-h-[90vh] overflow-y-auto"
+             style="box-shadow: var(--shadow-lg, 0 20px 50px rgba(0,0,0,0.2));"
              onclick={(e) => e.stopPropagation()}>
-          <div class="flex items-center justify-between mb-4 -mx-6 -mt-6 px-6 py-3"
-               style="background: var(--surface-container); color: var(--on-surface);">
-            <span class="text-xs font-medium uppercase tracking-wider">{storageEditing.id ? 'EDIT_STORAGE' : 'ADD_STORAGE'}</span>
-            <button class="text-[10px] font-medium uppercase cursor-pointer" style="color: var(--surface);"
-                    onclick={() => storageEditing = null}>×</button>
+          <div class="cl-hd">
+            <span class="dot">◉</span><span>{storageEditing.id ? 'Edit Storage' : 'Add Storage'}</span>
+            <span class="ct"><button class="cursor-pointer" style="color: var(--on-surface-muted);"
+                    onclick={() => storageEditing = null}>×</button></span>
           </div>
+          <div class="cl-bd">
 
           <!-- Provider radio -->
           <div class="mb-3">
-            <div class="text-[8px] font-medium uppercase tag-label mb-1">PROVIDER</div>
+            <div class="cl-lbl">PROVIDER</div>
             <div class="flex flex-wrap gap-2">
               {#each [['aws','AWS'],['minio','MINIO'],['r2','R2'],['wasabi','WASABI'],['backblaze','BACKBLAZE'],['custom','CUSTOM']] as [val, label]}
-                <button class="text-[9px] font-medium uppercase px-3 py-1.5 cursor-pointer"
-                        style="border: 1px solid var(--on-surface); background: {storageEditing.provider === val ? 'var(--on-surface)' : 'white'}; color: {storageEditing.provider === val ? 'var(--surface)' : 'var(--on-surface)'};"
+                <button class="px-3 py-1.5 text-xs cursor-pointer"
+                        style="border: 1px solid var(--line); border-radius: var(--radius-sm); background: {storageEditing.provider === val ? 'var(--primary)' : 'var(--surface-container-lowest)'}; color: {storageEditing.provider === val ? '#fff' : 'var(--on-surface-muted)'}; font-weight: {storageEditing.provider === val ? '600' : '400'};"
                         onclick={() => applyPreset(val)}>{label}</button>
               {/each}
             </div>
@@ -1135,25 +1110,23 @@
               ['signature_version','SIGNATURE_VERSION','text', 's3v4'],
             ] as [k, label, type, ph]}
               <label class="block">
-                <span class="text-[8px] font-medium uppercase tag-label">{label}</span>
+                <span class="cl-lbl">{label}</span>
                 <input
                   type={type}
                   value={storageEditing[k] ?? ''}
                   placeholder={ph}
                   oninput={(e) => storageEditing[k] = e.currentTarget.value}
-                  class="w-full mt-1 px-2 py-1.5 text-[10px] font-mono focus:outline-none"
-                  style="border: 1px solid var(--on-surface); background: white; color: var(--on-surface);"
+                  class="cl-inp"
                 />
               </label>
             {/each}
 
             <label class="block">
-              <span class="text-[8px] font-medium uppercase tag-label">ADDRESSING_STYLE</span>
+              <span class="cl-lbl">ADDRESSING_STYLE</span>
               <select
                 value={storageEditing.addressing_style ?? 'auto'}
                 onchange={(e) => storageEditing.addressing_style = e.currentTarget.value}
-                class="w-full mt-1 px-2 py-1.5 text-[10px] font-mono focus:outline-none cursor-pointer"
-                style="border: 1px solid var(--on-surface); background: white; color: var(--on-surface);"
+                class="cl-inp cursor-pointer"
               >
                 <option value="auto">AUTO</option>
                 <option value="path">PATH</option>
@@ -1165,123 +1138,110 @@
           <div class="mt-4 flex flex-wrap gap-2">
             {#each [['use_ssl','USE_SSL'],['use_for_uploads','USE_FOR_UPLOADS'],['use_for_exports','USE_FOR_EXPORTS'],['use_for_cache','USE_FOR_CACHE'],['use_for_archive','USE_FOR_ARCHIVE'],['active','ACTIVE']] as [k, label]}
               <button
-                class="text-[8px] font-medium uppercase px-3 py-1.5 cursor-pointer"
-                style="border: 1px solid var(--on-surface); background: {storageEditing[k] ? 'var(--primary)' : 'white'}; color: {storageEditing[k] ? 'white' : 'var(--outline)'};"
+                class="px-3 py-1.5 text-xs cursor-pointer"
+                style="border: 1px solid var(--line); border-radius: var(--radius-sm); background: {storageEditing[k] ? 'var(--primary-soft)' : 'var(--surface-container-lowest)'}; color: {storageEditing[k] ? 'var(--primary-hover)' : 'var(--on-surface-muted)'}; font-weight: {storageEditing[k] ? '600' : '400'};"
                 onclick={() => storageEditing[k] = !storageEditing[k]}
-              >[{storageEditing[k] ? 'X' : ' '}] {label}</button>
+              >{label}</button>
             {/each}
           </div>
 
           <div class="flex justify-end gap-2 mt-4">
-            <button class="text-[8px] font-medium uppercase px-3 py-1.5 cursor-pointer"
-                    style="border: 1px solid var(--on-surface); background: transparent; color: var(--on-surface);"
-                    onclick={() => storageEditing = null}>CANCEL</button>
-            <button class="text-[8px] font-medium uppercase px-3 py-1.5 cursor-pointer"
-                    style="background: #10b981; color: white; border: 1px solid var(--on-surface);"
-                    onclick={saveStorage}>{storageEditing.id ? 'UPDATE' : 'CREATE'}</button>
+            <button class="cl-btn" onclick={() => storageEditing = null}>Cancel</button>
+            <button class="cl-btn primary" onclick={saveStorage}>{storageEditing.id ? 'Update' : 'Create'}</button>
+          </div>
           </div>
         </div>
       </div>
     {/if}
 
   {:else if activeTab === 'auto_approve'}
-    <div class="border-2 stamp-shadow" style="border-color: var(--line);">
-      <div class="dark-bar text-xs">AUTO_APPROVE_SETTINGS</div>
-      <div class="bg-white p-4 space-y-4">
-        <div class="text-[10px] font-mono opacity-70">
+    <div class="cl-panel">
+      <div class="cl-hd"><span class="dot">◉</span>Auto Approve Settings</div>
+      <div class="cl-bd space-y-4">
+        <div class="text-xs" style="color: var(--on-surface-muted);">
           When ENABLED, an hourly background task auto-approves any pending_review job whose
           accuracy_percent is greater than or equal to (threshold × 100). Auto-approved jobs are
           marked <code>reviewed_by = SYSTEM_AUTO</code>.
         </div>
 
         <div class="flex items-center gap-3">
-          <label class="text-xs font-bold uppercase w-32">ENABLED</label>
-          <button class="text-[10px] font-bold uppercase px-3 py-1.5 cursor-pointer"
-            style="border: 1px solid var(--on-surface);
-                   background: {autoApprove.enabled ? '#10b981' : 'white'};
-                   color: {autoApprove.enabled ? 'white' : 'var(--on-surface)'};"
-            onclick={() => autoApprove.enabled = !autoApprove.enabled}>
-            {autoApprove.enabled ? '☑ ON' : '☐ OFF'}
-          </button>
+          <label class="cl-lbl w-32" style="margin-bottom: 0;">ENABLED</label>
+          <button class="cl-toggle {autoApprove.enabled ? 'on' : ''}"
+            aria-label="Toggle auto-approve"
+            onclick={() => autoApprove.enabled = !autoApprove.enabled}></button>
         </div>
 
         <div class="flex items-center gap-3">
-          <label class="text-xs font-bold uppercase w-32">THRESHOLD</label>
+          <label class="cl-lbl w-32" style="margin-bottom: 0;">THRESHOLD</label>
           <input type="number" min="0" max="1" step="0.01"
             bind:value={autoApprove.threshold}
-            class="text-xs font-mono px-2 py-1.5 w-32"
-            style="border: 1px solid var(--on-surface); background: white;" />
-          <span class="text-[10px] font-mono opacity-60">
+            class="cl-inp w-32" />
+          <span class="text-xs" style="color: var(--on-surface-muted);">
             (0.0–1.0; ≥ {((autoApprove.threshold || 0) * 100).toFixed(0)}% accuracy auto-approves)
           </span>
         </div>
 
-        <div class="grid grid-cols-2 gap-3 mt-2 text-[10px] font-mono">
-          <div class="border-2 p-2" style="border-color: var(--line);">
-            <div class="opacity-60">SCHEDULE</div>
-            <div class="font-bold">hourly</div>
+        <div class="grid grid-cols-2 gap-3 mt-2">
+          <div class="cl-stat" style="padding: 12px 14px;">
+            <div class="l">SCHEDULE</div>
+            <div class="n" style="font-size: 18px;">hourly</div>
           </div>
-          <div class="border-2 p-2" style="border-color: var(--line);">
-            <div class="opacity-60">LAST_RUN</div>
-            <div class="font-bold">
+          <div class="cl-stat" style="padding: 12px 14px;">
+            <div class="l">LAST_RUN</div>
+            <div class="n" style="font-size: 18px;">
               {autoApprove.last_run || '—'}
               {#if autoApprove.last_count !== undefined}
-                <span class="opacity-70">— approved {autoApprove.last_count}</span>
+                <span style="font-size: 13px; color: var(--on-surface-muted); font-family: 'JetBrains Mono', monospace;">— approved {autoApprove.last_count}</span>
               {/if}
             </div>
           </div>
         </div>
 
         {#if autoApproveMsg}
-          <div class="p-2 text-xs font-bold uppercase text-white"
-            style="background: {autoApproveMsg.type === 'ok' ? 'var(--primary)' : 'var(--error)'};">
-            {autoApproveMsg.msg}
-          </div>
+          <div><span class="pill {autoApproveMsg.type === 'ok' ? 'ok' : 'err'}">{autoApproveMsg.msg}</span></div>
         {/if}
 
         <div class="pt-2">
-          <Button variant="primary" size="md"
-            disabled={autoApproveSaving}
-            onclick={saveAutoApprove}>
-            {autoApproveSaving ? 'SAVING...' : 'SAVE_SETTINGS'}
-          </Button>
+          <button class="cl-btn primary" disabled={autoApproveSaving} onclick={saveAutoApprove}>
+            {autoApproveSaving ? 'Saving...' : 'Save Settings'}
+          </button>
         </div>
       </div>
     </div>
 
   {:else if activeTab === 'engines'}
-    <div class="border-2 stamp-shadow" style="border-color: var(--line);">
-      <div class="dark-bar text-xs">EXTRACTION_ENGINES</div>
-      <div class="bg-white p-4 space-y-4">
-        <div class="text-[10px] font-mono opacity-70">
+    <div class="cl-panel">
+      <div class="cl-hd"><span class="dot">◉</span>Extraction Engines</div>
+      <div class="cl-bd space-y-3">
+        <div class="text-xs" style="color: var(--on-surface-muted);">
           Choose which extraction engines users can pick on the Agent page, and the default.
           By default only the latest engine (ATLAS) is enabled; legacy engines are off.
         </div>
         {#each engineCfg.all as e}
           {@const on = engineCfg.enabled.includes(e.id)}
-          <div class="flex items-center gap-3 border-2 p-2" style="border-color: var(--line);">
-            <button class="text-[10px] font-bold uppercase px-3 py-1.5 cursor-pointer"
-              style="border: 1px solid var(--on-surface); background: {on ? '#10b981' : 'white'}; color: {on ? 'white' : 'var(--on-surface)'};"
-              onclick={() => toggleEngine(e.id)}>{on ? '☑ ON' : '☐ OFF'}</button>
+          <div class="flex items-center gap-3 p-3" style="border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-container-lowest);">
+            <button class="cl-toggle {on ? 'on' : ''}"
+              aria-label="Toggle engine"
+              onclick={() => toggleEngine(e.id)}></button>
             <div class="flex-1">
-              <div class="text-xs font-bold uppercase">{e.label}</div>
-              <div class="text-[10px] font-mono opacity-60">{e.desc}</div>
+              <div class="text-sm font-semibold" style="color: var(--on-surface);">{e.label}</div>
+              <div class="text-xs" style="color: var(--on-surface-muted);">{e.desc}</div>
             </div>
-            <button class="text-[10px] font-bold uppercase px-3 py-1.5 cursor-pointer"
-              style="border: 1px solid var(--on-surface); background: {engineCfg.default === e.id ? 'var(--primary)' : 'white'}; color: {engineCfg.default === e.id ? 'white' : 'var(--on-surface)'};"
+            <button class="cl-btn sm"
+              style="{engineCfg.default === e.id ? 'background: var(--primary); color: #fff; border-color: var(--primary);' : ''}"
               disabled={!on}
               onclick={() => engineCfg = { ...engineCfg, default: e.id }}>
-              {engineCfg.default === e.id ? '★ DEFAULT' : 'set default'}
+              {engineCfg.default === e.id ? '★ Default' : 'Set default'}
             </button>
           </div>
         {/each}
         {#if engineMsg}
-          <div class="text-[10px] font-mono" style="color: {engineMsg.type === 'ok' ? '#16a34a' : 'var(--error)'};">{engineMsg.msg}</div>
+          <div><span class="pill {engineMsg.type === 'ok' ? 'ok' : 'err'}">{engineMsg.msg}</span></div>
         {/if}
         <div class="pt-2">
-          <Button variant="primary" size="md" disabled={engineSaving} onclick={saveEngines}>
-            {engineSaving ? 'SAVING...' : 'SAVE_SETTINGS'}
-          </Button>
+          <button class="cl-btn primary" disabled={engineSaving} onclick={saveEngines}>
+            {engineSaving ? 'Saving...' : 'Save Settings'}
+          </button>
         </div>
       </div>
     </div>
@@ -1293,28 +1253,28 @@
 
 <!-- Activity Log: Event detail drawer -->
 {#if drawerEvent}
-  <div class="fixed inset-0 z-50 flex justify-end" style="background: rgba(0,0,0,0.5);"
+  <div class="fixed inset-0 z-50 flex justify-end" style="background: rgba(0,0,0,0.4);"
        onclick={() => drawerEvent = null}>
-    <div class="border-l-2 max-w-lg w-full overflow-y-auto p-6"
-         style="border-color: var(--line); background: var(--surface);"
+    <div class="max-w-lg w-full overflow-y-auto p-6"
+         style="border-left: 1px solid var(--line); background: var(--surface-container-lowest); box-shadow: var(--shadow-lg, -20px 0 50px rgba(0,0,0,0.15));"
          onclick={(e) => e.stopPropagation()}>
       <div class="-mx-6 -mt-6 px-6 py-3 mb-4"
-           style="background: var(--surface-container); color: var(--on-surface);">
-        <span class="text-xs font-medium uppercase">EVENT_DETAIL</span>
+           style="border-bottom: 1px solid var(--line-2);">
+        <span style="font-family: 'Source Serif 4', Georgia, serif; font-size: 1rem; color: var(--on-surface);"><span style="color: var(--primary);">◉</span> Event Detail</span>
       </div>
-      <div class="space-y-2 text-[10px] font-mono">
+      <div class="space-y-2 text-xs" style="font-family: 'JetBrains Mono', monospace;">
         {#each Object.entries(drawerEvent.event || {}) as [k, v]}
           <div class="grid grid-cols-3 gap-2">
-            <div class="font-medium opacity-60">{k.toUpperCase()}</div>
-            <div class="col-span-2 break-all">{v ?? '—'}</div>
+            <div style="color: var(--on-surface-muted);">{k.toUpperCase()}</div>
+            <div class="col-span-2 break-all" style="color: var(--on-surface);">{v ?? '—'}</div>
           </div>
         {/each}
       </div>
       {#if drawerEvent.related?.length}
-        <div class="mt-6 pt-3" style="border-top: 1px solid var(--on-surface);">
-          <div class="text-[10px] font-medium uppercase mb-2">RECENT (same user)</div>
+        <div class="mt-6 pt-3" style="border-top: 1px solid var(--line-2);">
+          <div class="cl-lbl mb-2">RECENT (same user)</div>
           {#each drawerEvent.related as r}
-            <div class="text-[10px] font-mono py-1" style="border-bottom: 1px solid rgba(0,0,0,0.1);">
+            <div class="text-xs py-1" style="font-family: 'JetBrains Mono', monospace; border-bottom: 1px solid var(--line-2); color: var(--on-surface-muted);">
               {r.timestamp} · {r.action} · {r.status || ''}
             </div>
           {/each}

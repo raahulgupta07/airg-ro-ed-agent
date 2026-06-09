@@ -199,64 +199,56 @@
 </div>
 
 <!-- Filter bar -->
-<div class="border-2 stamp-shadow mb-3" style="border-color: var(--line); background: var(--surface);">
-  <div class="dark-bar text-xs">FILTERS</div>
-  <div class="bg-white p-2 flex flex-wrap items-center gap-2">
-    <span class="text-[8px] font-medium uppercase opacity-60 px-1">STATUS</span>
-    <select bind:value={filters.status}
-      class="text-[10px] font-mono px-2 py-1.5 cursor-pointer"
-      style="border: 1px solid var(--on-surface); background: white;">
-      <option value="pending_review">PENDING_REVIEW</option>
-      <option value="approved">APPROVED</option>
-      <option value="rejected">REJECTED</option>
-      <option value="draft">DRAFT</option>
-    </select>
-
-    <span class="text-[8px] font-medium uppercase opacity-60 px-1">IMPORTER</span>
-    <input type="text" bind:value={filters.importer} placeholder="substring"
-      class="text-[10px] font-mono px-2 py-1.5"
-      style="border: 1px solid var(--on-surface); background: white; width: 160px;" />
-
-    <span class="text-[8px] font-medium uppercase opacity-60 px-1">FROM</span>
-    <input type="date" bind:value={filters.date_from}
-      class="text-[10px] font-mono px-2 py-1.5"
-      style="border: 1px solid var(--on-surface); background: white;" />
-
-    <span class="text-[8px] font-medium uppercase opacity-60 px-1">TO</span>
-    <input type="date" bind:value={filters.date_to}
-      class="text-[10px] font-mono px-2 py-1.5"
-      style="border: 1px solid var(--on-surface); background: white;" />
-
-    <span class="text-[8px] font-medium uppercase opacity-60 px-1">MIN_EDITS</span>
-    <input type="number" min="0" bind:value={filters.min_edits}
-      class="text-[10px] font-mono px-2 py-1.5"
-      style="border: 1px solid var(--on-surface); background: white; width: 70px;" />
-
-    <Button size="sm" variant="primary" onclick={applyFilters}>APPLY</Button>
-    <Button size="sm" variant="secondary" onclick={resetFilters}>RESET</Button>
+<div class="cl-panel mb-3">
+  <div class="cl-hd"><span class="dot">◉</span>Filters</div>
+  <div class="cl-bd flex flex-wrap items-end gap-3">
+    <div>
+      <label class="cl-lbl">Status</label>
+      <select bind:value={filters.status} class="cl-inp cursor-pointer" style="width: 170px;">
+        <option value="pending_review">Pending review</option>
+        <option value="approved">Approved</option>
+        <option value="rejected">Rejected</option>
+        <option value="draft">Draft</option>
+      </select>
+    </div>
+    <div>
+      <label class="cl-lbl">Importer</label>
+      <input type="text" bind:value={filters.importer} placeholder="substring" class="cl-inp" style="width: 160px;" />
+    </div>
+    <div>
+      <label class="cl-lbl">From</label>
+      <input type="date" bind:value={filters.date_from} class="cl-inp" />
+    </div>
+    <div>
+      <label class="cl-lbl">To</label>
+      <input type="date" bind:value={filters.date_to} class="cl-inp" />
+    </div>
+    <div>
+      <label class="cl-lbl">Min edits</label>
+      <input type="number" min="0" bind:value={filters.min_edits} class="cl-inp" style="width: 90px;" />
+    </div>
+    <button class="cl-btn primary sm" onclick={applyFilters}>Apply</button>
+    <button class="cl-btn sm" onclick={resetFilters}>Reset</button>
   </div>
 </div>
 
 <!-- Bulk action bar -->
-<div class="flex items-center gap-3 mb-2 p-2 border-2"
-  style="border-color: var(--line); background: {selected.size > 0 ? '#fff8d8' : 'transparent'};">
-  <button class="text-[10px] font-bold uppercase px-2 py-1 cursor-pointer"
-    style="border: 1px solid var(--on-surface); background: white;"
-    onclick={selectAllVisible}>
+<div class="flex items-center gap-3 mb-3 px-3 py-2 cl-panel" style="box-shadow: none; {selected.size > 0 ? 'background: var(--primary-tint);' : ''}">
+  <button class="cl-btn sm" onclick={selectAllVisible}>
     {selected.size === queue.length && queue.length > 0 ? '☑' : '☐'}
-    SELECT_ALL
+    Select all
   </button>
-  <span class="text-[10px] font-mono opacity-70">
+  <span class="text-xs font-mono" style="color: var(--on-surface-muted);">
     {selected.size} of {queue.length} selected
   </span>
   <div class="flex-1"></div>
-  <Button size="sm" variant="primary" disabled={selected.size === 0 || bulkBusy} onclick={bulkApprove}>
-    ✓ APPROVE_SELECTED
-  </Button>
-  <Button size="sm" variant="secondary" disabled={selected.size === 0 || bulkBusy} onclick={openRejectModal}>
-    ✗ REJECT_SELECTED
-  </Button>
-  <Button size="sm" variant="ghost" onclick={refresh}>↻ REFRESH</Button>
+  <button class="cl-btn primary sm" disabled={selected.size === 0 || bulkBusy} onclick={bulkApprove}>
+    ✓ Approve selected
+  </button>
+  <button class="cl-btn sm" disabled={selected.size === 0 || bulkBusy} onclick={openRejectModal}>
+    ✗ Reject selected
+  </button>
+  <button class="cl-btn sm" onclick={refresh}>↻ Refresh</button>
 </div>
 
 {#if loading}
@@ -280,23 +272,21 @@
 {/if}
 
 {#if toastMsg}
-  <div class="fixed bottom-4 right-4 px-4 py-2 text-xs font-bold uppercase border-2 stamp-shadow z-50"
+  <div class="fixed bottom-4 right-4 px-4 py-2 text-xs font-medium cl-panel z-50"
     style="background: var(--surface-container); color: var(--on-surface);">{toastMsg}</div>
 {/if}
 
 {#if showRejectModal}
-  <div class="fixed inset-0 z-50 flex items-center justify-center" style="background: rgba(0,0,0,0.5);">
-    <div class="border-2 stamp-shadow w-[420px] p-4" style="background: var(--surface); border-color: var(--line);">
-      <div class="dark-bar text-xs mb-3">REJECT_SELECTED — {selected.size} job(s)</div>
-      <label class="text-[10px] font-bold uppercase opacity-70">REASON / NOTES (required)</label>
-      <textarea bind:value={rejectNotes} rows="4"
-        class="w-full text-xs font-mono p-2 mt-1"
-        style="border: 1px solid var(--on-surface); background: white;"></textarea>
-      <div class="flex justify-end gap-2 mt-3">
-        <Button size="sm" variant="ghost" onclick={() => showRejectModal = false}>CANCEL</Button>
-        <Button size="sm" variant="primary" disabled={bulkBusy || !rejectNotes.trim()} onclick={bulkReject}>
-          REJECT
-        </Button>
+  <div class="fixed inset-0 z-50 flex items-center justify-center" style="background: rgba(31,30,29,0.4);">
+    <div class="cl-panel w-[440px]" style="box-shadow: var(--shadow-lg);">
+      <div class="cl-hd"><span class="dot">◉</span>Reject selected — {selected.size} job(s)</div>
+      <div class="cl-bd">
+        <label class="cl-lbl">Reason / notes (required)</label>
+        <textarea bind:value={rejectNotes} rows="4" class="cl-inp" style="font-family: 'Inter', sans-serif; resize: vertical;"></textarea>
+        <div class="flex justify-end gap-2 mt-3">
+          <button class="cl-btn sm" onclick={() => showRejectModal = false}>Cancel</button>
+          <button class="cl-btn primary sm" disabled={bulkBusy || !rejectNotes.trim()} onclick={bulkReject}>Reject</button>
+        </div>
       </div>
     </div>
   </div>
