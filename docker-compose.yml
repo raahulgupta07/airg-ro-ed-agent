@@ -39,6 +39,14 @@ services:
     container_name: ro-ed-api
     expose:
       - "9000"
+    # Publish to the host so an external reverse proxy (AWS ALB target,
+    # nginx, OpenWebUI) can reach the app without the bundled nginx.
+    # Default binds to LOOPBACK ONLY — not exposed on the EC2 public IP.
+    #   • host-process proxy on the same box → leave default (127.0.0.1)
+    #   • containerised proxy / ALB to the instance → set APP_BIND=0.0.0.0 in .env
+    #     AND restrict port 9000 in the security group to the proxy only.
+    ports:
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-9000}:9000"
     env_file: ./.env
     environment:
       PYTHONUNBUFFERED: "1"
@@ -60,6 +68,7 @@ services:
       timeout: 10s
       retries: 3
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "9000",
+              "--proxy-headers", "--forwarded-allow-ips", "*",
               "--workers", "2",
               "--limit-concurrency", "50",
               "--timeout-keep-alive", "300"]
