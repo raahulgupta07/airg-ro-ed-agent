@@ -159,6 +159,23 @@ frontend/src/
   routes/                  agent, login, change-password, review, history,
                            declarations, items, costs, users, settings
   lib/api.ts, components/, stores/, utils/, colors.ts, pipelineConfig.ts
+  app.css                  design tokens + cl-* component layer (see UI shell below)
+frontend/static/
+  cityagent-logo-web.png   trimmed brand lockup (login + sidebar)
+  cityagent-mark.png       square emblem (favicon / compact use)
+
+UI shell (Claude-style redesign):
+  - `lib/components/Sidebar.svelte` — grouped left rail (Documents / Insights /
+    Admin), 236px, replaces the old top Header (`Header.svelte` kept as fallback,
+    unused). Layout in `routes/+layout.svelte` is sidebar + content; Footer
+    offset left-[236px].
+  - `app.css` `cl-*` layer — reusable primitives every page uses: `cl-panel` /
+    `cl-hd` / `cl-bd`, `cl-ph`, `cl-stat`, `pill` (ok/warn/err/info/plum/clay/
+    muted), `cl-lbl` / `cl-inp`, `cl-btn(.primary/.sm)`, `cl-table`, `seg`,
+    `cl-toggle`, `cl-drop`, `cl-bar`. Soft `--line` borders, no black outlines.
+  - `routes/login/+page.svelte` — branded two-column responsive login (clamp-
+    sized, single-col < 980px); right panel is a synced, animated CityAgent
+    preview (illustrative only, not interactive).
 
 nginx/
   conf.d/                  HTTP redirect + HTTPS server blocks (SSE buffering off)
@@ -241,6 +258,7 @@ Config/code one-liners, not repo leaks (`.env`/certs are gitignored):
 - **Don't put `{@const}` at template root** — must be inside `{#if}` / `{#each}` / `<Component>` blocks.
 - **Don't hard-code hex colors in components** — use design tokens (`var(--primary)`, `var(--on-surface)`, `var(--surface-container)`, etc.) defined in `frontend/src/app.css`. Never re-introduce the old brutalist `* { border-radius: 0 !important }` reset, hard `box-shadow: 4px 4px 0px 0px var(--on-surface)` stamp, neon greens (`#00fc40`, `#22c55e`), or `Space Grotesk` font — they were removed in the Claude-style redesign.
 - **Don't use uppercase + ultra-bold for body chrome** — the design system is sentence-case with serif headings (Source Serif 4) and Inter body. Reserve uppercase for tiny labels (`.tag-label`, table column headers).
+- **Don't reintroduce the top `Header` nav or black/heavy borders** — navigation is the grouped left `Sidebar.svelte`; borders use `var(--line)` (soft). Build new pages from the `cl-*` layer in `app.css`, not bespoke boxes. Dark terminal/log consoles (history, PipelineVisualizer) stay intentionally dark.
 - **Don't add slowapi limits without `request: Request` in the handler signature** — it 500s.
 - **Don't store the legacy SQLite file.** Postgres has been the only backend since `0001_initial_schema.py`. Use `backend/scripts/migrate_sqlite_to_pg.py` if you find one in the wild.
 
