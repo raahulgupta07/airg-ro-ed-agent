@@ -144,6 +144,15 @@ def _call_typed(typed_pdf: str, use_presto: bool = False,
     return res
 
 
+def _call_scribe(pdf_path: str) -> Dict:
+    """V14 Atlas handwriting engine — V13 Scribe (vision vote + math gates)."""
+    from v13.scribe import run as run_scribe
+    res = run_scribe(pdf_path)
+    if isinstance(res, dict):
+        res.setdefault("_engine", "scribe")
+    return res
+
+
 def _call_v10(pdf_path: str) -> Dict:
     """Use V10 PRO (shape-validated, memory-aware, cost-tracked)."""
     from v10_pro.workflow import run as run_v10_pro
@@ -534,12 +543,14 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
         #   "classic" → force V7 Veritas
         #   "auto"   → follow PRESTO_ENABLED
         _eng = (engine or "auto").lower()
-        if _eng == "presto":
+        if _eng in ("presto", "atlas"):
             _use_presto = _typed_digital
         elif _eng == "classic":
             _use_presto = False
         else:
             _use_presto = bool(PRESTO_ENABLED and _typed_digital)
+        # V14 Atlas: also route handwritten pages to Scribe (V13) instead of V10 PRO.
+        _use_scribe = (_eng == "atlas")
         # Presto reads typed + attachment pages of the ORIGINAL pdf so misrouted
         # item pages (classifier put them in ATTACHMENT) are still captured.
         _presto_pages = sorted(set((buckets.get("TYPED") or []) + (buckets.get("ATTACHMENT") or [])))
@@ -554,7 +565,7 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
                 futs[ex.submit(_call_typed, typed_pdf, _use_presto, pdf_path, _presto_pages)] = "v7"
             if hw_pdf:
                 v10_t0 = time.time()
-                futs[ex.submit(_call_v10, hw_pdf)] = "v10"
+                futs[ex.submit(_call_scribe if _use_scribe else _call_v10, hw_pdf)] = "v10"
             for f in futs:
                 label = futs[f]
                 try:

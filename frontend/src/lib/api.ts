@@ -139,7 +139,7 @@ export async function extractPDF(
   pipeline: PipelineKey = 'v11',
   token?: string,
   jobId?: string,
-  engine: 'auto' | 'presto' | 'classic' = 'auto'
+  engine: 'auto' | 'presto' | 'classic' | 'atlas' = 'auto'
 ): Promise<any> {
   const config = PIPELINES[pipeline];
   if (!config) throw new Error(`Unknown pipeline: ${pipeline}`);
