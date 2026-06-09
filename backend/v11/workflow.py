@@ -104,19 +104,23 @@ def _call_v7(pdf_path: str) -> Dict:
     return run_pipeline(pdf_path)
 
 
-def _call_typed(pdf_path: str, use_presto: bool = False) -> Dict:
+def _call_typed(typed_pdf: str, use_presto: bool = False,
+                full_pdf: str = None, presto_pages=None) -> Dict:
     """Typed-page extraction with the V12 Presto fast-path + math-gated fallback.
 
     When `use_presto` (flag on AND every typed page is digital), try Presto first:
-    text-layer → one schema call. Keep it ONLY if the reconcile equation balances
-    (Σ item customs values == declared total); otherwise fall back to V7 Veritas
-    so accuracy never regresses. `use_presto=False` → behaves exactly like V7.
+    read the text layer of the typed + attachment pages (`presto_pages` of the
+    ORIGINAL `full_pdf`, so misrouted item pages the classifier dropped into
+    ATTACHMENT are still seen) → one schema call. Keep it ONLY if the reconcile
+    equation balances (Σ item customs values == declared total); otherwise fall
+    back to V7 Veritas on the typed slice so accuracy never regresses.
+    `use_presto=False` → behaves exactly like V7.
     """
     if use_presto:
         try:
             from v11.presto import run as presto_run
             from v11.tools import reconcile as _rc
-            res = presto_run(pdf_path)
+            res = presto_run(full_pdf or typed_pdf, pages=presto_pages)
             v = _rc.reconcile(res.get("declaration") or {}, res.get("items") or [])
             if v.get("checked") and v.get("balanced"):
                 res["_engine"] = "presto"
@@ -124,7 +128,7 @@ def _call_typed(pdf_path: str, use_presto: bool = False) -> Dict:
             print(f"[Presto] gap {v.get('gap_pct')}% — falling back to V7 Veritas")
         except Exception as e:
             print(f"[Presto] fast-path error, falling back to V7: {e}")
-    res = _call_v7(pdf_path)
+    res = _call_v7(typed_pdf)
     if isinstance(res, dict):
         res.setdefault("_engine", "v7")
     return res
@@ -516,14 +520,18 @@ def run(pdf_path: str, job_id: Optional[str] = None) -> Dict:
         _typed_meta = [p for p in cls.get("pages", []) if (p.get("label") or "").upper() == "TYPED"]
         _use_presto = bool(PRESTO_ENABLED and _typed_meta
                            and all(p.get("has_text_layer") for p in _typed_meta))
+        # Presto reads typed + attachment pages of the ORIGINAL pdf so misrouted
+        # item pages (classifier put them in ATTACHMENT) are still captured.
+        _presto_pages = sorted(set((buckets.get("TYPED") or []) + (buckets.get("ATTACHMENT") or [])))
         if _use_presto:
-            out["trace"].append({"phase": "route_typed", "engine": "presto"})
+            out["trace"].append({"phase": "route_typed", "engine": "presto",
+                                  "pages": _presto_pages})
 
         with ThreadPoolExecutor(max_workers=2) as ex:
             futs = {}
             if typed_pdf:
                 v7_t0 = time.time()
-                futs[ex.submit(_call_typed, typed_pdf, _use_presto)] = "v7"
+                futs[ex.submit(_call_typed, typed_pdf, _use_presto, pdf_path, _presto_pages)] = "v7"
             if hw_pdf:
                 v10_t0 = time.time()
                 futs[ex.submit(_call_v10, hw_pdf)] = "v10"
