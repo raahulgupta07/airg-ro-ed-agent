@@ -120,10 +120,20 @@ def _call_typed(typed_pdf: str, use_presto: bool = False,
         try:
             from v11.presto import run as presto_run
             from v11.tools import reconcile as _rc
+            from v11.tools import self_correct as _sc
             res = presto_run(full_pdf or typed_pdf, pages=presto_pages)
             v = _rc.reconcile(res.get("declaration") or {}, res.get("items") or [])
             if v.get("checked") and v.get("balanced"):
                 res["_engine"] = "presto"
+                return res
+            # Gate failed → try targeted self-correction (fix only the broken
+            # header field) BEFORE any slow fallback.
+            cor = _sc.correct(full_pdf or typed_pdf, res.get("declaration") or {},
+                              res.get("items") or [], v, header_page=1)
+            if cor.get("corrected") and cor["verdict"].get("balanced"):
+                res["declaration"] = cor["declaration"]
+                res["_engine"] = "presto+selfcorrect"
+                res.setdefault("trace", []).append({"phase": "self_correct", "log": cor["log"]})
                 return res
             print(f"[Presto] gap {v.get('gap_pct')}% — falling back to V7 Veritas")
         except Exception as e:

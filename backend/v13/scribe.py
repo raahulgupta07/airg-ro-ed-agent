@@ -194,6 +194,20 @@ def run(pdf_path: str, pages: Optional[List[int]] = None) -> Dict:
     document_format = doc_fmt[0][0] if doc_fmt else "CUSDEC1"
 
     verdict = _rc.reconcile(decl, items)
+    # Gate-triggered self-correction: fix the broken header field instead of
+    # flagging the whole doc (no slow fallback).
+    sc_log = []
+    if not verdict.get("balanced"):
+        try:
+            from v11.tools import self_correct as _sc
+            cor = _sc.correct(pdf_path, decl, items, verdict,
+                              header_page=1, model=cfg.SCRIBE_MODEL)
+            if cor.get("corrected"):
+                decl = cor["declaration"]
+                verdict = cor["verdict"]
+                sc_log = cor["log"]
+        except Exception:
+            pass
     low_conf = [k for k, c in conf.items() if c < 0.67]
     needs_review = (not verdict.get("balanced")) or bool(low_conf)
 
@@ -217,7 +231,8 @@ def run(pdf_path: str, pages: Optional[List[int]] = None) -> Dict:
         "needs_review": needs_review,
         "scribe": {"votes": n, "field_confidence": conf,
                    "low_confidence_fields": low_conf,
-                   "reconcile": verdict, "pages": len(images)},
+                   "reconcile": verdict, "pages": len(images),
+                   "self_correct": sc_log},
     }
 
 
