@@ -226,16 +226,16 @@
       <table class="w-full text-[11px]">
         <thead>
           <tr style="background: var(--surface-container);">
-            <th class="px-3 py-2 text-left whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--outline); width: 40px;">#</th>
-            <th class="px-3 py-2 text-left whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--outline);">PDF NAME</th>
-            <th class="px-3 py-2 text-left whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--outline); width: 90px;">USER</th>
-            <th class="px-3 py-2 text-left whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--outline); width: 110px;">DATE</th>
-            <th class="px-3 py-2 text-right whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--outline); width: 70px;">ITEMS</th>
-            <th class="px-3 py-2 text-right whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--outline); width: 90px;">ACCURACY</th>
-            <th class="px-3 py-2 text-right whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--outline); width: 70px;">PAGES</th>
-            <th class="px-3 py-2 text-right whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--outline); width: 70px;">TIME</th>
-            <th class="px-3 py-2 text-right whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--outline); width: 80px;">COST</th>
-            <th class="px-3 py-2 text-center whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--outline); width: 80px;">STATUS</th>
+            <th class="px-3 py-2 text-left whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--on-surface); width: 40px;">#</th>
+            <th class="px-3 py-2 text-left whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--on-surface);">PDF NAME</th>
+            <th class="px-3 py-2 text-left whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--on-surface); width: 90px;">USER</th>
+            <th class="px-3 py-2 text-left whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--on-surface); width: 150px;">TIMESTAMP</th>
+            <th class="px-3 py-2 text-right whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--on-surface); width: 70px;">ITEMS</th>
+            <th class="px-3 py-2 text-right whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--on-surface); width: 90px;">ACCURACY</th>
+            <th class="px-3 py-2 text-right whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--on-surface); width: 70px;">PAGES</th>
+            <th class="px-3 py-2 text-right whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--on-surface); width: 70px;">TIME</th>
+            <th class="px-3 py-2 text-right whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--on-surface); width: 80px;">COST</th>
+            <th class="px-3 py-2 text-center whitespace-nowrap text-[9px] font-bold uppercase" style="color: var(--on-surface); width: 80px;">STATUS</th>
           </tr>
         </thead>
         <tbody>
@@ -249,7 +249,7 @@
               <td class="px-3 py-2 font-mono text-[9px]" style="color: var(--outline);">{i+1}</td>
               <td class="px-3 py-2 font-bold" style="color: var(--on-surface);">{job.pdf_name}</td>
               <td class="px-3 py-2"><span class="text-[8px] font-medium uppercase px-1 py-0.5 text-white" style="background: var(--secondary);">{job.username ?? '?'}</span></td>
-              <td class="px-3 py-2 font-mono text-[9px]" style="color: var(--outline);">{job.created_at?.split(' ')[0] ?? ''}</td>
+              <td class="px-3 py-2 font-mono text-[10px]" style="color: var(--on-surface-muted);">{job.created_at ?? ''}</td>
               <td class="px-3 py-2 text-right font-bold" style="color: var(--on-surface);">{job.items?.length ?? '—'}</td>
               <td class="px-3 py-2 text-right font-mono font-bold" style="color: {getAccuracyColor(acc)};">{acc.toFixed(1)}%</td>
               <td class="px-3 py-2 text-right font-mono" style="color: var(--outline);">{job.total_pages ?? '—'}</td>
@@ -263,7 +263,7 @@
         </tbody>
       </table>
       {#if filteredJobs().length === 0}
-        <div class="p-8 text-center text-sm font-bold uppercase" style="color: var(--outline);">NO JOBS</div>
+        <div class="p-8 text-center text-sm font-bold uppercase" style="color: var(--on-surface);">NO JOBS</div>
       {/if}
     </div>
   </div>

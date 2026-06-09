@@ -539,15 +539,18 @@
 {#if !auth.isAdmin}
   <div class="p-8 text-center font-bold uppercase" style="color: var(--error);">ADMIN ACCESS REQUIRED</div>
 {:else}
-  <!-- Tab bar -->
-  <div class="flex gap-0 mb-4 border-2" style="border-color: var(--on-surface); background: var(--surface-container-highest);">
-    {#each [['users','USERS'],['logs','ACTIVITY_LOG'],['auth','AUTHENTICATION'],['groups','GROUPS'],['ldap','LDAP'],['storage','STORAGE'],['auto_approve','AUTO_APPROVE'],['engines','ENGINES']] as [key, label]}
-      <button class="px-3 py-2 text-[11px] font-bold uppercase tracking-tight cursor-pointer"
-        style="{activeTab === key ? 'background: var(--surface-container); color: var(--on-surface);' : 'color: var(--outline);'}"
-        onclick={() => activeTab = key as any}
-      >{label}</button>
-    {/each}
-  </div>
+  <!-- Left menu + content -->
+  <div class="flex gap-4 items-start">
+    <nav class="border-2 stamp-shadow shrink-0" style="border-color: var(--on-surface); background: var(--surface); width: 190px;">
+      <div class="dark-bar text-xs">ADMIN</div>
+      {#each [['users','USERS'],['logs','ACTIVITY_LOG'],['auth','AUTHENTICATION'],['groups','GROUPS'],['ldap','LDAP'],['storage','STORAGE'],['auto_approve','AUTO_APPROVE'],['engines','ENGINES']] as [key, label]}
+        <button class="block w-full text-left px-3 py-2.5 text-[11px] font-bold uppercase tracking-tight cursor-pointer border-b"
+          style="border-color: var(--outline); {activeTab === key ? 'background: var(--primary); color: white;' : 'color: var(--on-surface);'}"
+          onclick={() => activeTab = key as any}
+        >{label}</button>
+      {/each}
+    </nav>
+    <div class="flex-1 min-w-0">
 
   {#if loading && !['auth','groups'].includes(activeTab)}
     <div class="skeleton h-64 w-full"></div>
@@ -1284,6 +1287,8 @@
     </div>
 
   {/if}
+    </div><!-- /flex-1 -->
+  </div><!-- /flex left-menu+content -->
 {/if}
 
 <!-- Activity Log: Event detail drawer -->
