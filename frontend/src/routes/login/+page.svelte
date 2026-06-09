@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
   import { api } from '$lib/api';
@@ -54,15 +55,31 @@
   })();
 
   const tiles = [
-    { icon: 'upload_file',    label: 'Upload PDF',     accent: false },
-    { icon: 'auto_awesome',   label: 'Classify pages', accent: true  },
-    { icon: 'description',    label: 'Typed extract',  accent: false },
-    { icon: 'edit_note',      label: 'Handwritten',    accent: false },
-    { icon: 'merge',          label: 'Merge results',  accent: false },
-    { icon: 'checklist',      label: 'Review queue',   accent: false },
-    { icon: 'history_edu',    label: 'Audit edits',    accent: false },
-    { icon: 'file_download',  label: 'Export',         accent: false },
+    { icon: 'upload_file',    label: 'Upload PDF'     },
+    { icon: 'auto_awesome',   label: 'Classify pages' },
+    { icon: 'description',    label: 'Typed extract'  },
+    { icon: 'edit_note',      label: 'Handwritten'    },
+    { icon: 'merge',          label: 'Merge results'  },
+    { icon: 'checklist',      label: 'Review queue'   },
+    { icon: 'history_edu',    label: 'Audit edits'    },
+    { icon: 'file_download',  label: 'Export'         },
   ];
+
+  // ── Decorative preview animation (login marketing panel only) ──
+  const queries = [
+    'Extract this customs declaration',
+    'Classify printed vs handwritten',
+    'Reconcile the item totals',
+    'Route this to the review queue',
+  ];
+  let activeTile = $state(1);
+  let queryIdx = $state(0);
+
+  onMount(() => {
+    const a = setInterval(() => { activeTile = (activeTile + 1) % tiles.length; }, 1500);
+    const b = setInterval(() => { queryIdx = (queryIdx + 1) % queries.length; }, 3400);
+    return () => { clearInterval(a); clearInterval(b); };
+  });
 </script>
 
 <div class="min-h-screen flex flex-col" style="background: var(--surface);">
@@ -186,24 +203,30 @@
       </div>
       </div>
 
-      <!-- RIGHT: product preview -->
-      <div class="hidden lg:block">
+      <!-- RIGHT: animated product preview -->
+      <div class="hidden lg:block login-preview">
         <div class="cl-panel" style="background: var(--surface-container-low);">
-          <div class="p-5" style="background-image: radial-gradient(var(--line) 1px, transparent 1px); background-size: 22px 22px;">
+          <div class="p-6" style="background-image: radial-gradient(var(--line) 1px, transparent 1px); background-size: 22px 22px;">
 
-            <!-- sample query bubble -->
-            <div class="inline-block px-4 py-2 mb-6 text-sm font-medium text-white"
-                 style="background: var(--primary); border-radius: 12px 12px 12px 2px;">
-              “Extract this customs declaration”
+            <!-- sample query bubble (cycles) -->
+            <div class="mb-6" style="min-height: 40px;">
+              {#key queryIdx}
+                <div class="inline-block px-4 py-2 text-sm font-medium text-white query-bubble"
+                     style="background: var(--primary); border-radius: 12px 12px 12px 2px;">
+                  “{queries[queryIdx]}”<span class="caret">▌</span>
+                </div>
+              {/key}
             </div>
 
-            <!-- action tiles -->
+            <!-- action tiles (active one cycles) -->
             <div class="grid grid-cols-4 gap-3 mb-6">
-              {#each tiles as t}
-                <div class="flex flex-col items-center justify-center gap-1.5 py-4 px-1 text-center transition-colors"
-                     style="background: var(--surface-container-lowest); border: 1px solid {t.accent ? 'var(--primary)' : 'var(--line)'}; border-radius: var(--radius-md); {t.accent ? 'box-shadow: 0 0 0 3px var(--primary-tint);' : ''}">
-                  <span class="material-symbols-outlined" style="font-size: 22px; color: {t.accent ? 'var(--primary)' : 'var(--on-surface-muted)'};">{t.icon}</span>
-                  <span class="text-xs font-medium" style="color: {t.accent ? 'var(--primary-hover)' : 'var(--on-surface)'};">{t.label}</span>
+              {#each tiles as t, i}
+                {@const on = i === activeTile}
+                <div class="tile flex flex-col items-center justify-center gap-1.5 py-4 px-1 text-center"
+                     class:tile-on={on}
+                     style="background: var(--surface-container-lowest); border: 1px solid {on ? 'var(--primary)' : 'var(--line)'}; border-radius: var(--radius-md);">
+                  <span class="material-symbols-outlined" style="font-size: 22px; color: {on ? 'var(--primary)' : 'var(--on-surface-muted)'};">{t.icon}</span>
+                  <span class="text-xs font-medium" style="color: {on ? 'var(--primary-hover)' : 'var(--on-surface)'};">{t.label}</span>
                 </div>
               {/each}
             </div>
@@ -214,10 +237,15 @@
                    style="background: var(--surface-container-lowest); border: 1px solid var(--line); border-radius: var(--radius-md);">
                 <span class="material-symbols-outlined" style="font-size: 18px; color: var(--on-surface-subtle);">science</span>
                 <span class="text-sm" style="color: var(--on-surface-muted);">CityAgent · Maestro router</span>
+                <span class="ml-auto flex gap-1">
+                  <span class="dot-pulse" style="animation-delay: 0s;"></span>
+                  <span class="dot-pulse" style="animation-delay: .18s;"></span>
+                  <span class="dot-pulse" style="animation-delay: .36s;"></span>
+                </span>
               </div>
-              <div class="px-4 py-2.5 text-sm font-medium" style="background: var(--primary-soft); color: var(--primary-hover); border-radius: var(--radius-md);">
+              <button type="button" class="go-btn px-4 py-2.5 text-sm font-medium" style="background: var(--primary-soft); color: var(--primary-hover); border-radius: var(--radius-md); border: none; cursor: default;">
                 Let's go →
-              </div>
+              </button>
             </div>
           </div>
         </div>
@@ -229,3 +257,40 @@
     </div>
   </div>
 </div>
+
+<style>
+  /* Right preview entrance */
+  .login-preview { animation: previewIn .6s cubic-bezier(.22,1,.36,1) both; }
+  @keyframes previewIn {
+    from { opacity: 0; transform: translateY(14px) scale(.985); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  /* Cycling query bubble */
+  .query-bubble { animation: bubbleIn .45s cubic-bezier(.22,1,.36,1) both; box-shadow: var(--shadow-md); }
+  @keyframes bubbleIn {
+    from { opacity: 0; transform: translateY(-8px) scale(.96); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .caret { display: inline-block; margin-left: 1px; animation: caretBlink 1s steps(1) infinite; opacity: .85; }
+  @keyframes caretBlink { 50% { opacity: 0; } }
+
+  /* Active tile pulse + lift */
+  .tile { transition: transform .35s cubic-bezier(.22,1,.36,1), border-color .35s, box-shadow .35s; }
+  .tile-on { transform: translateY(-2px) scale(1.04); box-shadow: 0 0 0 3px var(--primary-tint), var(--shadow-sm); animation: tileGlow 1.5s ease-in-out; }
+  @keyframes tileGlow {
+    0%   { box-shadow: 0 0 0 0 var(--primary-tint), var(--shadow-sm); }
+    40%  { box-shadow: 0 0 0 5px var(--primary-tint), var(--shadow-md); }
+    100% { box-shadow: 0 0 0 3px var(--primary-tint), var(--shadow-sm); }
+  }
+
+  /* Typing dots in input bar */
+  .dot-pulse { width: 5px; height: 5px; border-radius: 50%; background: var(--primary); display: inline-block; animation: dotPulse 1.1s ease-in-out infinite; }
+  @keyframes dotPulse { 0%, 60%, 100% { opacity: .25; transform: scale(.8); } 30% { opacity: 1; transform: scale(1); } }
+
+  .go-btn { transition: background .2s; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .login-preview, .query-bubble, .tile-on, .caret, .dot-pulse { animation: none; }
+  }
+</style>
