@@ -77,11 +77,11 @@ def _parse_json(raw: str):
     return None
 
 
-def _reread_header(pdf_path: str, page_no: int, model: str) -> Dict:
+def _reread_header(pdf_path: str, page_no: int, model: str, hints: str = "") -> Dict:
     b64 = _render_page(pdf_path, page_no)
     if not b64:
         return {}
-    parts = [{"type": "text", "text": _PROMPT},
+    parts = [{"type": "text", "text": _PROMPT + (("\n\n" + hints) if hints else "")},
              {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}]
     payload = {"model": model, "messages": [{"role": "user", "content": parts}],
                "temperature": 0, "max_tokens": 500}
@@ -115,8 +115,17 @@ def correct(pdf_path: str, declaration: Dict, items: List[Dict], verdict: Dict,
         return {"declaration": declaration, "verdict": verdict, "corrected": False, "log": log}
 
     model = model or config.EXTRACTION_MODEL
-    log.append(f"CIF gap {verdict.get('cif_gap_pct')}% → targeted header re-read (p{header_page})")
-    fresh = _reread_header(pdf_path, header_page, model)
+    # Few-shot: feed this importer's past corrections into the re-read (LEARNER).
+    hints = ""
+    try:
+        from v11.learn import fewshot as _fs
+        hints = _fs.prompt_block((declaration or {}).get("importer_name") or "")
+    except Exception:
+        hints = ""
+    why = "CIF" if cif_fail else "duty"
+    log.append(f"{why} gap → targeted header re-read (p{header_page})"
+               + (" +few-shot" if hints else ""))
+    fresh = _reread_header(pdf_path, header_page, model, hints)
     if not fresh:
         log.append("re-read returned nothing")
         return {"declaration": declaration, "verdict": verdict, "corrected": False, "log": log}
