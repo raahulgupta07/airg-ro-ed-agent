@@ -58,13 +58,39 @@ def items_value_sum(items: List[Dict]) -> float:
     return round(total, 2)
 
 
+def cif_tolerance_pct() -> float:
+    """Allowed |invoice_price×rate − total| as percent. Generous (default 15) so
+    genuine freight/insurance differences don't flag, but a wrong exchange rate
+    (off by ~36× on a THB-vs-USD mixup) trips it loudly."""
+    try:
+        return float(os.environ.get("RECONCILE_CIF_TOLERANCE_PCT", "15.0"))
+    except Exception:
+        return 15.0
+
+
+def _cif_closure(decl: Dict, declared) -> Dict:
+    """Secondary invariant: invoice_price × exchange_rate ≈ total_customs_value.
+
+    Catches a wrong exchange_rate, which the item-sum check cannot see (the rate
+    isn't in that math). Returns {cif_checked, cif_ok, cif_gap_pct}.
+    """
+    inv = _to_float(decl.get("invoice_price") or decl.get("Invoice Price"))
+    rate = _to_float(decl.get("exchange_rate") or decl.get("Exchange Rate"))
+    if not (inv and rate and declared and declared > 0):
+        return {"cif_checked": False, "cif_ok": True, "cif_gap_pct": 0.0}
+    gap_pct = round(abs(inv * rate - declared) / declared * 100, 2)
+    return {"cif_checked": True, "cif_ok": gap_pct <= cif_tolerance_pct(),
+            "cif_gap_pct": gap_pct}
+
+
 def reconcile(declaration: Dict, items: List[Dict]) -> Dict:
-    """Check items value sum against the declared customs-value total.
+    """Check items value sum against the declared customs-value total, AND that
+    invoice_price × exchange_rate ≈ total (catches a wrong exchange rate).
 
     Returns a verdict dict:
         {
           "checked": bool,        # False when no usable anchor (can't judge)
-          "balanced": bool,       # |gap| within tolerance
+          "balanced": bool,       # item-sum within tol AND cif closure ok
           "declared_total": float|None,
           "items_sum": float,
           "gap_value": float,     # declared_total - items_sum (signed)
@@ -72,6 +98,9 @@ def reconcile(declaration: Dict, items: List[Dict]) -> Dict:
           "tolerance_pct": float,
           "anchor": str,          # which declared figure was used
           "n_items": int,
+          "cif_checked": bool,    # invoice_price×rate vs total was checkable
+          "cif_ok": bool,         # closure holds (rate looks right)
+          "cif_gap_pct": float,
         }
     """
     decl = declaration or {}
@@ -96,6 +125,7 @@ def reconcile(declaration: Dict, items: List[Dict]) -> Dict:
             anchor = "customs_duty/duty_rate"
 
     tol = tolerance_pct()
+    cif = _cif_closure(decl, declared)
     if not declared or declared <= 0:
         # No trustworthy anchor → cannot judge. Don't fake a pass.
         return {
@@ -108,13 +138,15 @@ def reconcile(declaration: Dict, items: List[Dict]) -> Dict:
             "tolerance_pct": tol,
             "anchor": "none",
             "n_items": len(items or []),
+            **cif,
         }
 
     gap = round(declared - isum, 2)
     gap_pct = round(abs(gap) / declared * 100, 2)
     return {
         "checked": True,
-        "balanced": gap_pct <= tol,
+        # Balanced requires BOTH the item-sum closure and the CIF closure.
+        "balanced": (gap_pct <= tol) and cif["cif_ok"],
         "declared_total": declared,
         "items_sum": isum,
         "gap_value": gap,
@@ -122,6 +154,7 @@ def reconcile(declaration: Dict, items: List[Dict]) -> Dict:
         "tolerance_pct": tol,
         "anchor": anchor,
         "n_items": len(items or []),
+        **cif,
     }
 
 
