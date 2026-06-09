@@ -415,7 +415,7 @@
             min-width: 24px; height: 24px;
             padding: 0 4px;
             display: inline-flex; align-items: center; justify-content: center;
-            font-family: monospace; font-size: 9px; font-weight: 900;
+            font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 9px; font-weight: 900;
             background: {sty.bg}; color: {sty.fg};
             border-color: {sty.border};
             box-shadow: 2px 2px 0px 0px var(--on-surface);
@@ -452,11 +452,11 @@
         <span style="width: 8px; height: 8px; border-radius: 50%; background: #eab308; display: inline-block;"></span>
         <span style="width: 8px; height: 8px; border-radius: 50%; background: #22c55e; display: inline-block;"></span>
       </div>
-      <span style="color: #4b5563; font-family: monospace; font-size: 10px; font-weight: bold;">
+      <span style="color: #4b5563; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; font-weight: bold;">
         ro-ed-agent — {filename || (jobId ? `job:${jobId}` : 'idle')}
       </span>
     </div>
-    <div style="display: flex; align-items: center; gap: 8px; font-family: monospace; font-size: 9px;">
+    <div style="display: flex; align-items: center; gap: 8px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 9px;">
       {#if jobId}
         {#if sseActive}
           <span style="color: #38bdf8;">{spin} STREAMING</span>
@@ -468,12 +468,12 @@
         <button
           type="button"
           onclick={togglePause}
-          style="background: #1f2937; color: #d1d5db; border: 1px solid #374151; padding: 2px 8px; font-family: monospace; font-size: 9px; cursor: pointer; text-transform: uppercase; font-weight: bold;"
+          style="background: #1f2937; color: #d1d5db; border: 1px solid #374151; padding: 2px 8px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 9px; cursor: pointer; text-transform: uppercase; font-weight: bold;"
         >{paused ? 'RESUME' : 'PAUSE'}</button>
         <button
           type="button"
           onclick={clearLines}
-          style="background: #1f2937; color: #d1d5db; border: 1px solid #374151; padding: 2px 8px; font-family: monospace; font-size: 9px; cursor: pointer; text-transform: uppercase; font-weight: bold;"
+          style="background: #1f2937; color: #d1d5db; border: 1px solid #374151; padding: 2px 8px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 9px; cursor: pointer; text-transform: uppercase; font-weight: bold;"
         >CLEAR</button>
       {:else if running}
         <span style="color: #38bdf8;">{spin} RUNNING</span>

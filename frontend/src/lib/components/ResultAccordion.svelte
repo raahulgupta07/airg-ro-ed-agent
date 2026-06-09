@@ -701,11 +701,11 @@
                             {item.item_name || '—'}
                           </td>
                           <!-- Duty -->
-                          <td class="px-2 py-1.5 text-right" style="font-size: 10px; font-family: monospace;">
+                          <td class="px-2 py-1.5 text-right" style="font-size: 10px; font-family: 'JetBrains Mono', ui-monospace, monospace;">
                             {item.customs_duty_rate ?? '—'}
                           </td>
                           <!-- Qty Number -->
-                          <td class="px-2 py-1.5 text-right" style="font-size: 10px; font-family: monospace;">
+                          <td class="px-2 py-1.5 text-right" style="font-size: 10px; font-family: 'JetBrains Mono', ui-monospace, monospace;">
                             {qtyNum || '—'}
                           </td>
                           <!-- Qty Unit -->
@@ -713,7 +713,7 @@
                             {qtyUnit || '—'}
                           </td>
                           <!-- Price Number -->
-                          <td class="px-2 py-1.5 text-right" style="font-size: 10px; font-family: monospace;">
+                          <td class="px-2 py-1.5 text-right" style="font-size: 10px; font-family: 'JetBrains Mono', ui-monospace, monospace;">
                             {priceNum || '—'}
                           </td>
                           <!-- Price Currency (fallback to declaration currency) -->
@@ -721,15 +721,15 @@
                             {priceCcy || decl?.currency || '—'}
                           </td>
                           <!-- Tax % -->
-                          <td class="px-2 py-1.5 text-right" style="font-size: 10px; font-family: monospace;">
+                          <td class="px-2 py-1.5 text-right" style="font-size: 10px; font-family: 'JetBrains Mono', ui-monospace, monospace;">
                             {item.commercial_tax_percent ?? '—'}
                           </td>
                           <!-- FX Rate -->
-                          <td class="px-2 py-1.5 text-right" style="font-size: 10px; font-family: monospace;">
+                          <td class="px-2 py-1.5 text-right" style="font-size: 10px; font-family: 'JetBrains Mono', ui-monospace, monospace;">
                             {item.exchange_rate ?? '—'}
                           </td>
                           <!-- HS Code -->
-                          <td class="px-2 py-1.5" style="font-size: 10px; font-family: monospace;">
+                          <td class="px-2 py-1.5" style="font-size: 10px; font-family: 'JetBrains Mono', ui-monospace, monospace;">
                             {item.hs_code || '—'}
                           </td>
                           <!-- Origin -->
@@ -737,7 +737,7 @@
                             {item.origin_country || '—'}
                           </td>
                           <!-- Customs Value -->
-                          <td class="px-2 py-1.5 text-right" style="font-size: 10px; font-family: monospace;">
+                          <td class="px-2 py-1.5 text-right" style="font-size: 10px; font-family: 'JetBrains Mono', ui-monospace, monospace;">
                             {typeof item.customs_value_mmk === 'number' ? item.customs_value_mmk?.toLocaleString() : item.customs_value_mmk || '—'}
                           </td>
                         </tr>
@@ -818,7 +818,7 @@
                     <tbody>
                       <tr>
                         {#each dCols as col}
-                          <td class="px-2 py-1.5 cursor-pointer" style="font-family: monospace; font-size: 10px;"
+                          <td class="px-2 py-1.5 cursor-pointer" style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px;"
                             ondblclick={() => startEdit('declaration', col.ck, 0, declRow[col.k])}
                             title="Double-click to edit">
                             {#if isEditing('declaration', col.ck, 0)}
@@ -863,11 +863,11 @@
                     <tbody>
                       {#each auditLog as c}
                         <tr style="border-bottom: 1px solid rgba(56,56,50,0.08);">
-                          <td style="padding: 5px 10px; font-family: monospace; font-size: 9px; white-space: nowrap; color: var(--outline);">{c.created_at?.split(' ')[1]?.slice(0,5) || c.created_at || ''}</td>
+                          <td style="padding: 5px 10px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 9px; white-space: nowrap; color: var(--outline);">{c.created_at?.split(' ')[1]?.slice(0,5) || c.created_at || ''}</td>
                           <td style="padding: 5px 10px; font-size: 9px; font-weight: bold;">{c.table_key}</td>
                           <td style="padding: 5px 10px; font-size: 10px; font-weight: bold; color: var(--secondary);">{c.field_key}</td>
-                          <td style="padding: 5px 10px; font-family: monospace; font-size: 10px; text-decoration: line-through; color: var(--error);">{c.original_value || '—'}</td>
-                          <td style="padding: 5px 10px; font-family: monospace; font-size: 10px; font-weight: bold; color: var(--success);">{c.corrected_value}</td>
+                          <td style="padding: 5px 10px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; text-decoration: line-through; color: var(--error);">{c.original_value || '—'}</td>
+                          <td style="padding: 5px 10px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; font-weight: bold; color: var(--success);">{c.corrected_value}</td>
                           <td style="padding: 5px 10px; font-size: 9px; color: var(--outline);">{c.username || '—'}</td>
                         </tr>
                       {/each}
