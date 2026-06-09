@@ -76,6 +76,11 @@ Per-field guidance (read carefully — these columns are easy to confuse):
   typically like "AM-PD-012/2024". NOT a Bill of Lading / container / BoL number
   (e.g. TCLBIL...). If only one invoice number is shown, use it for both.
 - currency: the invoice currency code (e.g. THB); currency_2 the secondary (e.g. USD).
+- exchange_rate: the rate converting the INVOICE currency (`currency`) to MMK.
+  The form may print SEVERAL rates (e.g. a THB rate ~57 and a USD rate ~2100) —
+  pick the one for `currency`. Self-check: invoice_price × exchange_rate must be
+  approximately total_customs_value. If your chosen rate fails this badly, you
+  picked the wrong rate.
 
 Return ONLY the JSON object.
 
