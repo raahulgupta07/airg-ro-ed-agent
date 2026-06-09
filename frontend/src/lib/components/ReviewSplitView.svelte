@@ -654,7 +654,15 @@
     { field: 'security_fee_sf', label: 'SECURITY (SF)' },
     { field: 'maccs_service_fee_mf', label: 'MACCS (MF)' },
     { field: 'exemption_reduction', label: 'EXEMPTION' },
+    { field: 'document_format', label: 'DOC_FORMAT' },
   ];
+
+  // Pair the declaration rows into 2-up groups for the table layout (auto-height).
+  const declPairs = (() => {
+    const out: any[] = [];
+    for (let i = 0; i < declRows.length; i += 2) out.push([declRows[i], declRows[i + 1] ?? null]);
+    return out;
+  })();
 
   const itemCols = [
     { field: 'hs_code', label: 'HS', w: 'w-32' },
@@ -836,73 +844,70 @@
     <!-- Declaration -->
     <div class="border-2 stamp-shadow"
       style="border-color: var(--on-surface); background: var(--surface);">
-      <div class="dark-bar text-xs">DECLARATION</div>
-      <div class="bg-white p-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
-        {#each declRows as row}
-          {@const editing = editingKey === `decl:${row.field}`}
-          {@const _bb = declBbox(row.field)}
-          {@const dPage = (_bb?.page) || declPageRef(row.field)}
-          {@const _searchVal = String((workingDecl as any)?.[row.field] ?? '')}
-          <div
-            id={`field-decl-${row.field}`}
-            class="border-2 p-2"
-            style="border-color: {declBorder(row.field)}; background: {declBg(row.field)};"
-            onmouseenter={() => jumpPdf(dPage, _searchVal)}
-            onfocusin={() => jumpPdf(dPage, _searchVal)}
-            role="group"
-          >
-            <div class="flex items-center justify-between gap-1">
-              <div class="text-[8px] font-medium uppercase tracking-wider"
-                style="color: var(--outline);">{row.label}</div>
-              <div class="flex items-center gap-1">
-                <button
-                  class="text-[9px] font-mono font-bold px-1 cursor-pointer border"
-                  style="border-color: var(--outline); color: var(--on-surface); background: transparent;"
-                  title="Jump PDF to page {dPage}"
-                  onclick={() => jumpPdfImmediate(dPage)}
-                >📍 p{dPage}</button>
-                {#if !editing}
-                  <button class="text-[10px] cursor-pointer"
-                    title="Edit"
-                    onclick={() => startEdit(`decl:${row.field}`, workingDecl[row.field])}>✏</button>
-                {/if}
-              </div>
-            </div>
-            {#if editing}
-              <input
-                class="w-full mt-1 text-[11px] font-mono font-bold border px-1 py-0.5"
-                style="border-color: var(--on-surface); background: white;"
-                bind:value={editValue}
-                autofocus
-                onkeydown={(e) => {
-                  if (e.key === 'Enter') saveDeclField(row.field);
-                  else if (e.key === 'Escape') cancelEdit();
-                }}
-              />
-              <div class="flex items-center gap-1 mt-1">
-                <button class="px-2 py-0.5 text-[9px] font-medium uppercase border cursor-pointer"
-                  style="border-color: var(--on-surface); background: #16a34a; color: white;"
-                  onclick={() => saveDeclField(row.field)}>✓ SAVE</button>
-                <button class="px-2 py-0.5 text-[9px] font-medium uppercase border cursor-pointer"
-                  style="border-color: var(--on-surface); background: var(--surface);"
-                  onclick={cancelEdit}>✗ CANCEL</button>
-                <span class="text-[8px] font-mono ml-auto" style="color: var(--outline);">
-                  orig: {String(originalDecl[row.field] ?? '—')}
-                </span>
-              </div>
-            {:else}
-              <button
-                class="text-left w-full mt-0.5 text-[11px] font-mono font-bold cursor-pointer"
-                style="color: var(--on-surface);"
-                onclick={() => startEdit(`decl:${row.field}`, workingDecl[row.field])}
-              >
-                {workingDecl[row.field] || '—'}
-              </button>
-            {/if}
-          </div>
-        {/each}
+      <div class="dark-bar text-xs flex justify-between"><span>DECLARATION</span>
+        <span style="color: var(--on-surface-muted);">{declRows.length} FIELDS</span></div>
+      <div class="bg-white overflow-x-auto">
+        <table class="w-full text-[11px] font-mono">
+          <thead>
+            <tr style="background: var(--surface-container);">
+              {#each ['FIELD','VALUE','PG','✓','FIELD','VALUE','PG','✓'] as h}
+                <th class="px-2 py-1 text-left text-[9px] font-medium uppercase border-b"
+                  style="border-color: var(--outline); color: var(--on-surface-muted);">{h}</th>
+              {/each}
+            </tr>
+          </thead>
+          <tbody>
+            {#each declPairs as pair}
+              <tr>
+                {@render declCell(pair[0])}
+                {#if pair[1]}{@render declCell(pair[1])}{:else}<td colspan="4"></td>{/if}
+              </tr>
+            {/each}
+          </tbody>
+        </table>
       </div>
     </div>
+
+    {#snippet declCell(row)}
+      {@const editing = editingKey === `decl:${row.field}`}
+      {@const _bb = declBbox(row.field)}
+      {@const dPage = (_bb?.page) || declPageRef(row.field)}
+      {@const _val = workingDecl[row.field]}
+      {@const _searchVal = String(_val ?? '')}
+      <td class="px-2 py-1 text-[9px] uppercase tracking-wider align-top whitespace-nowrap border-b"
+        style="color: var(--on-surface-muted); border-color: var(--outline);">{row.label}</td>
+      <td class="px-2 py-1 align-top border-b"
+        style="background: {declBg(row.field)}; border-color: var(--outline);"
+        onmouseenter={() => jumpPdf(dPage, _searchVal)} role="cell">
+        {#if editing}
+          <input
+            class="w-full text-[11px] font-mono font-bold border px-1 py-0.5"
+            style="border-color: var(--on-surface); background: white;"
+            bind:value={editValue} autofocus
+            onkeydown={(e) => { if (e.key === 'Enter') saveDeclField(row.field); else if (e.key === 'Escape') cancelEdit(); }} />
+          <div class="flex items-center gap-1 mt-1">
+            <button class="px-1.5 py-0.5 text-[8px] font-medium uppercase border cursor-pointer"
+              style="border-color: var(--on-surface); background: #16a34a; color: white;"
+              onclick={() => saveDeclField(row.field)}>✓</button>
+            <button class="px-1.5 py-0.5 text-[8px] font-medium uppercase border cursor-pointer"
+              style="border-color: var(--on-surface); background: var(--surface);"
+              onclick={cancelEdit}>✗</button>
+          </div>
+        {:else}
+          <button class="text-left w-full text-[11px] font-mono font-bold cursor-pointer"
+            style="color: {declBorder(row.field) === 'var(--on-surface)' ? 'var(--on-surface)' : declBorder(row.field)};"
+            onclick={() => startEdit(`decl:${row.field}`, _val)}>{_val || '—'}</button>
+        {/if}
+      </td>
+      <td class="px-1 py-1 align-top border-b" style="border-color: var(--outline);">
+        <button class="text-[9px] font-mono px-1 cursor-pointer border whitespace-nowrap"
+          style="border-color: var(--primary); color: var(--primary);"
+          title="Jump PDF to page {dPage}" onclick={() => jumpPdfImmediate(dPage)}>p{dPage}</button>
+      </td>
+      <td class="px-1 py-1 align-top text-center border-b" style="border-color: var(--outline);">
+        {#if _val}<span style="color: #16a34a;">✓</span>{:else}<span style="color: var(--outline);">—</span>{/if}
+      </td>
+    {/snippet}
 
     <!-- Items -->
     <ExcelTable
@@ -921,7 +926,7 @@
       onRowDelete={(idx) => deleteItemRow(idx)}
       onAddRow={addItemRow}
       exportFilename="items.csv"
-      maxHeight="400px"
+      maxHeight="none"
     />
 
     <!-- ═══ ITEMS VALIDATION STRIP ═══ -->
