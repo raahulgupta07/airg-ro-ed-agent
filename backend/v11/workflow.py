@@ -903,6 +903,29 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
             out["field_bboxes"] = {}
             out["trace"].append({"phase": "bbox", "error": str(_bbe)})
 
+        # Derive model_used label BEFORE save (DB stores it; History reads it).
+        _v7_used = bool(out.get("v7_used"))
+        _v10_used = bool(out.get("v10_used"))
+        _eng_choice = (engine or "auto").lower()
+        _ran = []
+        if locals().get("_use_presto"):
+            _ran.append("Presto")
+        elif _v7_used:
+            _ran.append("Veritas")
+        if locals().get("_use_scribe"):
+            _ran.append("Scribe")
+        elif _v10_used:
+            _ran.append("Scrivener")
+        _ran_str = (" (" + " + ".join(_ran) + ")") if _ran else ""
+        if _eng_choice == "atlas":
+            out["model_used"] = "ATLAS V14" + _ran_str
+        elif _eng_choice == "presto":
+            out["model_used"] = "Presto V12" + _ran_str
+        elif _eng_choice == "classic":
+            out["model_used"] = "Veritas V7" + _ran_str
+        else:
+            out["model_used"] = "V11 Maestro" + _ran_str
+
         # ─── Phase 5: Save merged result to DB ───
         current_stage = "db_save"
         db_job_id = None
@@ -942,29 +965,7 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
         # ─── Final: DONE ───
         total_s = round(time.time() - t0, 2)
 
-        # Derive model_used label from the chosen engine + which branches ran.
-        _v7_used = bool(out.get("v7_used"))
-        _v10_used = bool(out.get("v10_used"))
-        _eng_choice = (engine or "auto").lower()
-        # What actually ran (sub-engine tags).
-        _ran = []
-        if locals().get("_use_presto"):
-            _ran.append("Presto")
-        elif _v7_used:
-            _ran.append("Veritas")
-        if locals().get("_use_scribe"):
-            _ran.append("Scribe")
-        elif _v10_used:
-            _ran.append("Scrivener")
-        _ran_str = (" (" + " + ".join(_ran) + ")") if _ran else ""
-        if _eng_choice == "atlas":
-            out["model_used"] = "ATLAS V14" + _ran_str
-        elif _eng_choice == "presto":
-            out["model_used"] = "Presto V12" + _ran_str
-        elif _eng_choice == "classic":
-            out["model_used"] = "Veritas V7" + _ran_str
-        else:
-            out["model_used"] = "V11 Maestro" + _ran_str
+        # (model_used label already computed before save above.)
         out["processed_at"] = datetime.utcnow().isoformat() + "Z"
 
         done_payload = {
