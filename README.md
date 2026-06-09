@@ -662,7 +662,8 @@ Claude-inspired warm-neutral aesthetic. Tokens defined in `frontend/src/app.css`
 - Text coal `#1F1E1D`, muted `#6B6862`, subtle `#8E8B83`
 - Accent clay `#CC785C` (primary), tint `#F4E3DC` (primary-container)
 - Secondary slate `#2C2B29`, tertiary plum `#8B6F8E`
-- Status: success `#5C8A5C`, warning `#C68E3F`, error `#B5483C`
+- Status (soft-tint pairs): success `#15803D`, warning `#B45309`, error `#BE2D06`, info `#5B7A99` — each with a `*-soft` background
+- Borders: soft `--line #E9E5DA` (no black outlines), faint divider `--line-2 #F0ECE2`
 
 **Type**
 - Headings: Source Serif 4 (`font-serif`), weight 500, `letter-spacing -0.01em`
@@ -674,13 +675,21 @@ Claude-inspired warm-neutral aesthetic. Tokens defined in `frontend/src/app.css`
 - Shadows: layered soft `--shadow-xs / sm / md / lg` (rgba coal at 4-8%)
 - Focus ring: 2px clay outline + 3px primary-container glow
 
+**`cl-*` component layer** (in `app.css`) — reusable primitives every page is built from, so a restyle is one file: `cl-panel` / `cl-hd` / `cl-bd`, `cl-ph`, `cl-stat`, `pill` (ok/warn/err/info/plum/clay/muted), `cl-lbl` / `cl-inp`, `cl-btn(.primary/.sm)`, `cl-table`, `seg`, `cl-toggle`, `cl-drop`, `cl-bar`.
+
+**Shell**
+- `Sidebar.svelte` — grouped left rail (Documents / Insights / Admin), 236px; the primary navigation. Replaced the old top `Header.svelte` (kept tracked as a fallback, unused).
+- Layout `routes/+layout.svelte` = sidebar + content column; `Footer.svelte` offset `left-[236px]`.
+- `login/+page.svelte` — branded, fully responsive two-column login (`clamp()`-sized, single-column < 980px) with an animated, query-synced CityAgent preview panel (illustrative only).
+
+**Branding** — `frontend/static/cityagent-logo-web.png` (trimmed lockup, login + sidebar) and `cityagent-mark.png` (square emblem).
+
 **Components** in `frontend/src/lib/components/`:
 - `Button.svelte` — primary (clay), secondary (white+outline), danger, ghost, dark
 - `FormInput.svelte` — clay focus ring, muted label above
 - `Badge.svelte` — soft tinted pills (bg + readable fg per variant)
 - `KpiCard.svelte` — serif numeral + slim progress bar
 - `DataTable.svelte` — surface header bar + uppercase muted column labels + row hover
-- `Header.svelte` — translucent backdrop-blur, pill nav, circular avatar
 - `Footer.svelte` — minimal sentence-case status strip
 
 `prefers-reduced-motion` respected globally.
