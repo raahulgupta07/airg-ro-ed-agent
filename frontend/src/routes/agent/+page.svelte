@@ -59,6 +59,8 @@
   let agentLines = $state<{ text: string; type: string }[]>([]);
   let pipelineMode = $state('ro_ed');
   let selectedPipeline = $state<PipelineKey>('v11');
+  // V12: typed-page engine — 'classic' (V7 Veritas) | 'presto' (V12 fast) | 'auto'
+  let selectedEngine = $state<'auto' | 'presto' | 'classic'>('auto');
   // V11 review mode toggle: VIEW (read-only ResultAccordion) | REVIEW (editable split view)
   let reviewMode = $state<'view' | 'review'>('view');
   function reviewToast(msg: string) {
@@ -69,7 +71,7 @@
 
   // Route extraction through V11 (queue-based HTTP path).
   async function runExtract(file: File, jobId?: string) {
-    const raw = await extractPDF(file, selectedPipeline, auth.token, jobId);
+    const raw = await extractPDF(file, selectedPipeline, auth.token, jobId, selectedEngine);
     return normalizeExtractResult(raw);
   }
 
@@ -604,6 +606,21 @@
         <span class="text-xs font-medium" style="color: var(--on-surface);">Maestro Router</span>
         <span class="text-[11px] flex-1" style="color: var(--on-surface-muted);">auto · PRINTED→Veritas · INKED→Scrivener</span>
         <span class="text-[11px]" style="color: var(--on-surface-muted);">$0.08–0.40</span>
+      </div>
+      <!-- V12 engine selector: typed-page extraction engine -->
+      <div class="mb-3">
+        <div class="text-[10px] uppercase tracking-wider mb-1" style="color: var(--on-surface-muted);">Typed-page engine</div>
+        <div class="flex gap-1">
+          {#each [['auto','AUTO','default'],['classic','CLASSIC','V7 · accurate'],['presto','PRESTO','V12 · ~4× faster']] as opt}
+            <button
+              class="flex-1 px-2 py-1.5 cursor-pointer transition-colors text-center"
+              style="border: 1.5px solid {selectedEngine === opt[0] ? 'var(--primary)' : 'var(--outline)'}; border-radius: var(--radius-md); background: {selectedEngine === opt[0] ? 'var(--primary-container)' : 'var(--surface-container-lowest)'};"
+              onclick={() => (selectedEngine = opt[0] as 'auto' | 'presto' | 'classic')}>
+              <div class="text-[11px] font-bold" style="color: var(--on-surface);">{opt[1]}</div>
+              <div class="text-[9px]" style="color: var(--on-surface-muted);">{opt[2]}</div>
+            </button>
+          {/each}
+        </div>
       </div>
       <!-- Add more / New job buttons -->
       <div class="flex gap-2 mb-3">

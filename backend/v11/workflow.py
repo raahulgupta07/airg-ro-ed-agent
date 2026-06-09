@@ -321,7 +321,7 @@ def _save_to_db(out: Dict, pdf_path: str) -> str:
     return job_id
 
 
-def run(pdf_path: str, job_id: Optional[str] = None) -> Dict:
+def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Dict:
     """End-to-end V11 dispatch. Returns merged result + trace.
 
     Args:
@@ -518,8 +518,18 @@ def run(pdf_path: str, job_id: Optional[str] = None) -> Dict:
         # text layer). Flag off → identical to today's V7 path.
         from v11.config import PRESTO_ENABLED
         _typed_meta = [p for p in cls.get("pages", []) if (p.get("label") or "").upper() == "TYPED"]
-        _use_presto = bool(PRESTO_ENABLED and _typed_meta
-                           and all(p.get("has_text_layer") for p in _typed_meta))
+        _typed_digital = bool(_typed_meta) and all(p.get("has_text_layer") for p in _typed_meta)
+        # Per-job engine choice overrides the global flag:
+        #   "presto" → force fast-path (only takes effect if typed pages digital)
+        #   "classic" → force V7 Veritas
+        #   "auto"   → follow PRESTO_ENABLED
+        _eng = (engine or "auto").lower()
+        if _eng == "presto":
+            _use_presto = _typed_digital
+        elif _eng == "classic":
+            _use_presto = False
+        else:
+            _use_presto = bool(PRESTO_ENABLED and _typed_digital)
         # Presto reads typed + attachment pages of the ORIGINAL pdf so misrouted
         # item pages (classifier put them in ATTACHMENT) are still captured.
         _presto_pages = sorted(set((buckets.get("TYPED") or []) + (buckets.get("ATTACHMENT") or [])))

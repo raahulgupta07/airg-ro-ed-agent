@@ -138,7 +138,8 @@ export async function extractPDF(
   file: File,
   pipeline: PipelineKey = 'v11',
   token?: string,
-  jobId?: string
+  jobId?: string,
+  engine: 'auto' | 'presto' | 'classic' = 'auto'
 ): Promise<any> {
   const config = PIPELINES[pipeline];
   if (!config) throw new Error(`Unknown pipeline: ${pipeline}`);
@@ -146,6 +147,8 @@ export async function extractPDF(
   const formData = new FormData();
   formData.append('file', file);
   if (jobId) formData.append('job_id', jobId);
+  // V12: typed-page engine choice — 'classic' (V7 Veritas) | 'presto' (fast) | 'auto'
+  formData.append('engine', engine);
 
   const headers: Record<string, string> = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
