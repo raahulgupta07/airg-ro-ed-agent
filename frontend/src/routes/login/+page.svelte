@@ -71,13 +71,12 @@
 
     <!-- Brand -->
     <div class="flex flex-col items-center text-center mb-6">
-      <span class="w-12 h-12 flex items-center justify-center text-white font-medium text-base mb-4"
-            style="background: var(--primary); border-radius: var(--radius-md);">RO</span>
-      <h1 class="font-serif text-3xl" style="color: var(--on-surface); letter-spacing: -0.01em; font-weight: 500;">
+      <img src="/cityagent-logo.png" alt="CityAgent" class="mb-4" style="width: 270px; height: auto;" />
+      <h1 class="font-serif text-2xl" style="color: var(--on-surface); letter-spacing: -0.01em; font-weight: 500;">
         {greeting}
       </h1>
       <p class="mt-2 text-sm" style="color: var(--on-surface-muted); line-height: 1.5;">
-        Sign in to RO‑ED Command Center
+        Sign in to CityAgent · Release Order
       </p>
     </div>
 

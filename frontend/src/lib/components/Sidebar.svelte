@@ -50,10 +50,8 @@
        style="background: var(--surface-container-lowest); border-right: 1px solid var(--line);">
 
   <!-- Brand -->
-  <a href="/agent" class="flex items-center gap-2 no-underline px-4 pt-4 pb-3" style="color: var(--on-surface);">
-    <span class="w-7 h-7 flex items-center justify-center text-white font-medium text-xs"
-          style="background: var(--primary); border-radius: var(--radius-sm);">RO</span>
-    <span class="font-serif text-lg" style="letter-spacing: -0.01em;">RO‑ED</span>
+  <a href="/agent" class="block no-underline px-4 pt-4 pb-3">
+    <img src="/cityagent-logo.png" alt="CityAgent" style="width: 100%; max-width: 190px; height: auto;" />
   </a>
 
   <!-- Grouped nav -->
