@@ -94,12 +94,12 @@ def _parse_json(raw: str):
     return None
 
 
-def _call_vlm(images: List[str], temperature: float) -> Dict:
+def _call_vlm(images: List[str], temperature: float, model: str = None) -> Dict:
     parts = [{"type": "text", "text": PROMPT}]
     for b64 in images:
         parts.append({"type": "image_url",
                       "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
-    payload = {"model": cfg.SCRIBE_MODEL,
+    payload = {"model": model or cfg.SCRIBE_MODEL,
                "messages": [{"role": "user", "content": parts}],
                "temperature": temperature, "max_tokens": 8000}
     usage = {}
@@ -227,9 +227,11 @@ def run(pdf_path: str, pages: Optional[List[int]] = None) -> Dict:
     n = max(1, cfg.SCRIBE_VOTES)
 
     reads, ti, to, cost = [], 0, 0, 0.0
+    models = cfg.SCRIBE_MODELS or [cfg.SCRIBE_MODEL]
     for i in range(n):
         temp = 0.0 if i == 0 else cfg.SCRIBE_TEMPERATURE
-        res = _call_vlm(images, temp)
+        # Rotate across models → field_confidence = cross-MODEL agreement.
+        res = _call_vlm(images, temp, models[i % len(models)])
         try:
             reads.append(PrestoResult.model_validate(res["parsed"]))
         except Exception:

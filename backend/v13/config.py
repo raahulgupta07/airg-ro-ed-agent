@@ -24,6 +24,14 @@ SCRIBE_DPI = int(os.getenv("SCRIBE_DPI", "300"))
 # Self-consistency: how many independent reads to vote across (odd number).
 SCRIBE_VOTES = int(os.getenv("SCRIBE_VOTES", "3"))
 
+# Cross-MODEL agreement: rotate votes across these models so field_confidence
+# reflects agreement between INDEPENDENT models (different vendors), not just
+# temperature noise on one model. Fields two models agree on are trustworthy;
+# disagreements get flagged for review.
+SCRIBE_MODELS = [m.strip() for m in os.getenv(
+    "SCRIBE_MODELS",
+    "google/gemini-3-flash-preview,anthropic/claude-haiku-4-5").split(",") if m.strip()]
+
 # Temperature for the voting reads (>0 so samples differ; low so they stay sane).
 SCRIBE_TEMPERATURE = float(os.getenv("SCRIBE_TEMPERATURE", "0.4"))
 

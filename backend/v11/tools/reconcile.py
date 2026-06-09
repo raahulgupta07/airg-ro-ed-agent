@@ -118,6 +118,42 @@ def _duty_closure(decl: Dict, items: List[Dict]) -> Dict:
             "duty_gap_pct": gap_pct, "duty_expected": round(expected, 2)}
 
 
+def row_tolerance_pct() -> float:
+    try:
+        return float(os.environ.get("RECONCILE_ROW_TOLERANCE_PCT", "8.0"))
+    except Exception:
+        return 8.0
+
+
+def _row_closure(decl: Dict, items: List[Dict]) -> Dict:
+    """Per-item invariant: customs_value_mmk ≈ quantity × cif_unit_price × rate.
+
+    Catches a wrong INDIVIDUAL item value that the total-sum check misses (a doc
+    can sum right while one row is wrong). Advisory; lists the suspect rows so the
+    FIXER / reviewer can target them. Returns
+    {rows_checked, rows_ok, bad_rows:[{idx,expected,got,gap_pct}], n_rows_checked}.
+    """
+    decl_rate = _to_float(decl.get("exchange_rate") or decl.get("Exchange Rate"))
+    tol = row_tolerance_pct()
+    bad, checked = [], 0
+    for idx, it in enumerate(items or []):
+        qty = _to_float(it.get("quantity") or it.get("Quantity (1)"))
+        price = (_to_float(it.get("cif_unit_price") or it.get("CIF unit price"))
+                 or _to_float(it.get("invoice_unit_price") or it.get("Invoice unit price")))
+        rate = _to_float(it.get("exchange_rate")) or decl_rate
+        got = _to_float(it.get("customs_value_mmk") or it.get("Customs Value (MMK)"))
+        if not (qty and price and rate and got and got > 0):
+            continue
+        checked += 1
+        expected = qty * price * rate
+        gap = abs(expected - got) / got * 100
+        if gap > tol:
+            bad.append({"idx": idx, "expected": round(expected, 2),
+                        "got": round(got, 2), "gap_pct": round(gap, 2)})
+    return {"rows_checked": checked > 0, "rows_ok": (checked > 0 and not bad),
+            "bad_rows": bad, "n_rows_checked": checked}
+
+
 def reconcile(declaration: Dict, items: List[Dict]) -> Dict:
     """Check items value sum against the declared customs-value total, AND that
     invoice_price × exchange_rate ≈ total (catches a wrong exchange rate).
@@ -162,6 +198,7 @@ def reconcile(declaration: Dict, items: List[Dict]) -> Dict:
     tol = tolerance_pct()
     cif = _cif_closure(decl, declared)
     duty = _duty_closure(decl, items)
+    row = _row_closure(decl, items)
     if not declared or declared <= 0:
         # No trustworthy anchor → cannot judge. Don't fake a pass.
         return {
@@ -176,6 +213,7 @@ def reconcile(declaration: Dict, items: List[Dict]) -> Dict:
             "n_items": len(items or []),
             **cif,
             **duty,
+            **row,
         }
 
     gap = round(declared - isum, 2)
@@ -193,6 +231,7 @@ def reconcile(declaration: Dict, items: List[Dict]) -> Dict:
         "n_items": len(items or []),
         **cif,
         **duty,
+        **row,
     }
 
 

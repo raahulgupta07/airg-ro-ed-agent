@@ -823,6 +823,12 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
             if not out["cross_val_passed"]:
                 out["needs_review"] = True
 
+            # Per-row math gate: a suspect individual item (value ≠ qty×price×rate)
+            # → force review even if the total balances.
+            if verdict.get("rows_checked") and not verdict.get("rows_ok"):
+                out["needs_review"] = True
+                out["bad_rows"] = verdict.get("bad_rows")
+
             # JUDGE — confidence score → auto-ok vs review (additive, advisory).
             try:
                 from v11.tools import judge as _judge

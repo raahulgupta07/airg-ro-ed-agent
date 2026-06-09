@@ -153,6 +153,12 @@ def judge(result: dict, verdict: dict = None, *,
             else:
                 reasons.append("duty closure off (gap %.2f%%)" % (verdict.get("duty_gap_pct") or 0))
 
+        # Per-row math: a suspect item value tanks the score (forces review).
+        if verdict.get("rows_checked") and not verdict.get("rows_ok"):
+            nbad = len(verdict.get("bad_rows") or [])
+            score -= 0.30
+            reasons.append("%d item row(s) fail value=qty×price×rate (-0.30)" % nbad)
+
         # Scribe field-confidence average, scaled by its own magnitude.
         fc_avg = _field_conf_avg(result)
         if fc_avg is not None:
