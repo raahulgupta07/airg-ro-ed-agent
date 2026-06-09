@@ -104,6 +104,32 @@ def _call_v7(pdf_path: str) -> Dict:
     return run_pipeline(pdf_path)
 
 
+def _call_typed(pdf_path: str, use_presto: bool = False) -> Dict:
+    """Typed-page extraction with the V12 Presto fast-path + math-gated fallback.
+
+    When `use_presto` (flag on AND every typed page is digital), try Presto first:
+    text-layer → one schema call. Keep it ONLY if the reconcile equation balances
+    (Σ item customs values == declared total); otherwise fall back to V7 Veritas
+    so accuracy never regresses. `use_presto=False` → behaves exactly like V7.
+    """
+    if use_presto:
+        try:
+            from v11.presto import run as presto_run
+            from v11.tools import reconcile as _rc
+            res = presto_run(pdf_path)
+            v = _rc.reconcile(res.get("declaration") or {}, res.get("items") or [])
+            if v.get("checked") and v.get("balanced"):
+                res["_engine"] = "presto"
+                return res
+            print(f"[Presto] gap {v.get('gap_pct')}% — falling back to V7 Veritas")
+        except Exception as e:
+            print(f"[Presto] fast-path error, falling back to V7: {e}")
+    res = _call_v7(pdf_path)
+    if isinstance(res, dict):
+        res.setdefault("_engine", "v7")
+    return res
+
+
 def _call_v10(pdf_path: str) -> Dict:
     """Use V10 PRO (shape-validated, memory-aware, cost-tracked)."""
     from v10_pro.workflow import run as run_v10_pro
@@ -484,11 +510,20 @@ def run(pdf_path: str, job_id: Optional[str] = None) -> Dict:
         # spec forbids modifying their internals. To wire this up later, either:
         #   (a) thread `job_id` + an emit callback into both workflows, or
         #   (b) tail their structured logs and re-emit as STAGE_DETAIL.
+        # V12 Presto eligibility: flag ON and every TYPED page is digital (has a
+        # text layer). Flag off → identical to today's V7 path.
+        from v11.config import PRESTO_ENABLED
+        _typed_meta = [p for p in cls.get("pages", []) if (p.get("label") or "").upper() == "TYPED"]
+        _use_presto = bool(PRESTO_ENABLED and _typed_meta
+                           and all(p.get("has_text_layer") for p in _typed_meta))
+        if _use_presto:
+            out["trace"].append({"phase": "route_typed", "engine": "presto"})
+
         with ThreadPoolExecutor(max_workers=2) as ex:
             futs = {}
             if typed_pdf:
                 v7_t0 = time.time()
-                futs[ex.submit(_call_v7, typed_pdf)] = "v7"
+                futs[ex.submit(_call_typed, typed_pdf, _use_presto)] = "v7"
             if hw_pdf:
                 v10_t0 = time.time()
                 futs[ex.submit(_call_v10, hw_pdf)] = "v10"
