@@ -40,7 +40,7 @@
 <div class="flex items-center gap-3 mb-3">
   <button
     class="px-3 py-1.5 text-[10px] font-medium uppercase border-2 cursor-pointer press-effect"
-    style="border-color: var(--on-surface); background: var(--surface); color: var(--on-surface); box-shadow: var(--shadow-sm);"
+    style="border-color: var(--line); background: var(--surface); color: var(--on-surface); box-shadow: var(--shadow-sm);"
     onclick={back}
   >← BACK_TO_QUEUE</button>
   <span class="text-xs font-mono" style="color: var(--on-surface);">JOB_ID: <strong>{jobId}</strong></span>

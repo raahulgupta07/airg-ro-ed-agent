@@ -199,7 +199,7 @@
 </div>
 
 <!-- Filter bar -->
-<div class="border-2 stamp-shadow mb-3" style="border-color: var(--on-surface); background: var(--surface);">
+<div class="border-2 stamp-shadow mb-3" style="border-color: var(--line); background: var(--surface);">
   <div class="dark-bar text-xs">FILTERS</div>
   <div class="bg-white p-2 flex flex-wrap items-center gap-2">
     <span class="text-[8px] font-medium uppercase opacity-60 px-1">STATUS</span>
@@ -239,7 +239,7 @@
 
 <!-- Bulk action bar -->
 <div class="flex items-center gap-3 mb-2 p-2 border-2"
-  style="border-color: var(--on-surface); background: {selected.size > 0 ? '#fff8d8' : 'transparent'};">
+  style="border-color: var(--line); background: {selected.size > 0 ? '#fff8d8' : 'transparent'};">
   <button class="text-[10px] font-bold uppercase px-2 py-1 cursor-pointer"
     style="border: 1px solid var(--on-surface); background: white;"
     onclick={selectAllVisible}>
@@ -286,7 +286,7 @@
 
 {#if showRejectModal}
   <div class="fixed inset-0 z-50 flex items-center justify-center" style="background: rgba(0,0,0,0.5);">
-    <div class="border-2 stamp-shadow w-[420px] p-4" style="background: var(--surface); border-color: var(--on-surface);">
+    <div class="border-2 stamp-shadow w-[420px] p-4" style="background: var(--surface); border-color: var(--line);">
       <div class="dark-bar text-xs mb-3">REJECT_SELECTED — {selected.size} job(s)</div>
       <label class="text-[10px] font-bold uppercase opacity-70">REASON / NOTES (required)</label>
       <textarea bind:value={rejectNotes} rows="4"

@@ -13,7 +13,7 @@
   });
 </script>
 
-<div class="border-2" style="border-color: var(--on-surface);">
+<div class="border-2" style="border-color: var(--line);">
   <div class="dark-bar flex items-center justify-between text-xs">
     <span>PAGE_MAP</span>
     <span>{pages.length} PAGES / {typeGroups().length} TYPES</span>

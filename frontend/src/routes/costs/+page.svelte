@@ -265,12 +265,12 @@ const filteredJobs = $derived(() => {
     {/if}
     <button
       class="text-[10px] font-medium uppercase px-3 py-1.5 cursor-pointer border-2 press-effect"
-      style="border-color: var(--on-surface); background: var(--primary-container); color: var(--on-surface); box-shadow: var(--shadow-sm);"
+      style="border-color: var(--line); background: var(--primary-container); color: var(--on-surface); box-shadow: var(--shadow-sm);"
       onclick={downloadXlsx}
     >↓ DOWNLOAD XLSX</button>
     <button
       class="text-[10px] font-medium uppercase px-3 py-1.5 cursor-pointer border-2"
-      style="border-color: var(--on-surface); background: var(--surface); color: var(--on-surface);"
+      style="border-color: var(--line); background: var(--surface); color: var(--on-surface);"
       onclick={downloadCsv}
     >↓ CSV</button>
   </div>
@@ -305,7 +305,7 @@ const filteredJobs = $derived(() => {
   {/if}
 
   <!-- Daily Cost Chart -->
-  <div class="border-2 stamp-shadow mb-6" style="border-color: var(--on-surface);">
+  <div class="border-2 stamp-shadow mb-6" style="border-color: var(--line);">
     <div class="dark-bar">DAILY_COST_TREND</div>
     <div class="bg-white p-4">
       <div bind:this={chartContainer} style="width: 100%; height: 250px;"></div>
@@ -320,7 +320,7 @@ const filteredJobs = $derived(() => {
 
   <!-- Projections + Model Info -->
   <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-    <div class="border-2 stamp-shadow" style="border-color: var(--on-surface);">
+    <div class="border-2 stamp-shadow" style="border-color: var(--line);">
       <div class="dark-bar text-xs">COST_PROJECTIONS</div>
       <div class="bg-white p-4 space-y-3">
         {#if costStats}
@@ -341,7 +341,7 @@ const filteredJobs = $derived(() => {
       </div>
     </div>
 
-    <div class="border-2 stamp-shadow" style="border-color: var(--on-surface);">
+    <div class="border-2 stamp-shadow" style="border-color: var(--line);">
       <div class="dark-bar text-xs">MODEL_INFO</div>
       <div class="bg-white p-4 space-y-3">
         <div class="flex justify-between">

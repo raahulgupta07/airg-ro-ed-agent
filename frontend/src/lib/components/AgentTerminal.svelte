@@ -431,7 +431,7 @@
     <div
       class="border-2 px-2 py-1 font-mono uppercase font-black text-[10px]"
       style="
-        border-color: var(--on-surface);
+        border-color: var(--line);
         background: var(--surface);
         color: var(--on-surface);
         box-shadow: 2px 2px 0px 0px var(--on-surface);

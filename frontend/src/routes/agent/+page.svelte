@@ -679,7 +679,7 @@
       </div>
 
       <!-- Queue -->
-      <div class="border-2 flex-1 flex flex-col" style="border-color: var(--on-surface);">
+      <div class="border-2 flex-1 flex flex-col" style="border-color: var(--line);">
         <div class="dark-bar flex justify-between items-center text-xs">
           <span>QUEUE</span>
           <span class="text-[10px] py-0.5 px-2" style="background: var(--surface); color: var(--on-surface);">
@@ -734,7 +734,7 @@
       <!-- Duplicate actions for selected file -->
       {#if selectedFile?.status === 'duplicate'}
         {@const ej = selectedFile.existingJob}
-        <div class="mt-2 border-2" style="border-color: var(--on-surface);">
+        <div class="mt-2 border-2" style="border-color: var(--line);">
           <div class="px-3 py-2 text-xs font-bold uppercase text-white" style="background: #b45309;">
             THIS DOCUMENT WAS ALREADY PROCESSED
           </div>
@@ -756,7 +756,7 @@
             <div class="text-[10px] font-bold uppercase" style="color: var(--on-surface);">What would you like to do?</div>
             <div class="flex gap-2">
               <button class="flex items-center gap-1 px-3 py-2 text-[10px] font-bold uppercase cursor-pointer border-2"
-                style="border-color: var(--on-surface); background: var(--surface-container); color: var(--on-surface);"
+                style="border-color: var(--line); background: var(--surface-container); color: var(--on-surface);"
                 onclick={() => viewDuplicateResult(selectedIndex)}>
                 <span class="material-symbols-outlined text-xs">visibility</span> VIEW RESULTS (free)
               </button>
@@ -801,7 +801,7 @@
 
       <!-- Batch Summary -->
       {#if batchSummary}
-        <div class="mt-3 border-2 p-3" style="border-color: var(--on-surface); background: white;">
+        <div class="mt-3 border-2 p-3" style="border-color: var(--line); background: white;">
           <div class="tag-label mb-2">BATCH_SUMMARY</div>
           <div class="space-y-1 text-[10px] font-mono">
             <div>COMPLETED: {batchSummary.completed}/{batchSummary.total}</div>
@@ -871,7 +871,7 @@
                   RETRY
                 </button>
                 <a href="/history?job={selectedFile.jobId}" class="text-[10px] font-bold uppercase no-underline px-3 py-2 border-2"
-                  style="border-color: var(--on-surface); color: var(--on-surface);">
+                  style="border-color: var(--line); color: var(--on-surface);">
                   VIEW IN HISTORY →
                 </a>
               {/if}
@@ -935,7 +935,7 @@
         <!-- Selected file waiting — show PDF preview -->
         {#if selectedFile.savedPath}
           {@const previewFilename = selectedFile.savedPath.split('/').pop()}
-          <div class="border-2" style="border-color: var(--on-surface);">
+          <div class="border-2" style="border-color: var(--line);">
             <div class="dark-bar flex items-center justify-between text-xs">
               <span>PDF_PREVIEW — {selectedFile.filename}</span>
               <span class="text-[10px]" style="color: var(--primary-container);">

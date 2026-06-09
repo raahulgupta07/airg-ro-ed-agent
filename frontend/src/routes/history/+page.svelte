@@ -188,7 +188,7 @@
   <ChapterHeading icon="history" title="EXTRACTION_HISTORY" subtitle="Review past extraction jobs" question="Click any job to view details" />
 
   <!-- Filters -->
-  <div class="flex flex-wrap gap-3 items-end mb-4 p-3 border-2 bg-white" style="border-color: var(--on-surface);">
+  <div class="flex flex-wrap gap-3 items-end mb-4 p-3 border-2 bg-white" style="border-color: var(--line);">
     <div class="flex-1 min-w-[180px]">
       <div class="tag-label mb-1 text-[8px]">SEARCH</div>
       <input type="text" placeholder="Document name or number..." bind:value={searchQuery}
@@ -217,7 +217,7 @@
   </div>
 
   <!-- Jobs Table -->
-  <div class="border-2" style="border-color: var(--on-surface);">
+  <div class="border-2" style="border-color: var(--line);">
     <div class="dark-bar flex justify-between items-center text-xs">
       <span>JOBS</span>
       <span>{filteredJobs().length} TOTAL</span>
@@ -289,7 +289,7 @@
           RETRY
         </button>
         <button class="text-[10px] font-bold uppercase px-3 py-2 border-2 cursor-pointer"
-          style="border-color: var(--on-surface); color: var(--on-surface); background: transparent;"
+          style="border-color: var(--line); color: var(--on-surface); background: transparent;"
           onclick={backToList}>
           BACK TO LIST
         </button>
@@ -305,10 +305,10 @@
     {@const _model = selectedJob.model_used || (selectedJob.pipeline_mode || '').toUpperCase() || '—'}
 
     <!-- Header bar -->
-    <div class="flex items-center justify-between mb-4 p-3 border-2 bg-white" style="border-color: var(--on-surface);">
+    <div class="flex items-center justify-between mb-4 p-3 border-2 bg-white" style="border-color: var(--line);">
       <div class="flex items-center gap-3">
         <button class="flex items-center gap-1 text-[10px] font-medium uppercase cursor-pointer px-2 py-1 border"
-          style="border-color: var(--on-surface); color: var(--on-surface);" onclick={backToList}>
+          style="border-color: var(--line); color: var(--on-surface);" onclick={backToList}>
           <span class="material-symbols-outlined text-sm">arrow_back</span> HISTORY
         </button>
         <span class="text-sm font-bold" style="color: var(--on-surface);">{selectedJob.pdf_name}</span>
@@ -348,7 +348,7 @@
     </div>
 
     <!-- Tab bar -->
-    <div class="flex gap-0 mb-4 border-2" style="border-color: var(--on-surface); background: var(--surface-container-highest);">
+    <div class="flex gap-0 mb-4 border-2" style="border-color: var(--line); background: var(--surface-container-highest);">
       {#each [['data','DATA'],['log','PIPELINE LOG']] as [key, label]}
         <button class="px-3 py-2 text-[11px] font-bold uppercase tracking-tight cursor-pointer"
           style="{historyTab === key ? 'background: var(--surface-container); color: var(--on-surface);' : 'color: var(--outline);'}"
@@ -360,7 +360,7 @@
     {#if historyTab === 'data'}
     <!-- PDF Viewer (collapsible) -->
     {#if showPdf}
-      <div class="border-2 mb-4" style="border-color: var(--on-surface);">
+      <div class="border-2 mb-4" style="border-color: var(--line);">
         <div class="dark-bar flex items-center justify-between text-xs">
           <span>ORIGINAL_PDF — {selectedJob.pdf_name}</span>
           <button class="text-[10px] font-bold uppercase cursor-pointer" style="color: var(--primary-container);" onclick={() => showPdf = false}>CLOSE</button>

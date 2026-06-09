@@ -29,7 +29,7 @@
 </script>
 
 {#if page}
-  <div class="border-2" style="border-color: var(--on-surface);">
+  <div class="border-2" style="border-color: var(--line);">
     <!-- Header -->
     <div class="dark-bar flex items-center justify-between text-xs">
       <span>PAGE {page.page_number} — {(page.page_type || 'unknown').replace(/_/g, ' ').toUpperCase()}</span>

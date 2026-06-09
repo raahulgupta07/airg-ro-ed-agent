@@ -541,7 +541,7 @@
 {:else}
   <!-- Left menu + content -->
   <div class="flex gap-4 items-start">
-    <nav class="border-2 stamp-shadow shrink-0" style="border-color: var(--on-surface); background: var(--surface); width: 190px;">
+    <nav class="border-2 stamp-shadow shrink-0" style="border-color: var(--line); background: var(--surface); width: 190px;">
       <div class="dark-bar text-xs">ADMIN</div>
       {#each [['users','USERS'],['logs','ACTIVITY_LOG'],['auth','AUTHENTICATION'],['groups','GROUPS'],['ldap','LDAP'],['storage','STORAGE'],['auto_approve','AUTO_APPROVE'],['engines','ENGINES']] as [key, label]}
         <button class="block w-full text-left px-3 py-2.5 text-[11px] font-bold uppercase tracking-tight cursor-pointer border-b"
@@ -561,7 +561,7 @@
         <DataTable title="REGISTERED_USERS" count={users.length} columns={userColumns} rows={userRows} />
 
         {#if !auth.isKeycloak && auth.user?.auth_type !== 'keycloak'}
-          <div class="border-2 stamp-shadow" style="border-color: var(--on-surface);">
+          <div class="border-2 stamp-shadow" style="border-color: var(--line);">
             <div class="dark-bar">CHANGE_MY_PASSWORD</div>
             <div class="bg-white p-3 space-y-2">
               {#if myPwError}<div class="p-2 text-xs font-bold uppercase text-white" style="background: var(--error);">{myPwError}</div>{/if}
@@ -577,7 +577,7 @@
         {/if}
       </div>
       {#if !auth.isKeycloak}
-        <div class="border-2 stamp-shadow" style="border-color: var(--on-surface);">
+        <div class="border-2 stamp-shadow" style="border-color: var(--line);">
           <div class="dark-bar">CREATE_USER</div>
           <div class="bg-white p-3 space-y-3">
             {#if createError}<div class="p-2 text-xs font-bold uppercase text-white" style="background: var(--error);">{createError}</div>{/if}
@@ -587,7 +587,7 @@
             <FormInput label="DISPLAY_NAME" bind:value={newDisplayName} placeholder="Display Name" />
             <div>
               <div class="tag-label mb-0.5">ROLE</div>
-              <select bind:value={newRole} class="w-full px-2 py-1.5 text-sm font-bold uppercase border-2" style="border-color: var(--on-surface);">
+              <select bind:value={newRole} class="w-full px-2 py-1.5 text-sm font-bold uppercase border-2" style="border-color: var(--line);">
                 <option value="user">USER</option>
                 <option value="admin">ADMIN</option>
               </select>
@@ -596,7 +596,7 @@
           </div>
         </div>
       {:else}
-        <div class="border-2 stamp-shadow" style="border-color: var(--on-surface);">
+        <div class="border-2 stamp-shadow" style="border-color: var(--line);">
           <div class="dark-bar">AUTH_PROVIDER</div>
           <div class="bg-white p-3">
             <div class="flex items-center gap-2 mb-2">
@@ -620,7 +620,7 @@
         ['Unique Users', logStats?.unique_users ?? '—'],
         ['Top Action', logStats?.top_action ?? '—'],
       ] as [label, val]}
-        <div class="border-2 p-2" style="border-color: var(--on-surface); background: var(--surface);">
+        <div class="border-2 p-2" style="border-color: var(--line); background: var(--surface);">
           <div class="text-[8px] font-medium uppercase opacity-60">{label}</div>
           <div class="text-sm font-mono font-bold">{val}</div>
         </div>
@@ -628,7 +628,7 @@
     </div>
 
     <!-- Compact 1-row filter bar (auto-apply on change, no APPLY button) -->
-    <div class="border-2 p-2 mb-3 flex flex-wrap items-center gap-2" style="border-color: var(--on-surface); background: var(--surface);">
+    <div class="border-2 p-2 mb-3 flex flex-wrap items-center gap-2" style="border-color: var(--line); background: var(--surface);">
       <span class="text-[8px] font-medium uppercase opacity-60 px-1">VIEW</span>
       <select bind:value={logSubTab}
         class="text-[10px] font-mono px-2 py-1.5 cursor-pointer"
@@ -705,7 +705,7 @@
       onRowClick={(r: any) => openDrawer(r.id)}
       rowClass={(r: any) => r.status === 'FAILED' ? 'bg-red-50/50' : (r.action || '').startsWith('JOB_') ? 'bg-blue-50/30' : ''}
     />
-    <div class="flex justify-between items-center p-3 border-2 border-t-0 stamp-shadow" style="border-color: var(--on-surface); background: var(--surface);">
+    <div class="flex justify-between items-center p-3 border-2 border-t-0 stamp-shadow" style="border-color: var(--line); background: var(--surface);">
       <button class="text-[8px] font-medium uppercase px-2 py-1 cursor-pointer"
         style="border: 1px solid var(--on-surface);" disabled={logOffset === 0}
         onclick={() => { logOffset = Math.max(0, logOffset - logLimit); loadLogs(); }}>« PREV</button>
@@ -718,7 +718,7 @@
   {:else if activeTab === 'auth'}
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
       <!-- LEFT: Keycloak config form (2 cols wide) -->
-      <div class="lg:col-span-2 border-2 stamp-shadow" style="border-color: var(--on-surface);">
+      <div class="lg:col-span-2 border-2 stamp-shadow" style="border-color: var(--line);">
         <div class="dark-bar flex items-center justify-between">
           <span>KEYCLOAK_CONFIGURATION</span>
           <button class="px-3 py-1 text-[10px] font-medium uppercase cursor-pointer border-2"
@@ -726,8 +726,8 @@
             onclick={() => kcEnabled = !kcEnabled}>{kcEnabled ? 'ENABLED' : 'DISABLED'}</button>
         </div>
         <div class="bg-white p-4">
-          {#if kcMessage}<div class="mb-3 p-2 text-xs font-bold uppercase text-white border-2" style="background: {kcMessageType === 'success' ? 'var(--primary)' : 'var(--error)'}; border-color: var(--on-surface);">{kcMessage}</div>{/if}
-          {#if kcTestResult}<div class="mb-3 p-2 text-xs font-bold uppercase border-2" style="background: {kcTestType === 'success' ? '#C6EFCE' : '#FFC7CE'}; border-color: var(--on-surface);">{kcTestResult}</div>{/if}
+          {#if kcMessage}<div class="mb-3 p-2 text-xs font-bold uppercase text-white border-2" style="background: {kcMessageType === 'success' ? 'var(--primary)' : 'var(--error)'}; border-color: var(--line);">{kcMessage}</div>{/if}
+          {#if kcTestResult}<div class="mb-3 p-2 text-xs font-bold uppercase border-2" style="background: {kcTestType === 'success' ? '#C6EFCE' : '#FFC7CE'}; border-color: var(--line);">{kcTestResult}</div>{/if}
           <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-3">
             <div>
               <div class="tag-label mb-0.5" style="font-size: 9px;">REALM_URL</div>
@@ -747,14 +747,14 @@
             </div>
           </div>
           <div class="flex gap-3 mt-4">
-            <button onclick={testKeycloakConnection} disabled={kcTesting || !kcRealmUrl} class="px-4 py-2.5 text-xs font-medium uppercase cursor-pointer border-2" class:opacity-50={kcTesting || !kcRealmUrl} style="border-color: var(--on-surface); background: var(--surface-container-highest);">{kcTesting ? 'TESTING...' : 'TEST_CONNECTION'}</button>
-            <button onclick={saveKeycloakSettings} disabled={kcSaving} class="flex-1 px-4 py-2.5 text-xs font-medium uppercase cursor-pointer border-2 press-effect" class:opacity-50={kcSaving} style="border-color: var(--on-surface); background: var(--primary-container); box-shadow: var(--shadow-sm);">{kcSaving ? 'SAVING...' : 'SAVE_CONFIGURATION'}</button>
+            <button onclick={testKeycloakConnection} disabled={kcTesting || !kcRealmUrl} class="px-4 py-2.5 text-xs font-medium uppercase cursor-pointer border-2" class:opacity-50={kcTesting || !kcRealmUrl} style="border-color: var(--line); background: var(--surface-container-highest);">{kcTesting ? 'TESTING...' : 'TEST_CONNECTION'}</button>
+            <button onclick={saveKeycloakSettings} disabled={kcSaving} class="flex-1 px-4 py-2.5 text-xs font-medium uppercase cursor-pointer border-2 press-effect" class:opacity-50={kcSaving} style="border-color: var(--line); background: var(--primary-container); box-shadow: var(--shadow-sm);">{kcSaving ? 'SAVING...' : 'SAVE_CONFIGURATION'}</button>
           </div>
         </div>
       </div>
 
       <!-- RIGHT: Keycloak setup guide -->
-      <div class="border-2" style="border-color: var(--on-surface);">
+      <div class="border-2" style="border-color: var(--line);">
         <div class="dark-bar">KEYCLOAK_SETUP_GUIDE</div>
         <div class="bg-white p-3 space-y-3 text-[10px] font-bold uppercase" style="color: var(--on-surface);">
           <div>
@@ -800,7 +800,7 @@
     <!-- GROUPS MANAGEMENT -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
       <!-- Group list -->
-      <div class="border-2 stamp-shadow" style="border-color: var(--on-surface);">
+      <div class="border-2 stamp-shadow" style="border-color: var(--line);">
         <div class="dark-bar flex items-center justify-between">
           <span>GROUPS</span>
           <button class="px-2 py-0.5 text-[10px] font-medium uppercase cursor-pointer" style="color: var(--primary-container);" onclick={startNewGroup}>+ NEW</button>
@@ -826,7 +826,7 @@
 
       <!-- Group editor -->
       {#if editingGroup}
-        <div class="border-2 stamp-shadow" style="border-color: var(--on-surface);">
+        <div class="border-2 stamp-shadow" style="border-color: var(--line);">
           <div class="dark-bar">{editingGroup.id ? 'EDIT_GROUP' : 'CREATE_GROUP'}</div>
           <div class="bg-white p-4 space-y-3">
             {#if groupMessage}<div class="p-2 text-xs font-bold uppercase" style="color: var(--primary);">{groupMessage}</div>{/if}
@@ -842,7 +842,7 @@
               <div class="flex flex-wrap gap-2">
                 {#each Object.entries(groupPages) as [key, val]}
                   <button class="px-2 py-1 text-[10px] font-medium uppercase cursor-pointer border"
-                    style="border-color: var(--on-surface); background: {val ? 'var(--primary)' : 'white'}; color: {val ? 'white' : 'var(--outline)'};"
+                    style="border-color: var(--line); background: {val ? 'var(--primary)' : 'white'}; color: {val ? 'white' : 'var(--outline)'};"
                     onclick={() => groupPages = {...groupPages, [key]: !val}}>{key}</button>
                 {/each}
               </div>
@@ -854,7 +854,7 @@
               <div class="flex flex-wrap gap-2">
                 {#each Object.entries(groupActions) as [key, val]}
                   <button class="px-2 py-1 text-[10px] font-medium uppercase cursor-pointer border"
-                    style="border-color: var(--on-surface); background: {val ? 'var(--secondary)' : 'white'}; color: {val ? 'white' : 'var(--outline)'};"
+                    style="border-color: var(--line); background: {val ? 'var(--secondary)' : 'white'}; color: {val ? 'white' : 'var(--outline)'};"
                     onclick={() => groupActions = {...groupActions, [key]: !val}}>{key.replace(/_/g, ' ')}</button>
                 {/each}
               </div>
@@ -866,7 +866,7 @@
               <div class="flex gap-2">
                 {#each [['own', 'OWN DATA'], ['all_readonly', 'ALL (READ)'], ['all_full', 'ALL (FULL)']] as [val, label]}
                   <button class="px-2 py-1 text-[10px] font-medium uppercase cursor-pointer border"
-                    style="border-color: var(--on-surface); background: {groupScope === val ? 'var(--on-surface)' : 'white'}; color: {groupScope === val ? 'var(--surface)' : 'var(--outline)'};"
+                    style="border-color: var(--line); background: {groupScope === val ? 'var(--on-surface)' : 'white'}; color: {groupScope === val ? 'var(--surface)' : 'var(--outline)'};"
                     onclick={() => groupScope = val}>{label}</button>
                 {/each}
               </div>
@@ -878,7 +878,7 @@
               <div class="flex flex-wrap gap-2 max-h-24 overflow-y-auto">
                 {#each users.filter(u => u.role !== 'admin') as u}
                   <button class="px-2 py-1 text-[10px] font-bold uppercase cursor-pointer border"
-                    style="border-color: var(--on-surface); background: {groupMembers.includes(u.id) ? 'var(--tertiary)' : 'white'}; color: {groupMembers.includes(u.id) ? 'white' : 'var(--outline)'};"
+                    style="border-color: var(--line); background: {groupMembers.includes(u.id) ? 'var(--tertiary)' : 'white'}; color: {groupMembers.includes(u.id) ? 'white' : 'var(--outline)'};"
                     onclick={() => toggleMember(u.id)}>{u.username}</button>
                 {/each}
                 {#if users.filter(u => u.role !== 'admin').length === 0}
@@ -895,10 +895,10 @@
               <button onclick={saveGroup} disabled={groupSaving || !groupName.trim()}
                 class="flex-1 px-3 py-2 text-[10px] font-medium uppercase cursor-pointer border-2 press-effect"
                 class:opacity-50={groupSaving || !groupName.trim()}
-                style="border-color: var(--on-surface); background: var(--primary-container); box-shadow: var(--shadow-sm);">
+                style="border-color: var(--line); background: var(--primary-container); box-shadow: var(--shadow-sm);">
                 {groupSaving ? 'SAVING...' : 'SAVE_GROUP'}
               </button>
-              <button onclick={() => editingGroup = null} class="px-3 py-2 text-[10px] font-medium uppercase cursor-pointer border-2" style="border-color: var(--on-surface); color: var(--outline);">CANCEL</button>
+              <button onclick={() => editingGroup = null} class="px-3 py-2 text-[10px] font-medium uppercase cursor-pointer border-2" style="border-color: var(--line); color: var(--outline);">CANCEL</button>
             </div>
           </div>
         </div>
@@ -907,7 +907,7 @@
           <div class="text-center">
             <div class="text-xs font-bold uppercase" style="color: var(--outline);">Select a group to edit or</div>
             <button class="mt-2 px-4 py-2 text-xs font-medium uppercase cursor-pointer border-2 press-effect"
-              style="border-color: var(--on-surface); background: var(--primary-container); box-shadow: var(--shadow-sm);"
+              style="border-color: var(--line); background: var(--primary-container); box-shadow: var(--shadow-sm);"
               onclick={startNewGroup}>CREATE_NEW_GROUP</button>
           </div>
         </div>
@@ -962,7 +962,7 @@
            style="background: rgba(0,0,0,0.5);"
            onclick={() => ldapEditing = null}>
         <div class="border-2 stamp-shadow max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6"
-             style="border-color: var(--on-surface); background: var(--surface);"
+             style="border-color: var(--line); background: var(--surface);"
              onclick={(e) => e.stopPropagation()}>
           <div class="flex items-center justify-between mb-4 -mx-6 -mt-6 px-6 py-3"
                style="background: var(--surface-container); color: var(--on-surface);">
@@ -1070,7 +1070,7 @@
 
     <!-- Per-row action buttons strip -->
     {#if storageConfigs.length > 0}
-      <div class="mt-2 border-2" style="border-color: var(--on-surface); background: var(--surface);">
+      <div class="mt-2 border-2" style="border-color: var(--line); background: var(--surface);">
         {#each storageConfigs as c}
           <div class="flex items-center gap-2 px-3 py-2" style="border-bottom: 1px solid var(--surface-container-highest);">
             <span class="text-[10px] font-mono font-bold flex-1" style="color: var(--on-surface);">
@@ -1102,7 +1102,7 @@
            style="background: rgba(0,0,0,0.5);"
            onclick={() => storageEditing = null}>
         <div class="border-2 stamp-shadow max-w-3xl w-full max-h-[90vh] overflow-y-auto p-6"
-             style="border-color: var(--on-surface); background: var(--surface);"
+             style="border-color: var(--line); background: var(--surface);"
              onclick={(e) => e.stopPropagation()}>
           <div class="flex items-center justify-between mb-4 -mx-6 -mt-6 px-6 py-3"
                style="background: var(--surface-container); color: var(--on-surface);">
@@ -1185,7 +1185,7 @@
     {/if}
 
   {:else if activeTab === 'auto_approve'}
-    <div class="border-2 stamp-shadow" style="border-color: var(--on-surface);">
+    <div class="border-2 stamp-shadow" style="border-color: var(--line);">
       <div class="dark-bar text-xs">AUTO_APPROVE_SETTINGS</div>
       <div class="bg-white p-4 space-y-4">
         <div class="text-[10px] font-mono opacity-70">
@@ -1217,11 +1217,11 @@
         </div>
 
         <div class="grid grid-cols-2 gap-3 mt-2 text-[10px] font-mono">
-          <div class="border-2 p-2" style="border-color: var(--on-surface);">
+          <div class="border-2 p-2" style="border-color: var(--line);">
             <div class="opacity-60">SCHEDULE</div>
             <div class="font-bold">hourly</div>
           </div>
-          <div class="border-2 p-2" style="border-color: var(--on-surface);">
+          <div class="border-2 p-2" style="border-color: var(--line);">
             <div class="opacity-60">LAST_RUN</div>
             <div class="font-bold">
               {autoApprove.last_run || '—'}
@@ -1250,7 +1250,7 @@
     </div>
 
   {:else if activeTab === 'engines'}
-    <div class="border-2 stamp-shadow" style="border-color: var(--on-surface);">
+    <div class="border-2 stamp-shadow" style="border-color: var(--line);">
       <div class="dark-bar text-xs">EXTRACTION_ENGINES</div>
       <div class="bg-white p-4 space-y-4">
         <div class="text-[10px] font-mono opacity-70">
@@ -1259,7 +1259,7 @@
         </div>
         {#each engineCfg.all as e}
           {@const on = engineCfg.enabled.includes(e.id)}
-          <div class="flex items-center gap-3 border-2 p-2" style="border-color: var(--on-surface);">
+          <div class="flex items-center gap-3 border-2 p-2" style="border-color: var(--line);">
             <button class="text-[10px] font-bold uppercase px-3 py-1.5 cursor-pointer"
               style="border: 1px solid var(--on-surface); background: {on ? '#10b981' : 'white'}; color: {on ? 'white' : 'var(--on-surface)'};"
               onclick={() => toggleEngine(e.id)}>{on ? '☑ ON' : '☐ OFF'}</button>
@@ -1296,7 +1296,7 @@
   <div class="fixed inset-0 z-50 flex justify-end" style="background: rgba(0,0,0,0.5);"
        onclick={() => drawerEvent = null}>
     <div class="border-l-2 max-w-lg w-full overflow-y-auto p-6"
-         style="border-color: var(--on-surface); background: var(--surface);"
+         style="border-color: var(--line); background: var(--surface);"
          onclick={(e) => e.stopPropagation()}>
       <div class="-mx-6 -mt-6 px-6 py-3 mb-4"
            style="background: var(--surface-container); color: var(--on-surface);">

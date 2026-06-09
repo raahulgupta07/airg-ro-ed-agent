@@ -64,6 +64,7 @@
 
   /* Lines */
   --outline: #C9C4B5;
+  --line: #E6E2D6;          /* soft warm border — replaces black outlines project-wide */
   --outline-variant: #E8E4DA;
 
   /* Radii */
