@@ -130,6 +130,63 @@ def _norm(v):
     return str(v).strip()
 
 
+_ITEM_PROMPT = """This is a Myanmar customs declaration page. Extract EVERY line
+item visible in the goods table into strict JSON — do not skip or merge rows:
+{"items": [{"item_name","hs_code","quantity","customs_value_mmk",
+  "customs_duty_rate","commercial_tax_pct","origin","invoice_unit_price"}]}
+Numbers as numbers (strip separators); rates as fractions (15%->0.15); origin as
+ISO-2 code. customs_value_mmk is the item TOTAL customs value in MMK (the larger
+MMK number), NOT the per-unit MMK price. Return ONLY the JSON object."""
+
+
+def _recover_items(pdf_path: str, pages: Optional[List[int]]) -> list:
+    """Verifier-lite for ink/scan: re-read each page at higher DPI with a
+    focused item-only prompt and collect all line items. Used when the first
+    vote produced 0 items or an unbalanced sum (e.g. dense scanned forms the
+    holistic read missed). Best-effort; returns [] on failure.
+    """
+    imgs = _render(pdf_path, pages, min(cfg.SCRIBE_DPI + 100, 450))
+    found = []
+    for b64 in imgs:
+        res = _call_vlm_one(b64, _ITEM_PROMPT)
+        for it in (res.get("items") or []):
+            cv = _rc._to_float(it.get("customs_value_mmk"))
+            if cv and cv > 0:
+                found.append(it)
+    return found
+
+
+def _call_vlm_one(b64: str, prompt: str) -> dict:
+    parts = [{"type": "text", "text": prompt},
+             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}]
+    payload = {"model": cfg.SCRIBE_MODEL, "messages": [{"role": "user", "content": parts}],
+               "temperature": 0, "max_tokens": 4000}
+    for attempt in range(2):
+        try:
+            r = requests.post(API_URL, headers={
+                "Authorization": f"Bearer {cfg.OPENROUTER_API_KEY}",
+                "Content-Type": "application/json"}, json=payload, timeout=120)
+            if r.status_code == 200:
+                return _parse_json(r.json()["choices"][0]["message"]["content"]) or {}
+        except Exception:
+            pass
+        time.sleep(1.5)
+    return {}
+
+
+def _dedup_items(items: list) -> list:
+    seen, out = set(), []
+    for it in items or []:
+        hs = str(it.get("hs_code") or "").replace(" ", "")
+        cv = _rc._to_float(it.get("customs_value_mmk"))
+        k = f"{hs}|{int(cv) if cv else ''}|{str(it.get('item_name') or '')[:20].upper()}"
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(it)
+    return out
+
+
 def _vote_decl(reads: List[PrestoResult]) -> (dict, dict):
     """Majority-vote each declaration field; return (decl, field_confidence)."""
     decl, conf = {}, {}
@@ -208,6 +265,27 @@ def run(pdf_path: str, pages: Optional[List[int]] = None) -> Dict:
                 sc_log = cor["log"]
         except Exception:
             pass
+
+    # Verifier-lite: if still unbalanced (esp. 0 items or a sum gap), re-read the
+    # item table at higher DPI with a focused item-only prompt and keep whichever
+    # set balances best. Targets dense scanned forms the holistic vote missed.
+    recover_log = []
+    if not verdict.get("balanced"):
+        try:
+            rec = _dedup_items(_recover_items(pdf_path, pages))
+            if rec:
+                merged = _dedup_items(items + rec)
+                cand = max([rec, merged], key=lambda s: -abs(
+                    sum((_rc._to_float(i.get("customs_value_mmk")) or 0) for i in s)
+                    - (declared_total or 0)) if declared_total else len(s))
+                cv = _rc.reconcile(decl, cand)
+                if cv.get("balanced") or len(cand) > len(items):
+                    recover_log.append(f"item-recover: {len(items)}→{len(cand)} items")
+                    items = cand
+                    verdict = cv
+        except Exception:
+            pass
+
     low_conf = [k for k, c in conf.items() if c < 0.67]
     needs_review = (not verdict.get("balanced")) or bool(low_conf)
 
@@ -232,7 +310,7 @@ def run(pdf_path: str, pages: Optional[List[int]] = None) -> Dict:
         "scribe": {"votes": n, "field_confidence": conf,
                    "low_confidence_fields": low_conf,
                    "reconcile": verdict, "pages": len(images),
-                   "self_correct": sc_log},
+                   "self_correct": sc_log, "item_recover": recover_log},
     }
 
 

@@ -12,8 +12,11 @@ try:
 except ImportError:
     OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 
-# Vision model for handwriting (Gemini 2.5 Pro reads ink well). Override via env.
-SCRIBE_MODEL = os.getenv("SCRIBE_MODEL", "google/gemini-2.5-pro")
+# Vision model for handwriting. gemini-3-flash returns COMPLETE JSON (gemini-2.5-pro
+# is a reasoning model that burns the token budget on thinking and truncates
+# mid-JSON on dense forms → empty results). Flash + N-way voting = accurate,
+# complete, fast, cheap. Override via env.
+SCRIBE_MODEL = os.getenv("SCRIBE_MODEL", "google/gemini-3-flash-preview")
 
 # Render DPI for ink (higher than typed — handwriting needs detail).
 SCRIBE_DPI = int(os.getenv("SCRIBE_DPI", "300"))
