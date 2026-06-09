@@ -545,6 +545,22 @@
           <div class="flex items-center gap-1"><span class="material-symbols-outlined text-sm" style="color: var(--primary);">schedule</span>60–150s</div>
         </div>
       </div>
+      <!-- Engine selector -->
+      <div class="mt-3 pt-3" style="border-top: 1px solid var(--primary);">
+        <div class="text-[11px] uppercase tracking-wider mb-1.5" style="color: var(--on-surface-muted);">Engine</div>
+        <div class="flex gap-2 flex-wrap">
+          {#each [['auto','AUTO','smart default'],['classic','CLASSIC','V7 · accurate'],['presto','PRESTO','V12 · ~4× faster'],['atlas','ATLAS','V14 · all-new']] as opt}
+            <button
+              type="button"
+              class="px-3 py-1.5 cursor-pointer transition-colors text-left"
+              style="border: 1.5px solid {selectedEngine === opt[0] ? 'var(--primary)' : 'var(--outline)'}; border-radius: var(--radius-md); background: {selectedEngine === opt[0] ? 'var(--primary)' : 'var(--surface-container-lowest)'};"
+              onclick={() => (selectedEngine = opt[0] as 'auto' | 'presto' | 'classic' | 'atlas')}>
+              <div class="text-xs font-bold" style="color: {selectedEngine === opt[0] ? 'var(--on-primary)' : 'var(--on-surface)'};">{opt[1]}</div>
+              <div class="text-[10px]" style="color: {selectedEngine === opt[0] ? 'var(--on-primary)' : 'var(--on-surface-muted)'};">{opt[2]}</div>
+            </button>
+          {/each}
+        </div>
+      </div>
     </div>
     <!-- Big drop zone -->
     <button
