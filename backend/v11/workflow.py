@@ -812,6 +812,27 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
             if not out["cross_val_passed"]:
                 out["needs_review"] = True
 
+            # JUDGE — confidence score → auto-ok vs review (additive, advisory).
+            try:
+                from v11.tools import judge as _judge
+                jv = _judge.judge(out, verdict)
+                out["confidence"] = jv
+                if jv.get("needs_review"):
+                    out["needs_review"] = True
+            except Exception:
+                pass
+
+            # LEARNER priors — advisory cross-check (e.g. exchange rate out of the
+            # importer's learned range). Warnings only; never blocks. Safe on empty DB.
+            try:
+                from v11.learn import priors as _priors
+                warns = _priors.check_against_priors(out.get("declaration") or {})
+                if warns:
+                    out["prior_warnings"] = warns
+                    out["needs_review"] = True
+            except Exception:
+                pass
+
             out["trace"].append({"phase": "reconcile",
                                  "balanced": verdict["balanced"],
                                  "checked": verdict["checked"],
