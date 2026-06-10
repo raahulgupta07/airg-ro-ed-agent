@@ -135,6 +135,15 @@ export const api = {
   saveAutoApprove: (data: { enabled: boolean; threshold: number }) =>
     request<any>('/settings/auto-approve', { method: 'PUT', body: JSON.stringify(data) }),
 
+  // Usage dashboard (admin) — KPIs + per-user + per-model + daily, date-ranged
+  usageOverview: (dateFrom?: string, dateTo?: string) => {
+    const qs = new URLSearchParams();
+    if (dateFrom) qs.set('date_from', dateFrom);
+    if (dateTo) qs.set('date_to', dateTo);
+    const s = qs.toString();
+    return request<any>(`/usage/overview${s ? `?${s}` : ''}`);
+  },
+
   // Health
   health: () => request<any>('/health'),
 };

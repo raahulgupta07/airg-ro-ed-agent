@@ -11,7 +11,58 @@
   let users = $state<any[]>([]);
   let logs = $state<any[]>([]);
   let groups = $state<any[]>([]);
-  let activeTab = $state<'users' | 'logs' | 'auth' | 'groups' | 'ldap' | 'storage' | 'auto_approve' | 'engines'>('users');
+  let activeTab = $state<'users' | 'usage' | 'logs' | 'auth' | 'groups' | 'ldap' | 'storage' | 'auto_approve' | 'engines'>('users');
+
+  // ── Usage dashboard ──
+  let usage = $state<any>(null);
+  let usageLoading = $state(false);
+  let usageRange = $state<'1w' | '1m' | '3m' | 'all'>('1w');
+  let usageChartEl: HTMLDivElement | null = $state(null);
+  function usageDates(): { from?: string; to?: string } {
+    if (usageRange === 'all') return {};
+    const now = new Date();
+    const to = now.toISOString().slice(0, 10);
+    const d = new Date(now);
+    if (usageRange === '1w') d.setDate(d.getDate() - 7);
+    else if (usageRange === '1m') d.setMonth(d.getMonth() - 1);
+    else d.setMonth(d.getMonth() - 3);
+    return { from: d.toISOString().slice(0, 10), to };
+  }
+  async function loadUsage() {
+    usageLoading = true;
+    try {
+      const { from, to } = usageDates();
+      usage = await api.usageOverview(from, to);
+    } catch { usage = null; }
+    usageLoading = false;
+    setTimeout(drawUsageChart, 50);
+  }
+  async function drawUsageChart() {
+    if (!usageChartEl || !usage?.by_model?.length) return;
+    const echarts = await import('echarts/core');
+    const { BarChart } = await import('echarts/charts');
+    const { GridComponent, TooltipComponent, LegendComponent } = await import('echarts/components');
+    const { CanvasRenderer } = await import('echarts/renderers');
+    echarts.use([BarChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer]);
+    const rows = usage.by_model.slice(0, 12);
+    const chart = echarts.init(usageChartEl);
+    chart.setOption({
+      backgroundColor: 'transparent',
+      grid: { top: 16, right: 16, bottom: 70, left: 56 },
+      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' },
+        formatter: (p: any[]) => `<b>${p[0]?.name}</b><br/>$${(+p[0]?.value).toFixed(4)}` },
+      xAxis: { type: 'category', data: rows.map((r: any) => r.model),
+        axisLabel: { color: 'var(--on-surface-muted)', fontSize: 9, rotate: 30, width: 90, overflow: 'truncate' } },
+      yAxis: { type: 'value', axisLabel: { color: 'var(--on-surface-muted)', fontSize: 9, formatter: (v: number) => '$' + v },
+        splitLine: { lineStyle: { color: 'var(--line)' } } },
+      series: [{ type: 'bar', data: rows.map((r: any) => +(r.cost).toFixed(4)),
+        itemStyle: { color: 'var(--primary)', borderRadius: [3, 3, 0, 0] }, barMaxWidth: 36 }],
+    });
+    new ResizeObserver(() => chart.resize()).observe(usageChartEl);
+  }
+  $effect(() => { if (auth.isAdmin && activeTab === 'usage') { usageRange; loadUsage(); } });
+  function fmtNum(n: any): string { return (Number(n) || 0).toLocaleString(); }
+  function fmtTok(n: any): string { const v = Number(n) || 0; return v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(1) + 'K' : String(v); }
 
   // Engine availability (super-admin: which pipelines users can pick)
   let engineCfg = $state<{ all: any[]; enabled: string[]; default: string }>({ all: [], enabled: ['atlas'], default: 'atlas' });
@@ -544,7 +595,7 @@
     <nav class="cl-panel shrink-0" style="width: 200px;">
       <div class="cl-hd"><span class="dot">◉</span>Admin</div>
       <div class="cl-bd" style="padding: 8px;">
-      {#each [['users','Users'],['logs','Activity Log'],['auth','Authentication'],['groups','Groups'],['ldap','LDAP'],['storage','Storage'],['auto_approve','Auto Approve'],['engines','Engines']] as [key, label]}
+      {#each [['users','Users'],['usage','Usage'],['logs','Activity Log'],['auth','Authentication'],['groups','Groups'],['ldap','LDAP'],['storage','Storage'],['auto_approve','Auto Approve'],['engines','Engines']] as [key, label]}
         <button class="block w-full text-left cursor-pointer"
           style="padding: 8px 12px; font-size: 13px; border-radius: var(--radius-sm); margin-bottom: 2px; transition: background .12s; {activeTab === key ? 'background: var(--primary-soft); color: var(--primary-hover); font-weight: 600;' : 'color: var(--on-surface-muted);'}"
           onmouseenter={(e) => { if (activeTab !== key) e.currentTarget.style.background = 'var(--surface-container-low)'; }}
@@ -611,6 +662,95 @@
         </div>
       {/if}
     </div>
+
+  {:else if activeTab === 'usage'}
+    <!-- ── USAGE DASHBOARD ── -->
+    <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
+      <div>
+        <h3 class="font-serif text-lg" style="color: var(--on-surface); font-weight:500;">Usage</h3>
+        <p class="text-xs" style="color: var(--on-surface-muted);">Spend, requests and tokens across all users & models.</p>
+      </div>
+      <div class="seg flex" role="group" aria-label="Date range">
+        {#each [['1w','Past week'],['1m','Past month'],['3m','Past 3 months'],['all','All time']] as [k,lbl]}
+          <button class="px-3 py-1.5 text-xs cursor-pointer" aria-pressed={usageRange === k}
+            style="border:1px solid var(--line); background:{usageRange===k?'var(--primary-soft)':'var(--surface)'}; color:{usageRange===k?'var(--primary-hover)':'var(--on-surface-muted)'}; font-weight:{usageRange===k?600:400};"
+            onclick={() => usageRange = k as any}>{lbl}</button>
+        {/each}
+      </div>
+    </div>
+
+    {#if usageLoading}
+      <div class="skeleton h-24 w-full mb-3"></div>
+    {:else if usage}
+      <!-- KPI cards -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        {#each [
+          ['Total spend', '$' + (usage.kpis.total_cost ?? 0).toFixed(2), 'var(--primary)'],
+          ['Requests', fmtNum(usage.kpis.requests), 'var(--success)'],
+          ['Token volume', fmtTok(usage.kpis.token_volume), 'var(--info)'],
+          ['Avg cost / doc', '$' + (usage.kpis.avg_cost ?? 0).toFixed(4), 'var(--tertiary)'],
+        ] as [label, val, accent]}
+          <div class="cl-panel" style="padding: 14px 16px;">
+            <div class="text-[11px] uppercase tracking-wider" style="color: var(--on-surface-subtle);">{label}</div>
+            <div class="font-serif mt-1" style="font-size: 26px; font-weight: 600; color: {accent};">{val}</div>
+          </div>
+        {/each}
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <!-- Per-user -->
+        <div class="cl-panel">
+          <div class="cl-hd"><span class="dot">◉</span>By user<span class="ct">{usage.per_user.length}</span></div>
+          <div class="overflow-x-auto custom-scrollbar">
+            <table class="cl-table">
+              <thead><tr><th>User</th><th style="text-align:right;">Requests</th><th style="text-align:right;">Tokens</th><th style="text-align:right;">Cost</th><th>Last active</th></tr></thead>
+              <tbody>
+                {#each usage.per_user as u}
+                  <tr>
+                    <td style="font-weight:500;">{u.username}</td>
+                    <td style="text-align:right;">{fmtNum(u.requests)}</td>
+                    <td style="text-align:right; font-family:'JetBrains Mono',monospace;">{fmtTok(u.tokens)}</td>
+                    <td style="text-align:right; font-family:'JetBrains Mono',monospace; color:var(--primary);">${(u.cost ?? 0).toFixed(4)}</td>
+                    <td style="color:var(--on-surface-muted);">{(u.last_active || '').slice(0,16)}</td>
+                  </tr>
+                {/each}
+                {#if usage.per_user.length === 0}<tr><td colspan="5" style="text-align:center; color:var(--on-surface-subtle);">No usage in range</td></tr>{/if}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- By model -->
+        <div class="cl-panel">
+          <div class="cl-hd"><span class="dot">◉</span>Spend by model</div>
+          <div class="cl-bd">
+            <div bind:this={usageChartEl} style="width:100%; height:260px;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- By-model detail table -->
+      <div class="cl-panel mt-4">
+        <div class="cl-hd"><span class="dot">◉</span>Model breakdown<span class="ct">{usage.by_model.length}</span></div>
+        <div class="overflow-x-auto custom-scrollbar">
+          <table class="cl-table">
+            <thead><tr><th>Model</th><th style="text-align:right;">Requests</th><th style="text-align:right;">Tokens</th><th style="text-align:right;">Cost</th></tr></thead>
+            <tbody>
+              {#each usage.by_model as m}
+                <tr>
+                  <td style="font-family:'JetBrains Mono',monospace; font-size:11px;">{m.model}</td>
+                  <td style="text-align:right;">{fmtNum(m.requests)}</td>
+                  <td style="text-align:right; font-family:'JetBrains Mono',monospace;">{fmtTok(m.tokens)}</td>
+                  <td style="text-align:right; font-family:'JetBrains Mono',monospace; color:var(--primary);">${(m.cost ?? 0).toFixed(4)}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {:else}
+      <div class="cl-panel"><div class="cl-bd text-sm" style="color:var(--on-surface-muted);">No usage data.</div></div>
+    {/if}
 
   {:else if activeTab === 'logs'}
     <!-- KPI Strip -->
