@@ -506,6 +506,11 @@ def init_database():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_pages_job ON page_contents(job_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_pages_user ON page_contents(user_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_pages_pdf ON page_contents(pdf_name)")
+    # Perf indexes (mirror alembic 0004): hottest query paths
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_review_created ON jobs(review_status, created_at DESC)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_user_created ON jobs(user_id, created_at DESC)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_items_job_active ON items(job_id) WHERE COALESCE(is_deleted, 0) = 0")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_activity_username_created ON activity_logs(username, created_at DESC)")
 
     # Clean up stale PROCESSING jobs from previous crashes/restarts
     cursor.execute("""
@@ -1706,6 +1711,128 @@ def get_user_stats(user_id: int) -> Dict:
     return {'total_jobs': total, 'completed_jobs': completed, 'avg_accuracy': avg_acc, 'total_cost': total_cost}
 
 
+def get_cost_stats(user_id: Optional[int] = None) -> Dict:
+    """Cost/token rollups computed in SQL (SUM + GROUP BY day) instead of
+    pulling 1000 job rows into Python. user_id=None → all jobs (admin)."""
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    scope = "WHERE user_id = ?" if user_id else ""
+    params: tuple = (user_id,) if user_id else ()
+
+    cur.execute(f"""
+        SELECT COALESCE(SUM(cost_usd), 0)   AS total_cost,
+               COUNT(*)                      AS total_jobs,
+               COALESCE(SUM(tokens_in), 0)   AS total_tokens_in,
+               COALESCE(SUM(tokens_out), 0)  AS total_tokens_out
+        FROM jobs {scope}
+    """, params)
+    tot = dict(cur.fetchone())
+
+    cur.execute(f"""
+        SELECT DATE(created_at) AS day,
+               COALESCE(SUM(cost_usd), 0)  AS cost,
+               COUNT(*)                     AS docs,
+               COALESCE(SUM(tokens_in), 0)  AS tok_in,
+               COALESCE(SUM(tokens_out), 0) AS tok_out
+        FROM jobs {scope}
+        GROUP BY DATE(created_at)
+        ORDER BY day
+    """, params)
+
+    daily_cost: dict = {}
+    daily_docs: dict = {}
+    daily_tokens_in: dict = {}
+    daily_tokens_out: dict = {}
+    for r in cur.fetchall():
+        d = str(r["day"] or "")[:10]
+        if not d:
+            continue
+        daily_cost[d] = float(r["cost"] or 0)
+        daily_docs[d] = int(r["docs"] or 0)
+        daily_tokens_in[d] = int(r["tok_in"] or 0)
+        daily_tokens_out[d] = int(r["tok_out"] or 0)
+    conn.close()
+
+    from datetime import date
+    today = date.today().isoformat()
+    month_prefix = today[:7]
+    total_cost = float(tot["total_cost"] or 0)
+    total_jobs = int(tot["total_jobs"] or 0)
+    total_tokens_in = int(tot["total_tokens_in"] or 0)
+    total_tokens_out = int(tot["total_tokens_out"] or 0)
+
+    today_cost = daily_cost.get(today, 0)
+    today_jobs = daily_docs.get(today, 0)
+    month_cost = sum(v for d, v in daily_cost.items() if d.startswith(month_prefix))
+    month_jobs = sum(v for d, v in daily_docs.items() if d.startswith(month_prefix))
+    avg_per_pdf = total_cost / total_jobs if total_jobs else 0
+    total_tokens = total_tokens_in + total_tokens_out
+    avg_tokens_per_pdf = total_tokens // total_jobs if total_jobs else 0
+
+    return {
+        "total_cost": round(total_cost, 4),
+        "total_jobs": total_jobs,
+        "avg_per_pdf": round(avg_per_pdf, 4),
+        "today_cost": round(today_cost, 4),
+        "today_jobs": today_jobs,
+        "month_cost": round(month_cost, 4),
+        "month_jobs": month_jobs,
+        "total_tokens_in": total_tokens_in,
+        "total_tokens_out": total_tokens_out,
+        "total_tokens": total_tokens,
+        "avg_tokens_per_pdf": avg_tokens_per_pdf,
+        "cost_per_1k_tokens": round((total_cost * 1000) / max(1, total_tokens), 5),
+        "daily_breakdown": daily_cost,
+        "daily_docs": daily_docs,
+        "daily_tokens_in": daily_tokens_in,
+        "daily_tokens_out": daily_tokens_out,
+    }
+
+
+def get_items_for_jobs(limit: int = 500, user_id: Optional[int] = None) -> List[Dict]:
+    """All active items across the most-recent N jobs in one join (no per-job loop).
+    Each row carries job_id + the job's created_at for export labelling."""
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    scope = "WHERE j.user_id = ?" if user_id else ""
+    params: tuple = (user_id, limit) if user_id else (limit,)
+    cur.execute(f"""
+        SELECT i.*, j.job_id AS job_id, j.created_at AS job_created_at
+        FROM (
+            SELECT job_id, created_at FROM jobs j2 {('WHERE user_id = ?' if user_id else '')}
+            ORDER BY created_at DESC LIMIT ?
+        ) j
+        JOIN items i ON i.job_id = j.job_id AND COALESCE(i.is_deleted, 0) = 0
+        ORDER BY j.created_at DESC, COALESCE(i.display_order, 0) ASC, i.id ASC
+    """, params)
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def get_declarations_for_jobs(limit: int = 500, user_id: Optional[int] = None) -> List[Dict]:
+    """All declarations across the most-recent N jobs in one join (no per-job loop)."""
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    scope_inner = "WHERE user_id = ?" if user_id else ""
+    params: tuple = (user_id, limit) if user_id else (limit,)
+    cur.execute(f"""
+        SELECT d.*, j.job_id AS job_id, j.created_at AS job_created_at
+        FROM (
+            SELECT job_id, created_at FROM jobs {scope_inner}
+            ORDER BY created_at DESC LIMIT ?
+        ) j
+        JOIN declarations d ON d.job_id = j.job_id
+        ORDER BY j.created_at DESC, d.id ASC
+    """, params)
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
 # =============================================================================
 # SETTINGS — KEY-VALUE STORE
 # =============================================================================
@@ -2645,6 +2772,58 @@ def update_review_status(job_id: str, status: str,
     return n > 0
 
 
+def bulk_update_review_status(job_ids: List[str], status: str,
+                              reviewed_by: str = None, notes: str = None) -> List[str]:
+    """Approve/reject many jobs in a single UPDATE. Returns the job_ids actually
+    updated (so callers can diff against the request to report not-found rows).
+    Replaces the per-job loop of get_job_details + update_review_status."""
+    if status not in ("pending_review", "approved", "rejected", "draft"):
+        raise ValueError(f"invalid review_status: {status}")
+    if not job_ids:
+        return []
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    if status in ("approved", "rejected"):
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cur.execute("""
+            UPDATE jobs SET review_status = ?, reviewed_by = ?, reviewed_at = ?,
+                review_notes = COALESCE(?, review_notes)
+            WHERE job_id = ANY(?)
+            RETURNING job_id
+        """, (status, reviewed_by, ts, notes, list(job_ids)))
+    else:
+        cur.execute("""
+            UPDATE jobs SET review_status = ?,
+                review_notes = COALESCE(?, review_notes)
+            WHERE job_id = ANY(?)
+            RETURNING job_id
+        """, (status, notes, list(job_ids)))
+    updated = [r["job_id"] for r in cur.fetchall()]
+    conn.commit()
+    conn.close()
+    return updated
+
+
+def list_field_edits_for_jobs(job_ids: List[str]) -> Dict[str, List[Dict]]:
+    """Return {job_id: [edit rows]} for many jobs in one query (bulk approve fee check)."""
+    if not job_ids:
+        return {}
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT * FROM field_edits WHERE job_id = ANY(?) ORDER BY id ASC",
+        (list(job_ids),),
+    )
+    out: Dict[str, List[Dict]] = {}
+    for r in cur.fetchall():
+        d = dict(r)
+        out.setdefault(d["job_id"], []).append(d)
+    conn.close()
+    return out
+
+
 def log_field_edit(job_id: str, entity_type: str, entity_index: int,
                    field_name: str, original, corrected,
                    edited_by: str = None, page_ref: int = None,
@@ -2790,23 +2969,29 @@ def list_review_queue(status: str = "pending_review", limit: int = 200,
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
+    # Single pass: LATERAL pulls the first declaration's importer once per job,
+    # a grouped subquery supplies items_count — replaces the two correlated
+    # subqueries that previously ran per row (N+1 → 1).
     sql = [
         "SELECT j.job_id, j.pdf_name, j.status, j.review_status, j.reviewed_by, j.reviewed_at,",
         "       j.review_notes, j.edits_count, j.created_at, j.completed_at, j.username,",
         "       j.pipeline_mode, j.document_type, j.accuracy_percent,",
-        "       (SELECT importer_name FROM declarations WHERE job_id = j.job_id ORDER BY id LIMIT 1) AS importer_name,",
-        "       (SELECT COUNT(*) FROM items WHERE job_id = j.job_id AND COALESCE(is_deleted, 0) = 0) AS items_count",
+        "       d.importer_name AS importer_name,",
+        "       COALESCE(ic.items_count, 0) AS items_count",
         "FROM jobs j",
+        "LEFT JOIN LATERAL (",
+        "    SELECT importer_name FROM declarations WHERE job_id = j.job_id ORDER BY id LIMIT 1",
+        ") d ON TRUE",
+        "LEFT JOIN (",
+        "    SELECT job_id, COUNT(*) AS items_count FROM items",
+        "    WHERE COALESCE(is_deleted, 0) = 0 GROUP BY job_id",
+        ") ic ON ic.job_id = j.job_id",
         "WHERE j.review_status = ?",
     ]
     params: List = [status]
 
     if importer:
-        sql.append(
-            "AND LOWER(COALESCE("
-            "(SELECT importer_name FROM declarations WHERE job_id = j.job_id ORDER BY id LIMIT 1)"
-            ", '')) LIKE ?"
-        )
+        sql.append("AND LOWER(COALESCE(d.importer_name, '')) LIKE ?")
         params.append(f"%{importer.lower()}%")
     if date_from:
         sql.append("AND DATE(j.created_at) >= DATE(?)")

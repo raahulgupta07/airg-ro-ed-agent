@@ -15,6 +15,9 @@
   // Fetch stats periodically
   async function fetchStats() {
     if (!auth.isAuthenticated) return;
+    // Skip polling while the tab is backgrounded — no point spending a request
+    // every 30s on a screen nobody is looking at.
+    if (typeof document !== 'undefined' && document.hidden) return;
     try {
       const stats = await api.stats();
       totalJobs = stats.total_jobs || stats.completed_jobs || 0;
@@ -84,8 +87,8 @@
     role={auth.user?.role ?? ''}
     onlogout={() => auth.logout()}
   />
-  <div class="ml-[236px] min-h-screen flex flex-col">
-    <main class="flex-1 pt-6 pb-16 px-8 w-full max-w-[1760px] mx-auto">
+  <div class="ml-0 md:ml-[236px] min-h-screen flex flex-col">
+    <main class="flex-1 pt-16 md:pt-6 pb-16 px-4 md:px-8 w-full max-w-[1760px] mx-auto">
       {@render children()}
     </main>
     <Footer totalJobs={totalJobs} totalCost={totalCost} />

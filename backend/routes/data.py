@@ -25,18 +25,11 @@ async def list_items(
     """Get consolidated items across jobs. Scoped to user unless admin."""
     user_id = _user_scope(current_user)
 
-    # Get jobs first, then collect items
     if job_id:
         items = database.get_job_items(job_id)
     else:
-        jobs = (
-            database.get_user_jobs(user_id, limit=limit)
-            if user_id
-            else database.get_all_jobs(limit=limit)
-        )
-        items = []
-        for job in jobs:
-            items.extend(database.get_job_items(job["job_id"]))
+        # One join instead of get_all_jobs + per-job get_job_items loop.
+        items = database.get_items_for_jobs(limit=limit, user_id=user_id)
 
     return items[:limit]
 
@@ -53,14 +46,8 @@ async def list_declarations(
     if job_id:
         declarations = database.get_job_declarations(job_id)
     else:
-        jobs = (
-            database.get_user_jobs(user_id, limit=limit)
-            if user_id
-            else database.get_all_jobs(limit=limit)
-        )
-        declarations = []
-        for job in jobs:
-            declarations.extend(database.get_job_declarations(job["job_id"]))
+        # One join instead of get_all_jobs + per-job get_job_declarations loop.
+        declarations = database.get_declarations_for_jobs(limit=limit, user_id=user_id)
 
     return declarations[:limit]
 
@@ -107,61 +94,9 @@ async def get_stats(current_user: dict = Depends(get_current_user)):
 
 @router.get("/cost-stats")
 async def get_cost_stats(current_user: dict = Depends(get_current_user)):
-    """Get cost breakdown stats."""
+    """Cost breakdown stats — aggregated in SQL (SUM + GROUP BY day)."""
     user_id = _user_scope(current_user)
-    jobs = database.get_user_jobs(user_id, limit=1000) if user_id else database.get_all_jobs(limit=1000)
-
-    from datetime import datetime, date
-
-    total_cost = sum(j.get('cost_usd', 0) or 0 for j in jobs)
-    total_jobs = len(jobs)
-    avg_per_pdf = total_cost / total_jobs if total_jobs > 0 else 0
-
-    today = date.today().isoformat()
-    today_jobs = [j for j in jobs if (j.get('created_at') or '').startswith(today)]
-    today_cost = sum(j.get('cost_usd', 0) or 0 for j in today_jobs)
-
-    # This month
-    month_prefix = today[:7]  # "2026-04"
-    month_jobs = [j for j in jobs if (j.get('created_at') or '').startswith(month_prefix)]
-    month_cost = sum(j.get('cost_usd', 0) or 0 for j in month_jobs)
-
-    # Daily breakdown — cost / docs / tokens (3 metrics for line chart)
-    daily_cost: dict = {}
-    daily_docs: dict = {}
-    daily_tokens_in: dict = {}
-    daily_tokens_out: dict = {}
-    for j in jobs:
-        d = (j.get('created_at') or '')[:10]
-        if not d:
-            continue
-        daily_cost[d] = daily_cost.get(d, 0) + (j.get('cost_usd', 0) or 0)
-        daily_docs[d] = daily_docs.get(d, 0) + 1
-        daily_tokens_in[d]  = daily_tokens_in.get(d, 0)  + (j.get('tokens_in', 0) or 0)
-        daily_tokens_out[d] = daily_tokens_out.get(d, 0) + (j.get('tokens_out', 0) or 0)
-
-    total_tokens_in = sum(j.get('tokens_in', 0) or 0 for j in jobs)
-    total_tokens_out = sum(j.get('tokens_out', 0) or 0 for j in jobs)
-    avg_tokens_per_pdf = (total_tokens_in + total_tokens_out) // total_jobs if total_jobs else 0
-
-    return {
-        "total_cost": round(total_cost, 4),
-        "total_jobs": total_jobs,
-        "avg_per_pdf": round(avg_per_pdf, 4),
-        "today_cost": round(today_cost, 4),
-        "today_jobs": len(today_jobs),
-        "month_cost": round(month_cost, 4),
-        "month_jobs": len(month_jobs),
-        "total_tokens_in": total_tokens_in,
-        "total_tokens_out": total_tokens_out,
-        "total_tokens": total_tokens_in + total_tokens_out,
-        "avg_tokens_per_pdf": avg_tokens_per_pdf,
-        "cost_per_1k_tokens": round((total_cost * 1000) / max(1, total_tokens_in + total_tokens_out), 5),
-        "daily_breakdown": daily_cost,
-        "daily_docs": daily_docs,
-        "daily_tokens_in": daily_tokens_in,
-        "daily_tokens_out": daily_tokens_out,
-    }
+    return database.get_cost_stats(user_id)
 
 
 def _style_excel(writer, df, sheet_name):
@@ -220,30 +155,30 @@ async def download_items_excel(current_user: dict = Depends(get_current_user)):
     from fastapi.responses import StreamingResponse
 
     user_id = _user_scope(current_user)
-    jobs = database.get_user_jobs(user_id, limit=500) if user_id else database.get_all_jobs(limit=500)
+    # Two bulk queries instead of 1 + 2×N: declarations give the per-job
+    # currency map, items pulled in one join.
+    decls = database.get_declarations_for_jobs(limit=500, user_id=user_id)
+    currency_by_job = {d["job_id"]: (d.get("currency") or "") for d in decls}
+    items = database.get_items_for_jobs(limit=500, user_id=user_id)
 
     all_items = []
-    for job in jobs:
-        decl_currency = ""
-        decls = database.get_job_declarations(job["job_id"])
-        if decls:
-            decl_currency = decls[0].get("currency", "")
-        for item in database.get_job_items(job["job_id"]):
-            all_items.append({
-                "Job": job["job_id"],
-                "Item Name": item.get("item_name", ""),
-                "Customs Duty Rate": item.get("customs_duty_rate", ""),
-                "Quantity (1)": item.get("quantity", ""),
-                "Invoice Unit Price": item.get("invoice_unit_price", ""),
-                "CIF Unit Price": item.get("cif_unit_price", ""),
-                "Currency": decl_currency,
-                "Commercial Tax %": item.get("commercial_tax_percent", ""),
-                "Exchange Rate (1)": item.get("exchange_rate", ""),
-                "HS Code": item.get("hs_code", ""),
-                "Origin Country": item.get("origin_country", ""),
-                "Customs Value (MMK)": item.get("customs_value_mmk", ""),
-                "Processed": job.get("created_at", ""),
-            })
+    for item in items:
+        jid = item.get("job_id", "")
+        all_items.append({
+            "Job": jid,
+            "Item Name": item.get("item_name", ""),
+            "Customs Duty Rate": item.get("customs_duty_rate", ""),
+            "Quantity (1)": item.get("quantity", ""),
+            "Invoice Unit Price": item.get("invoice_unit_price", ""),
+            "CIF Unit Price": item.get("cif_unit_price", ""),
+            "Currency": currency_by_job.get(jid, ""),
+            "Commercial Tax %": item.get("commercial_tax_percent", ""),
+            "Exchange Rate (1)": item.get("exchange_rate", ""),
+            "HS Code": item.get("hs_code", ""),
+            "Origin Country": item.get("origin_country", ""),
+            "Customs Value (MMK)": item.get("customs_value_mmk", ""),
+            "Processed": item.get("job_created_at", ""),
+        })
 
     all_cols = ["Job", "Item Name", "Customs Duty Rate", "Quantity (1)", "Invoice Unit Price",
                 "CIF Unit Price", "Currency", "Commercial Tax %", "Exchange Rate (1)", "HS Code",
@@ -270,33 +205,33 @@ async def download_declarations_excel(current_user: dict = Depends(get_current_u
     from fastapi.responses import StreamingResponse
 
     user_id = _user_scope(current_user)
-    jobs = database.get_user_jobs(user_id, limit=500) if user_id else database.get_all_jobs(limit=500)
+    # One join instead of get_all_jobs + per-job get_job_declarations loop.
+    decls = database.get_declarations_for_jobs(limit=500, user_id=user_id)
 
     all_decls = []
-    for job in jobs:
-        for decl in database.get_job_declarations(job["job_id"]):
-            all_decls.append({
-                "Job": job["job_id"],
-                "Declaration No": decl.get("declaration_no", ""),
-                "Date": decl.get("declaration_date", ""),
-                "Importer": decl.get("importer_name", ""),
-                "Consignor": decl.get("consignor_name", ""),
-                "Invoice Number": decl.get("invoice_number", ""),
-                "Invoice Number (Customs Declaration)": decl.get("invoice_number_customs_declaration", ""),
-                "Invoice Number (Commercial Invoice)": decl.get("invoice_number_commercial_invoice", ""),
-                "Invoice Price": decl.get("invoice_price", ""),
-                "Currency": decl.get("currency", ""),
-                "Exchange Rate": decl.get("exchange_rate", ""),
-                "Currency 2": decl.get("currency_2", ""),
-                "Customs Value": decl.get("total_customs_value", ""),
-                "Duty": decl.get("import_export_customs_duty", ""),
-                "Tax": decl.get("commercial_tax_ct", ""),
-                "Income Tax": decl.get("advance_income_tax_at", ""),
-                "Security": decl.get("security_fee_sf", ""),
-                "MACCS": decl.get("maccs_service_fee_mf", ""),
-                "Exemption/Reduction": decl.get("exemption_reduction", ""),
-                "Processed": job.get("created_at", ""),
-            })
+    for decl in decls:
+        all_decls.append({
+            "Job": decl.get("job_id", ""),
+            "Declaration No": decl.get("declaration_no", ""),
+            "Date": decl.get("declaration_date", ""),
+            "Importer": decl.get("importer_name", ""),
+            "Consignor": decl.get("consignor_name", ""),
+            "Invoice Number": decl.get("invoice_number", ""),
+            "Invoice Number (Customs Declaration)": decl.get("invoice_number_customs_declaration", ""),
+            "Invoice Number (Commercial Invoice)": decl.get("invoice_number_commercial_invoice", ""),
+            "Invoice Price": decl.get("invoice_price", ""),
+            "Currency": decl.get("currency", ""),
+            "Exchange Rate": decl.get("exchange_rate", ""),
+            "Currency 2": decl.get("currency_2", ""),
+            "Customs Value": decl.get("total_customs_value", ""),
+            "Duty": decl.get("import_export_customs_duty", ""),
+            "Tax": decl.get("commercial_tax_ct", ""),
+            "Income Tax": decl.get("advance_income_tax_at", ""),
+            "Security": decl.get("security_fee_sf", ""),
+            "MACCS": decl.get("maccs_service_fee_mf", ""),
+            "Exemption/Reduction": decl.get("exemption_reduction", ""),
+            "Processed": decl.get("job_created_at", ""),
+        })
 
     all_cols = ["Job", "Declaration No", "Date", "Importer", "Consignor",
                 "Invoice Number", "Invoice Number (Customs Declaration)", "Invoice Number (Commercial Invoice)",

@@ -27,7 +27,7 @@
   });
 </script>
 
-<footer class="fixed bottom-0 left-[236px] right-0 h-10 z-40 flex items-center px-6 gap-5 text-xs"
+<footer class="fixed bottom-0 left-0 md:left-[236px] right-0 h-10 z-40 flex items-center px-3 md:px-6 gap-3 md:gap-5 text-xs overflow-x-auto whitespace-nowrap"
         style="background: rgba(245,244,238,0.85); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-top: 1px solid var(--line); color: var(--on-surface-muted);">
 
   <!-- System ok -->

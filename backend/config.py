@@ -19,10 +19,11 @@ BASE_DIR = Path(__file__).parent
 # CalVer year.month.patch; bump patch on each shipped change so a deploy is
 # verifiable at a glance ("is AWS running the latest?").
 # ============================================================================
-APP_VERSION = "2026.6.4"
+APP_VERSION = "2026.6.5"
 APP_ENGINE = "Atlas V14"
 # Short, human changelog of the most recent patches (newest first).
 APP_CHANGELOG = [
+    "2026.6.5 — Perf pass (DB indexes, review-queue join, SQL cost rollups, bulk approve) + UX hardening (theme-var review colors, mobile sidebar, error toasts, undo)",
     "2026.6.4 — Atlas declaration-rescue for bundled release-order PDFs",
     "2026.6.3 — Freight / Insurance / Adjustment (CIF build-up) + tighter CIF gate",
     "2026.6.2 — V14-x engine naming (V14 / V14-1 Swift / V14-2 Vision)",

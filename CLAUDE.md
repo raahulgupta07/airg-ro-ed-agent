@@ -177,7 +177,15 @@ UI shell (Claude-style redesign):
   - `lib/components/Sidebar.svelte` — grouped left rail (Documents / Insights /
     Admin), 236px, replaces the old top Header (`Header.svelte` kept as fallback,
     unused). Layout in `routes/+layout.svelte` is sidebar + content; Footer
-    offset left-[236px].
+    offset left-[236px]. **Mobile (< 768px):** rail is off-canvas behind a
+    hamburger (`mobileOpen` + backdrop); layout/footer offsets are `md:`-gated so
+    content goes full-width.
+  - `lib/components/ReviewSplitView.svelte` — split reviewer. All cell/border/
+    status colors use theme tokens (`--info` edited, `--warning` empty/flag,
+    `--success` ok, `--error`/`--outline-variant` reject) — no raw hex. Every
+    save/PDF/approve catch surfaces a toast; `beforeunload` guard on unsaved
+    edits; PDF blob-fetch failure shows a fallback banner; Tab walks declaration
+    cells; deleted rows get an 8-second Undo chip.
   - `app.css` `cl-*` layer — reusable primitives every page uses: `cl-panel` /
     `cl-hd` / `cl-bd`, `cl-ph`, `cl-stat`, `pill` (ok/warn/err/info/plum/clay/
     muted), `cl-lbl` / `cl-inp`, `cl-btn(.primary/.sm)`, `cl-table`, `seg`,
@@ -243,7 +251,16 @@ Config/code one-liners, not repo leaks (`.env`/certs are gitignored):
 - SQLAlchemy QueuePool 10 base + 10 overflow.
 - Redis maxmemory 512 MB, allkeys-lru.
 - App container `mem_limit: 4g`, worker `mem_limit: 8g` (× N replicas → size to host RAM).
-- **Not yet done** (flagged): async Redis pubsub for SSE, offload blocking uploads/auto-approve to threads, de-dupe auto-approve to one worker, N+1 in data/download endpoints.
+- **Not yet done** (flagged): async Redis pubsub for SSE, offload blocking uploads/auto-approve to threads, de-dupe auto-approve to one worker.
+
+### Perf pass — v2026.6.5
+
+- **DB indexes** (alembic `0004_perf_indexes`, mirrored by `database.init_database` self-heal): `jobs(review_status, created_at DESC)`, `jobs(user_id, created_at DESC)`, partial `items(job_id) WHERE NOT is_deleted`, `activity_logs(username, created_at DESC)`.
+- **Review queue** (`database.list_review_queue`): the two correlated subqueries (importer + items_count, per row) → one `LEFT JOIN LATERAL` + one grouped subquery. N+1 → 1.
+- **Bulk approve/reject** (`routes/review.py`): per-job `get_job_details + update + list_field_edits` loop → `database.bulk_update_review_status` (single `UPDATE … WHERE job_id = ANY(?) RETURNING`) + `list_field_edits_for_jobs` (one query). ~5×N queries → ~2.
+- **Cost stats** (`database.get_cost_stats`): SUM + GROUP BY DATE in SQL instead of pulling 1000 job rows into Python.
+- **Items / declarations list + Excel export** (`routes/data.py`): per-job `get_job_items` / `get_job_declarations` loops → `get_items_for_jobs` / `get_declarations_for_jobs` (one join each).
+- **Frontend**: ECharts modular import (`echarts/core` + only LineChart/Grid/Legend/Tooltip/Canvas — splits ~600 KB off the main bundle, lazy on `/costs`); field-search debounced 250 ms (history + ResultAccordion); stats polling pauses when the tab is hidden.
 
 ## Key design principles
 
