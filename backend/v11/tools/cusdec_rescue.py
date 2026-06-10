@@ -178,6 +178,20 @@ def apply_cusdec(decl: dict, pdf_path: str, items=None):
             cur_ok = bool(items) and abs(cur_sum - total) / total <= 0.05
             if cus_ok and not cur_ok:
                 items = cus_items
+                # Invoice price must follow the items: derive it from the CUSDEC
+                # lines (Σ qty×unit) so the CIF closure uses the right basis
+                # instead of a stray licence sub-value the LLM may have grabbed.
+                inv = 0.0
+                ok = True
+                for it in cus_items:
+                    q = _num(it.get("quantity"))
+                    u = _num(it.get("invoice_unit_price"))
+                    if q is None or u is None:
+                        ok = False
+                        break
+                    inv += q * u
+                if ok and inv > 0:
+                    decl["invoice_price"] = round(inv, 2)
                 used = True
     except Exception:
         pass
