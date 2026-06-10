@@ -60,9 +60,9 @@
     v11: [
       { key: 'CLASSIFIER', label: 'Page classifier (haiku)' },
       { key: 'SPLITTER', label: 'Split PDF by labels' },
-      { key: 'V7_BRANCH', label: 'Veritas branch (typed pages)' },
-      { key: 'V10_BRANCH', label: 'Scrivener branch (HW pages)' },
-      { key: 'MERGER', label: 'Merge Veritas + Scrivener results' },
+      { key: 'V7_BRANCH', label: 'Atlas Swift branch (typed pages)' },
+      { key: 'V10_BRANCH', label: 'Atlas Vision branch (HW pages)' },
+      { key: 'MERGER', label: 'Merge Swift + Vision results' },
     ],
   };
 
@@ -115,9 +115,9 @@
   });
 
   function pipelineLabel(m: string): string {
-    if (m === 'v10' || m === 'v10_pro') return 'SCRIVENER — HOLISTIC HANDWRITING';
-    if (m === 'v11') return 'MAESTRO — HYBRID (VERITAS + SCRIVENER)';
-    return 'VERITAS — TYPED DOCUMENTS';
+    if (m === 'v10' || m === 'v10_pro') return 'ATLAS VISION — HANDWRITING';
+    if (m === 'v11') return 'ATLAS V14 — HYBRID (SWIFT + VISION)';
+    return 'ATLAS SWIFT — TYPED DOCUMENTS';
   }
 </script>
 
@@ -177,7 +177,7 @@
             background: #050510;
             {s.status === 'running' ? `box-shadow: 0 0 10px ${statusColor(s.status)}40;` : ''}
           ">
-            <div style="color: #60a5fa; font-size: 9px; font-weight: bold; margin-bottom: 4px;">▼ VERITAS BRANCH (typed pages)</div>
+            <div style="color: #60a5fa; font-size: 9px; font-weight: bold; margin-bottom: 4px;">▼ ATLAS SWIFT BRANCH (typed pages)</div>
             <div style="display: flex; align-items: center; gap: 4px;">
               <span style="color: {statusColor(s.status)}; font-size: 10px;">{statusIcon(s.status)}</span>
               <span style="color: {s.status === 'running' ? '#e5e7eb' : statusColor(s.status)}; font-size: 9px;">{s.label}</span>
@@ -194,7 +194,7 @@
             background: #050510;
             {s.status === 'running' ? `box-shadow: 0 0 10px ${statusColor(s.status)}40;` : ''}
           ">
-            <div style="color: var(--warning); font-size: 9px; font-weight: bold; margin-bottom: 4px;">▼ SCRIVENER BRANCH (HW pages)</div>
+            <div style="color: var(--warning); font-size: 9px; font-weight: bold; margin-bottom: 4px;">▼ ATLAS VISION BRANCH (HW pages)</div>
             <div style="display: flex; align-items: center; gap: 4px;">
               <span style="color: {statusColor(s.status)}; font-size: 10px;">{statusIcon(s.status)}</span>
               <span style="color: {s.status === 'running' ? '#e5e7eb' : statusColor(s.status)}; font-size: 9px;">{s.label}</span>
