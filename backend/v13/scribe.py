@@ -38,7 +38,8 @@ into strict JSON:
   "declaration": {"declaration_no","declaration_date","importer_name",
     "consignor_name","invoice_number","invoice_number_customs",
     "invoice_number_commercial","currency","currency_2","exchange_rate",
-    "invoice_price","total_customs_value","customs_duty","commercial_tax",
+    "invoice_price","freight_value","insurance_value","adjustment_value",
+    "total_customs_value","customs_duty","commercial_tax",
     "advance_income_tax","security_fee","maccs_service_fee","exemption"},
   "items": [{"item_name","hs_code","quantity","invoice_unit_price",
     "cif_unit_price","customs_value_mmk","customs_duty_rate","commercial_tax_pct",
@@ -50,7 +51,10 @@ into strict JSON:
 Rules:
 - Numbers as numbers (strip separators); rates as fractions (15%->0.15).
 - origin as ISO-2 code (ITALY->IT). quantity keeps its unit ("108 KG").
-- exchange_rate: invoice_price x exchange_rate should be ~ total_customs_value.
+- freight_value / insurance_value / adjustment_value: in the INVOICE currency (not
+  MMK); 0 if not shown. adjustment_value is signed (negative for a deduction).
+- exchange_rate: (invoice_price + freight_value + insurance_value + adjustment_value)
+  x exchange_rate should be ~ total_customs_value.
 - If a handwritten digit is ambiguous, give your best reading and lower
   field_confidence. Return ONLY the JSON object.
 """

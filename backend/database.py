@@ -178,6 +178,9 @@ def init_database():
             currency TEXT,
             exchange_rate REAL,
             currency_2 TEXT,
+            freight_value REAL,
+            insurance_value REAL,
+            adjustment_value REAL,
             total_customs_value REAL,
             import_export_customs_duty REAL,
             commercial_tax_ct REAL,
@@ -424,6 +427,11 @@ def init_database():
         # on boot (no manual ALTER needed on update).
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS model_used VARCHAR(100)",
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS processed_at TIMESTAMP",
+        # CIF build-up fields (migration 0003); self-heal on boot so an existing
+        # DB picks them up without a manual ALTER on update.
+        "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS freight_value REAL",
+        "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS insurance_value REAL",
+        "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS adjustment_value REAL",
     ):
         cursor.execute(stmt)
     conn.commit()
@@ -1002,6 +1010,9 @@ def save_declarations(job_id: str, declarations: List[Dict]):
         v_curr     = _g(decl, 'currency', 'Currency')
         v_rate     = _g(decl, 'exchange_rate', 'Exchange Rate', default=0.0)
         v_curr2    = _g(decl, 'currency_2', 'Currency 2', default=v_curr)
+        v_freight  = _g(decl, 'freight_value', 'Freight', default=None)
+        v_insure   = _g(decl, 'insurance_value', 'Insurance', default=None)
+        v_adjust   = _g(decl, 'adjustment_value', 'Adjustment', default=None)
         v_cust_val = _g(decl, 'total_customs_value', 'Total Customs Value', default=0.0)
         v_duty     = _g(decl, 'import_export_customs_duty', 'customs_duty', 'Import/Export Customs Duty', default=0.0)
         v_ct       = _g(decl, 'commercial_tax_ct', 'commercial_tax', 'Commercial Tax (CT)', default=0.0)
@@ -1014,14 +1025,16 @@ def save_declarations(job_id: str, declarations: List[Dict]):
                 job_id, declaration_no, declaration_date, importer_name, consignor_name,
                 invoice_number, invoice_number_customs_declaration, invoice_number_commercial_invoice,
                 invoice_price, currency, exchange_rate, currency_2,
+                freight_value, insurance_value, adjustment_value,
                 total_customs_value, import_export_customs_duty, commercial_tax_ct,
                 advance_income_tax_at, security_fee_sf, maccs_service_fee_mf, exemption_reduction
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             job_id, v_no, v_date, v_importer, v_consign,
             v_inv_no, v_inv_cd, v_inv_ci,
             v_price, v_curr, v_rate, v_curr2,
+            v_freight, v_insure, v_adjust,
             v_cust_val, v_duty, v_ct, v_at, v_sf, v_mf, v_exempt
         ))
         new_decl_id = cursor.lastrowid
@@ -2548,6 +2561,9 @@ DECLARATION_FIELD_MAP = {
     "currency": "currency",
     "exchange_rate": "exchange_rate",
     "currency_2": "currency_2",
+    "freight_value": "freight_value",
+    "insurance_value": "insurance_value",
+    "adjustment_value": "adjustment_value",
     "total_customs_value": "total_customs_value",
     "import_export_customs_duty": "import_export_customs_duty",
     "commercial_tax_ct": "commercial_tax_ct",

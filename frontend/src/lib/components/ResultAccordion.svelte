@@ -296,6 +296,9 @@
     { key: 'importer_name', label: 'Importer' },
     { key: 'consignor_name', label: 'Consignor' },
     { key: 'currency', label: 'Currency' },
+    { key: 'freight_value_fmt', label: 'Freight', align: 'right' as const },
+    { key: 'insurance_value_fmt', label: 'Insurance', align: 'right' as const },
+    { key: 'adjustment_value_fmt', label: 'Adjustment', align: 'right' as const },
     { key: 'total_customs_value_fmt', label: 'Customs Value', align: 'right' as const },
     { key: 'import_export_customs_duty_fmt', label: 'Duty', align: 'right' as const },
     { key: 'commercial_tax_ct_fmt', label: 'Tax', align: 'right' as const },
@@ -307,6 +310,9 @@
   const declTableRows = $derived(() => {
     return (job?.declarations ?? []).map((d: any) => ({
       ...d,
+      freight_value_fmt: d.freight_value?.toLocaleString() ?? '—',
+      insurance_value_fmt: d.insurance_value?.toLocaleString() ?? '—',
+      adjustment_value_fmt: d.adjustment_value?.toLocaleString() ?? '—',
       total_customs_value_fmt: d.total_customs_value?.toLocaleString() ?? '—',
       import_export_customs_duty_fmt: d.import_export_customs_duty?.toLocaleString() ?? '—',
       commercial_tax_ct_fmt: d.commercial_tax_ct?.toLocaleString() ?? '—',
