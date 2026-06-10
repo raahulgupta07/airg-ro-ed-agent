@@ -630,6 +630,8 @@ curl -s http://localhost:9000/api/health | grep -o '"version":"[^"]*"'   # or :9
 
 If it still shows the old number, the image wasn't rebuilt — see **Updating an existing deployment**. Bump `APP_VERSION` whenever you ship a change.
 
+**v2026.6.5** — performance + UX hardening. Backend: index pass (alembic `0004_perf_indexes`), review-queue rewritten to one `LATERAL` join, bulk approve/reject as a single `UPDATE … ANY() RETURNING`, cost stats aggregated in SQL, N+1 removed from the items/declarations list + Excel exports. Frontend: ECharts modular import (lazy ~600 KB off the main bundle), debounced field search, stats polling paused while the tab is hidden. Review UI: theme-token colors (no raw hex), error toasts on every failure, unsaved-edit `beforeunload` guard, PDF-fallback banner, Tab-to-next-cell, delete-row Undo, branded approve modal, and an off-canvas mobile sidebar.
+
 ### Logs
 
 ```

@@ -29,12 +29,20 @@
   // History detail tab
   let historyTab = $state<'data' | 'log'>('data');
 
-  // Field search across all pages
+  // Field search across all pages (debounced — the scan below touches every
+  // page/field/amount, so we don't want to run it on every keystroke).
   let fieldSearch = $state('');
+  let fieldSearchQ = $state('');
+  let _fsTimer: ReturnType<typeof setTimeout> | null = null;
+  $effect(() => {
+    const v = fieldSearch;
+    if (_fsTimer) clearTimeout(_fsTimer);
+    _fsTimer = setTimeout(() => { fieldSearchQ = v; }, 250);
+  });
 
   const fieldSearchResults = $derived(() => {
-    if (!fieldSearch.trim() || pageData.length === 0) return [];
-    const q = fieldSearch.toLowerCase().trim();
+    if (!fieldSearchQ.trim() || pageData.length === 0) return [];
+    const q = fieldSearchQ.toLowerCase().trim();
     const results: { page: number; pageType: string; source: string; field: string; value: string }[] = [];
 
     for (const pg of pageData) {

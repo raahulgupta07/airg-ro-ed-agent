@@ -109,6 +109,17 @@
     editValue = '';
   }
 
+  // Tab from a declaration cell: save it, then open the next field's editor
+  // (wraps at the end). Lets a reviewer keyboard down the whole declaration.
+  function tabDeclField(field: string) {
+    const idx = declRows.findIndex((r) => r.field === field);
+    saveDeclField(field);
+    if (idx < 0) return;
+    const next = declRows[idx + 1];
+    if (!next) return;
+    setTimeout(() => startEdit(`decl:${next.field}`, workingDecl[next.field]), 0);
+  }
+
   // ── Reject / approve modals ──
   let showRejectModal = $state(false);
   let rejectNotes = $state('');
@@ -125,6 +136,7 @@
   let pdfBlobUrl = $state<string>('');
   let pdfLoading = $state(true);
   let pdfError = $state('');
+  let pdfFallback = $state(false);  // blob fetch failed → using token-query URL
 
   $effect(() => {
     let cancelled = false;
@@ -132,6 +144,7 @@
     (async () => {
       pdfLoading = true;
       pdfError = '';
+      pdfFallback = false;
       try {
         const r = await fetch(`/api/jobs/${jobId}/pdf`, {
           headers: { 'Authorization': `Bearer ${auth.token}` },
@@ -144,10 +157,12 @@
         revokeUrl = url;
         pdfBlobUrl = url;
       } catch (e: any) {
-        // Fallback: use token-querystring URL
+        // Fallback: token-querystring URL — surface it so a blank viewer
+        // isn't mistaken for a successful load.
         if (!cancelled) {
+          console.warn('PDF blob fetch failed, using token-query fallback', e);
           pdfBlobUrl = `/api/jobs/${jobId}/pdf?token=${auth.token}`;
-          pdfError = '';
+          pdfFallback = true;
         }
       } finally {
         if (!cancelled) pdfLoading = false;
@@ -157,6 +172,20 @@
       cancelled = true;
       if (revokeUrl) URL.revokeObjectURL(revokeUrl);
     };
+  });
+
+  // Warn before leaving with unsaved review edits (backend already persists
+  // each cell on PATCH, but the in-session edit log / draft state would be lost).
+  $effect(() => {
+    if (typeof window === 'undefined') return;
+    const handler = (e: BeforeUnloadEvent) => {
+      if ((unsavedDirty || editLog.length > 0) && !approved && !rejected) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
   });
 
   // ── Page strip ──
@@ -406,9 +435,37 @@
     }
   }
 
+  // Last deleted item — drives the inline "Undo" affordance for a few seconds.
+  let lastDeleted = $state<any | null>(null);
+  let _undoTimer: ReturnType<typeof setTimeout> | null = null;
+
+  async function undoDelete() {
+    if (!lastDeleted) return;
+    const restore = { ...lastDeleted };
+    lastDeleted = null;
+    if (_undoTimer) { clearTimeout(_undoTimer); _undoTimer = null; }
+    try {
+      const r = await fetch(`/api/review/${jobId}/items`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${auth.token}` },
+        body: JSON.stringify({ item: restore }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
+      const created = j?.item || restore;
+      workingItems = [...workingItems, { ...restore, ...created }];
+      originalItems.push({ ...restore, ...created });
+      unsavedDirty = true;
+      toast('Delete undone — row re-added at end');
+    } catch {
+      toast('Undo failed', 'error');
+    }
+  }
+
   // ── Delete item row (soft delete on backend) ──
   async function deleteItemRow(idx: number) {
-    if (!confirm(`Delete item ${idx + 1}? This can be undone by re-adding manually.`)) return;
+    if (!confirm(`Delete item ${idx + 1}?`)) return;
     const removed = workingItems[idx];
     try {
       const r = await fetch(`/api/review/${jobId}/items/${idx}`, {
@@ -430,6 +487,10 @@
         user: auth?.user?.username || 'admin',
       }];
       unsavedDirty = true;
+      // Offer undo for 8s (re-adds the soft-deleted row's values).
+      lastDeleted = { ...removed };
+      if (_undoTimer) clearTimeout(_undoTimer);
+      _undoTimer = setTimeout(() => { lastDeleted = null; }, 8000);
       toast('Row deleted');
     } catch {
       toast('Delete failed', 'error');
@@ -493,22 +554,22 @@
   function declBorder(field: string): string {
     const cur = workingDecl[field];
     const orig = originalDecl[field];
-    if (cur != null && orig != null && String(cur) !== String(orig)) return '#3b82f6'; // blue (edited)
-    if (cur === '' || cur == null) return '#eab308'; // yellow (empty)
-    if (isFlagged('decl', field)) return '#eab308';
-    return 'var(--success)'; // green
+    if (cur != null && orig != null && String(cur) !== String(orig)) return 'var(--info)'; // edited
+    if (cur === '' || cur == null) return 'var(--warning)'; // empty
+    if (isFlagged('decl', field)) return 'var(--warning)';
+    return 'var(--success)';
   }
   function declBg(field: string): string {
     const cur = workingDecl[field];
-    if (cur === '' || cur == null || isFlagged('decl', field)) return '#fefce8';
+    if (cur === '' || cur == null || isFlagged('decl', field)) return 'var(--warning-soft)';
     return '#ffffff';
   }
   function itemBorder(idx: number, field: string): string {
     const cur = workingItems[idx]?.[field];
     const orig = originalItems[idx]?.[field];
-    if (cur != null && orig != null && String(cur) !== String(orig)) return '#3b82f6';
-    if (cur === '' || cur == null) return '#eab308';
-    if (isFlagged('item', field, idx)) return '#eab308';
+    if (cur != null && orig != null && String(cur) !== String(orig)) return 'var(--info)';
+    if (cur === '' || cur == null) return 'var(--warning)';
+    if (isFlagged('item', field, idx)) return 'var(--warning)';
     return 'var(--success)';
   }
 
@@ -686,7 +747,7 @@
   style="border-color: var(--line); background: var(--surface);">
   <div class="flex flex-wrap items-center gap-3 px-3 py-2">
     <span class="px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider"
-      style="background: #b45309; color: white;">
+      style="background: var(--warning); color: white;">
       ⚠ {status}
     </span>
     <span class="text-[11px] font-mono font-bold" style="color: var(--on-surface);">
@@ -727,7 +788,8 @@
       </button>
       <button
         class="px-3 py-1.5 text-[10px] font-medium uppercase border-2"
-        style="border-color: var(--line); background: {(approved || rejected) ? '#9ca3af' : '#ef4444'}; color: white; cursor: {(approved || rejected || rejecting) ? 'not-allowed' : 'pointer'}; opacity: {(approved || rejected) ? 0.5 : 1};"
+        aria-label="Reject document"
+        style="border-color: var(--line); background: {(approved || rejected) ? 'var(--outline-variant)' : 'var(--error)'}; color: white; cursor: {(approved || rejected || rejecting) ? 'not-allowed' : 'pointer'}; opacity: {(approved || rejected) ? 0.5 : 1};"
         disabled={approved || rejected || rejecting || approving}
         onclick={() => { if (!approved && !rejected) showRejectModal = true; }}
       >
@@ -735,7 +797,8 @@
       </button>
       <button
         class="px-3 py-1.5 text-[10px] font-medium uppercase border-2"
-        style="border-color: var(--line); background: {(approved || rejected) ? '#9ca3af' : '#16a34a'}; color: white; cursor: {(approved || approving || rejected) ? 'not-allowed' : 'pointer'}; opacity: {(approved || rejected) ? 0.5 : 1};"
+        aria-label="Approve document"
+        style="border-color: var(--line); background: {(approved || rejected) ? 'var(--outline-variant)' : 'var(--success)'}; color: white; cursor: {(approved || approving || rejected) ? 'not-allowed' : 'pointer'}; opacity: {(approved || rejected) ? 0.5 : 1};"
         disabled={approving || approved || rejected || rejecting}
         onclick={approveClicked}
       >
@@ -811,7 +874,7 @@
             {#if editsHere > 0}
               <span
                 class="absolute"
-                style="top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%; background: #ef4444; border: 1px solid var(--surface);"
+                style="top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--error); border: 1px solid var(--surface);"
               ></span>
             {/if}
           </button>
@@ -833,6 +896,12 @@
           <span class="text-xs font-bold uppercase" style="color: var(--tertiary);">{pdfError}</span>
         </div>
       {:else}
+        {#if pdfFallback}
+          <div class="px-2 py-1 text-[10px] font-mono uppercase tracking-wider"
+            style="background: var(--warning-soft); color: var(--warning); border-bottom: 1px solid var(--line);">
+            ⚠ Secure load failed — showing fallback view. If blank, reload the page.
+          </div>
+        {/if}
         <iframe
           src={pdfSrc}
           title="PDF"
@@ -887,10 +956,10 @@
             class="w-full text-[11px] font-mono font-bold border px-1 py-0.5"
             style="border-color: var(--line); background: white;"
             bind:value={editValue} autofocus
-            onkeydown={(e) => { if (e.key === 'Enter') saveDeclField(row.field); else if (e.key === 'Escape') cancelEdit(); }} />
+            onkeydown={(e) => { if (e.key === 'Enter') saveDeclField(row.field); else if (e.key === 'Escape') cancelEdit(); else if (e.key === 'Tab') { e.preventDefault(); tabDeclField(row.field); } }} />
           <div class="flex items-center gap-1 mt-1">
             <button class="px-1.5 py-0.5 text-[8px] font-medium uppercase border cursor-pointer"
-              style="border-color: var(--line); background: #16a34a; color: white;"
+              style="border-color: var(--line); background: var(--success); color: white;"
               onclick={() => saveDeclField(row.field)}>✓</button>
             <button class="px-1.5 py-0.5 text-[8px] font-medium uppercase border cursor-pointer"
               style="border-color: var(--line); background: var(--surface);"
@@ -908,7 +977,7 @@
           title="Jump PDF to page {dPage}" onclick={() => jumpPdfImmediate(dPage)}>p{dPage}</button>
       </td>
       <td class="px-1 py-1 align-top text-center border-b" style="border-color: var(--outline);">
-        {#if _val}<span style="color: #16a34a;">✓</span>{:else}<span style="color: var(--outline);">—</span>{/if}
+        {#if _val}<span style="color: var(--success);">✓</span>{:else}<span style="color: var(--outline);">—</span>{/if}
       </td>
     {/snippet}
 
@@ -936,13 +1005,18 @@
     <div class="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 mt-1 border-2 text-[10px] font-mono uppercase tracking-wider stamp-shadow"
       style="border-color: var(--line); background: var(--surface);">
       <span class="font-bold">TOTAL PRODUCTS: {itemsCount}</span>
+      {#if lastDeleted}
+        <button class="px-2 py-0.5 font-bold border cursor-pointer"
+          style="color: var(--info); border-color: var(--info);"
+          onclick={undoDelete}>↩ UNDO DELETE</button>
+      {/if}
       <span style="color: var(--on-surface-muted);">|</span>
       <span>Σ VALUE: {itemsValueSum.toLocaleString(undefined, { maximumFractionDigits: 2 })} MMK</span>
       <span style="color: var(--on-surface-muted);">|</span>
       <span>DECLARED: {declaredTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })} MMK</span>
       <span class="ml-auto px-2 py-0.5 font-bold border"
         style={valueBalanced
-          ? 'color:#16a34a;border-color:#16a34a;'
+          ? 'color:var(--success);border-color:var(--success);'
           : 'color:var(--error);border-color:var(--error);'}>
         {#if !declaredTotal}NO TOTAL{:else if valueBalanced}✓ BALANCED{:else}⚠ GAP {(Math.abs(valueGap)).toLocaleString(undefined, { maximumFractionDigits: 0 })} MMK ({(declaredTotal ? Math.abs(valueGap) / declaredTotal * 100 : 0).toFixed(1)}%){/if}
       </span>
@@ -971,7 +1045,7 @@
                 <span style="color: var(--outline);">{e.ts}</span>
                 <span class="font-medium" style="color: var(--on-surface);">{e.field}</span>
                 <span style="color: var(--outline);">{e.before} → </span>
-                <span class="font-bold" style="color: #16a34a;">{e.after}</span>
+                <span class="font-bold" style="color: var(--success);">{e.after}</span>
                 <span class="ml-auto" style="color: var(--outline);">{e.user}</span>
               </div>
             {/each}
@@ -1004,7 +1078,7 @@
             style="border-color: var(--line); background: var(--surface); color: var(--on-surface);"
             onclick={() => showRejectModal = false}>CANCEL</button>
           <button class="px-3 py-1.5 text-[10px] font-medium uppercase border-2 cursor-pointer"
-            style="border-color: var(--line); background: #ef4444; color: white;"
+            style="border-color: var(--line); background: var(--error); color: white;"
             onclick={doReject}>✗ CONFIRM REJECT</button>
         </div>
       </div>
@@ -1020,7 +1094,7 @@
       style="border-color: var(--line); background: var(--surface);">
       <div class="dark-bar text-xs">CONFIRM_APPROVE</div>
       <div class="bg-white p-4">
-        <div class="text-[11px] font-bold uppercase mb-2" style="color: #b45309;">
+        <div class="text-[11px] font-bold uppercase mb-2" style="color: var(--warning);">
           ⚠ Some fields below 90% confidence — confirm approval?
         </div>
         <textarea
@@ -1034,7 +1108,7 @@
             style="border-color: var(--line); background: var(--surface); color: var(--on-surface);"
             onclick={() => showApproveConfirm = false}>CANCEL</button>
           <button class="px-3 py-1.5 text-[10px] font-medium uppercase border-2 cursor-pointer"
-            style="border-color: var(--line); background: #16a34a; color: white;"
+            style="border-color: var(--line); background: var(--success); color: white;"
             onclick={doApprove}>✓ APPROVE ANYWAY</button>
         </div>
       </div>

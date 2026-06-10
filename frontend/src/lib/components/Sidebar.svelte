@@ -44,9 +44,30 @@
 
   const currentPath = $derived(page.url.pathname);
   const initial = $derived(username ? username[0].toUpperCase() : '?');
+
+  // Mobile drawer: sidebar is off-canvas under 768px, toggled by a hamburger.
+  let mobileOpen = $state(false);
+  // Close the drawer whenever the route changes (nav click on mobile).
+  $effect(() => { currentPath; mobileOpen = false; });
 </script>
 
-<aside class="fixed top-0 left-0 h-screen w-[236px] z-50 flex flex-col"
+<!-- Mobile hamburger — only visible under 768px -->
+<button class="md:hidden fixed top-3 left-3 z-[60] w-10 h-10 flex items-center justify-center cursor-pointer"
+        aria-label="Open navigation menu"
+        onclick={() => mobileOpen = true}
+        style="background: var(--surface-container-lowest); border: 1px solid var(--line); border-radius: var(--radius-md); box-shadow: var(--shadow-sm);">
+  <span style="font-size: 18px; color: var(--on-surface);">☰</span>
+</button>
+
+<!-- Backdrop when drawer open on mobile -->
+{#if mobileOpen}
+  <button class="md:hidden fixed inset-0 z-40 cursor-default" aria-label="Close navigation menu"
+          onclick={() => mobileOpen = false}
+          style="background: rgba(31,30,29,0.4); border: none;"></button>
+{/if}
+
+<aside class="fixed top-0 left-0 h-screen w-[236px] z-50 flex flex-col transition-transform duration-200
+              {mobileOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0"
        style="background: var(--surface-container-lowest); border-right: 1px solid var(--line);">
 
   <!-- Brand -->
@@ -90,7 +111,7 @@
         {role}{auth.user?.auth_source ? ' · ' + auth.user.auth_source : ''}
       </div>
     </div>
-    <button onclick={onlogout} title="Logout"
+    <button onclick={onlogout} title="Logout" aria-label="Logout"
             class="text-xs font-medium px-2.5 py-1.5 cursor-pointer transition-colors shrink-0"
             style="color: var(--on-surface-muted); border: 1px solid var(--line); background: transparent; border-radius: var(--radius-md);"
             onmouseenter={(e) => { e.currentTarget.style.background = 'var(--surface-container)'; e.currentTarget.style.color = 'var(--on-surface)'; }}

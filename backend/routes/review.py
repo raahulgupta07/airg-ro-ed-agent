@@ -228,45 +228,40 @@ async def review_stats(current_user: dict = Depends(get_current_user)):
 @router.post("/bulk/approve")
 async def bulk_approve(body: BulkApproveRequest, request: Request,
                        current_user: dict = Depends(get_current_user)):
-    """Approve a list of jobs in one call. Returns per-job success/failure."""
-    approved: List[str] = []
-    failed: List[Dict[str, str]] = []
-    for jid in body.job_ids:
-        try:
-            job = database.get_job_details(jid)
-            if not job:
-                failed.append({"job_id": jid, "error": "not found"})
-                continue
-            ok = database.update_review_status(
-                jid, "approved",
-                reviewed_by=current_user.get("username"),
-                notes=body.notes,
-            )
-            if not ok:
-                failed.append({"job_id": jid, "error": "update failed"})
-                continue
-            edits = database.list_field_edits(jid)
-            fee_edited = any(
-                e.get("entity_type") == "declaration"
-                and database.DECLARATION_FIELD_MAP.get(e.get("field_name")) in database.FEE_FIELD_KEYS
-                for e in edits
-            )
-            if fee_edited:
-                _autosave_fee_baseline(jid)
-            ctx = _request_ctx(request)
-            event_logger.log_event(
-                action="JOB_APPROVED",
-                user=current_user.get("username"),
-                status="OK",
-                resource=jid,
-                ip=ctx["ip"], user_agent=ctx["user_agent"],
-                details=f"Bulk approved with {len(edits)} edit(s)",
-                payload={"notes": body.notes, "edits_count": len(edits),
-                         "fee_edited": fee_edited, "bulk": True},
-            )
-            approved.append(jid)
-        except Exception as e:
-            failed.append({"job_id": jid, "error": str(e)})
+    """Approve a list of jobs in one call. Returns per-job success/failure.
+
+    One UPDATE flips every row; one query pulls all edits for the fee-baseline
+    check — so 100 jobs cost ~2 queries instead of ~500."""
+    approved = database.bulk_update_review_status(
+        body.job_ids, "approved",
+        reviewed_by=current_user.get("username"), notes=body.notes,
+    )
+    approved_set = set(approved)
+    failed: List[Dict[str, str]] = [
+        {"job_id": jid, "error": "not found"} for jid in body.job_ids if jid not in approved_set
+    ]
+
+    edits_by_job = database.list_field_edits_for_jobs(approved)
+    ctx = _request_ctx(request)
+    for jid in approved:
+        edits = edits_by_job.get(jid, [])
+        fee_edited = any(
+            e.get("entity_type") == "declaration"
+            and database.DECLARATION_FIELD_MAP.get(e.get("field_name")) in database.FEE_FIELD_KEYS
+            for e in edits
+        )
+        if fee_edited:
+            _autosave_fee_baseline(jid)
+        event_logger.log_event(
+            action="JOB_APPROVED",
+            user=current_user.get("username"),
+            status="OK",
+            resource=jid,
+            ip=ctx["ip"], user_agent=ctx["user_agent"],
+            details=f"Bulk approved with {len(edits)} edit(s)",
+            payload={"notes": body.notes, "edits_count": len(edits),
+                     "fee_edited": fee_edited, "bulk": True},
+        )
     return {"approved": approved, "failed": failed}
 
 
@@ -276,35 +271,25 @@ async def bulk_reject(body: BulkRejectRequest, request: Request,
     """Reject a list of jobs with shared notes."""
     if not body.notes or not body.notes.strip():
         raise HTTPException(400, "Rejection notes are required")
-    rejected: List[str] = []
-    failed: List[Dict[str, str]] = []
-    for jid in body.job_ids:
-        try:
-            job = database.get_job_details(jid)
-            if not job:
-                failed.append({"job_id": jid, "error": "not found"})
-                continue
-            ok = database.update_review_status(
-                jid, "rejected",
-                reviewed_by=current_user.get("username"),
-                notes=body.notes,
-            )
-            if not ok:
-                failed.append({"job_id": jid, "error": "update failed"})
-                continue
-            ctx = _request_ctx(request)
-            event_logger.log_event(
-                action="JOB_REJECTED",
-                user=current_user.get("username"),
-                status="OK",
-                resource=jid,
-                ip=ctx["ip"], user_agent=ctx["user_agent"],
-                details=body.notes,
-                payload={"notes": body.notes, "bulk": True},
-            )
-            rejected.append(jid)
-        except Exception as e:
-            failed.append({"job_id": jid, "error": str(e)})
+    rejected = database.bulk_update_review_status(
+        body.job_ids, "rejected",
+        reviewed_by=current_user.get("username"), notes=body.notes,
+    )
+    rejected_set = set(rejected)
+    failed: List[Dict[str, str]] = [
+        {"job_id": jid, "error": "not found"} for jid in body.job_ids if jid not in rejected_set
+    ]
+    ctx = _request_ctx(request)
+    for jid in rejected:
+        event_logger.log_event(
+            action="JOB_REJECTED",
+            user=current_user.get("username"),
+            status="OK",
+            resource=jid,
+            ip=ctx["ip"], user_agent=ctx["user_agent"],
+            details=body.notes,
+            payload={"notes": body.notes, "bulk": True},
+        )
     return {"rejected": rejected, "failed": failed}
 
 

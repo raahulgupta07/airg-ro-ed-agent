@@ -35,6 +35,7 @@
   let toastMsg = $state('');
   let showRejectModal = $state(false);
   let rejectNotes = $state('');
+  let showApproveModal = $state(false);
 
   function toast(msg: string) {
     toastMsg = msg;
@@ -91,14 +92,19 @@
     }
   }
 
+  function openApproveModal() {
+    if (selected.size === 0) return;
+    showApproveModal = true;
+  }
+
   async function bulkApprove() {
     if (selected.size === 0) return;
-    if (!confirm(`Approve ${selected.size} job(s)?`)) return;
     bulkBusy = true;
     try {
       const r = await api.reviewBulkApprove([...selected]);
       toast(`Approved ${r.approved?.length || 0} · failed ${r.failed?.length || 0}`);
       selected = new Set();
+      showApproveModal = false;
       await refresh();
     } catch (e: any) {
       toast(`Error: ${e.message || e}`);
@@ -242,7 +248,7 @@
     {selected.size} of {queue.length} selected
   </span>
   <div class="flex-1"></div>
-  <button class="cl-btn primary sm" disabled={selected.size === 0 || bulkBusy} onclick={bulkApprove}>
+  <button class="cl-btn primary sm" disabled={selected.size === 0 || bulkBusy} onclick={openApproveModal}>
     ✓ Approve selected
   </button>
   <button class="cl-btn sm" disabled={selected.size === 0 || bulkBusy} onclick={openRejectModal}>
@@ -274,6 +280,23 @@
 {#if toastMsg}
   <div class="fixed bottom-4 right-4 px-4 py-2 text-xs font-medium cl-panel z-50"
     style="background: var(--surface-container); color: var(--on-surface);">{toastMsg}</div>
+{/if}
+
+{#if showApproveModal}
+  <div class="fixed inset-0 z-50 flex items-center justify-center" style="background: rgba(31,30,29,0.4);">
+    <div class="cl-panel w-[440px]" style="box-shadow: var(--shadow-lg);">
+      <div class="cl-hd"><span class="dot" style="color: var(--success);">◉</span>Approve selected — {selected.size} job(s)</div>
+      <div class="cl-bd">
+        <p class="text-sm" style="color: var(--on-surface-muted);">
+          Approve {selected.size} job{selected.size === 1 ? '' : 's'} and move {selected.size === 1 ? 'it' : 'them'} to history? This can't be bulk-undone.
+        </p>
+        <div class="flex justify-end gap-2 mt-3">
+          <button class="cl-btn sm" onclick={() => showApproveModal = false}>Cancel</button>
+          <button class="cl-btn primary sm" disabled={bulkBusy} onclick={bulkApprove}>Approve {selected.size}</button>
+        </div>
+      </div>
+    </div>
+  </div>
 {/if}
 
 {#if showRejectModal}

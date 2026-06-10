@@ -109,7 +109,13 @@ const filteredJobs = $derived(() => {
 
   async function initChart() {
     if (!chartContainer || !costStats?.daily_breakdown) return;
-    const echarts = await import('echarts');
+    // Modular import — pull only the line chart + the components actually used,
+    // instead of the whole ~600KB echarts bundle.
+    const echarts = await import('echarts/core');
+    const { LineChart } = await import('echarts/charts');
+    const { GridComponent, LegendComponent, TooltipComponent } = await import('echarts/components');
+    const { CanvasRenderer } = await import('echarts/renderers');
+    echarts.use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
 
     const dailyCost = costStats.daily_breakdown || {};
     const dailyDocs = costStats.daily_docs || {};
