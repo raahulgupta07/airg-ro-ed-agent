@@ -105,7 +105,7 @@
         </p>
         <div class="login-status">
           <span class="w-2 h-2 rounded-full" style="background: var(--success);"></span>
-          Atlas V14 · Maestro router · queue-driven
+          Atlas V14 · queue-driven router
         </div>
 
         <!-- Form card -->
@@ -234,7 +234,7 @@
               <div class="flex-1 flex items-center gap-2 px-3 py-2.5 min-w-0"
                    style="background: var(--surface-container-lowest); border: 1px solid var(--line); border-radius: var(--radius-md);">
                 <span class="material-symbols-outlined" style="font-size: 18px; color: var(--on-surface-subtle);">science</span>
-                <span class="text-sm truncate" style="color: var(--on-surface-muted);">CityAgent · Maestro router</span>
+                <span class="text-sm truncate" style="color: var(--on-surface-muted);">CityAgent · Atlas V14</span>
                 <span class="ml-auto flex gap-1 shrink-0">
                   <span class="dot-pulse" style="animation-delay: 0s;"></span>
                   <span class="dot-pulse" style="animation-delay: .18s;"></span>
