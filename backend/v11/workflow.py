@@ -773,6 +773,71 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
         except Exception as _e:
             out["trace"].append({"phase": "recover_guard", "error": str(_e)})
 
+        # ─── Phase 4.3: Empty-declaration safety net ───
+        # If the merged DECLARATION came back empty (no total + no importer), the
+        # classifier misrouted the real declaration page (e.g. a bundled release
+        # order where the customs declaration was tagged ATTACHMENT/"blank"). The
+        # item-recovery paths above only restore ITEMS, never the header — so an
+        # empty header would ship empty. Here we re-run Veritas (V7) on the FULL
+        # PDF and adopt its declaration + items wholesale. Engine-agnostic; only
+        # fires when there is genuinely nothing to lose.
+        try:
+            _decl_now = out.get("declaration") or {}
+            _has_total = _reconcile._to_float(_decl_now.get("total_customs_value")
+                                              or _decl_now.get("Total Customs Value"))
+            _imp = _decl_now.get("importer_name") or _decl_now.get("Importer (Name)") or ""
+            _has_importer = bool(str(_imp).strip())
+            _decl_empty = not _has_total and not _has_importer
+            _already_full2 = bool(fallback_to_full) or (typed_pdf == pdf_path and not hw_pdf)
+            if _decl_empty and not _already_full2:
+                out["trace"].append({"phase": "decl_rescue",
+                                     "reason": "empty declaration after merge",
+                                     "action": "rerun V7 on full PDF (adopt header+items)"})
+                _emit(job_id, "STAGE_START", {
+                    "pipeline": "V7_RESCUE",
+                    "label": "Veritas rescue — empty declaration",
+                    "pages": list(range(1, (cls.get("n_pages") or 0) + 1)),
+                })
+                _rs_t0 = time.time()
+                try:
+                    with ThreadPoolExecutor(max_workers=1) as _rsx:
+                        _rsfut = _rsx.submit(_call_v7, pdf_path)
+                        rescue_raw = _rsfut.result(timeout=600)
+                    rescue_norm = merge_results(rescue_raw, None)
+                    rdecl = rescue_norm.get("declaration") or {}
+                    ritems = rescue_norm.get("items") or []
+                    rtotal = _reconcile._to_float(rdecl.get("total_customs_value"))
+                    if rtotal and rtotal > 0:
+                        out["declaration"] = rdecl
+                        if len(ritems) > len(out.get("items") or []):
+                            out["items"] = ritems
+                        out["v7_used"] = True   # surfaces in model_used label
+                        out["trace"].append({"phase": "decl_rescue", "ok": True,
+                                             "total_customs_value": rtotal,
+                                             "items": len(out.get("items") or [])})
+                        # Accumulate rescue cost/tokens
+                        v7_res = v7_res or {}
+                        v7_res["tokens_in"] = int(v7_res.get("tokens_in", 0)) + int(rescue_raw.get("tokens_in", 0) or 0)
+                        v7_res["tokens_out"] = int(v7_res.get("tokens_out", 0)) + int(rescue_raw.get("tokens_out", 0) or 0)
+                        v7_res["cost"] = float(v7_res.get("cost", 0) or 0) + float(rescue_raw.get("cost", 0) or rescue_raw.get("cost_usd", 0) or 0)
+                        _emit(job_id, "STAGE_DONE", {
+                            "pipeline": "V7_RESCUE", "label": "Veritas rescue",
+                            "duration_s": round(time.time() - _rs_t0, 2),
+                            "total_customs_value": rtotal,
+                            "items": len(out.get("items") or [])})
+                    else:
+                        out["trace"].append({"phase": "decl_rescue", "ok": False,
+                                             "reason": "full V7 also produced no total"})
+                        _emit(job_id, "STAGE_DONE", {
+                            "pipeline": "V7_RESCUE", "label": "Veritas rescue — no header",
+                            "duration_s": round(time.time() - _rs_t0, 2)})
+                except Exception as _rse:
+                    out["trace"].append({"phase": "decl_rescue", "error": str(_rse)})
+                    _emit(job_id, "STAGE_DONE", {"pipeline": "V7_RESCUE",
+                                                 "label": "Veritas rescue", "error": str(_rse)})
+        except Exception as _e:
+            out["trace"].append({"phase": "decl_rescue_guard", "error": str(_e)})
+
         # ─── Phase 4.4: Reconciliation gate (the common invariant) ───
         # One guard, one chokepoint: the declared customs total must equal the
         # sum of item customs values. Any upstream leak — misclassified page,

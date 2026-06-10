@@ -24,13 +24,13 @@ Return strict JSON only:
 {"pages": [{"page": 1, "label": "TYPED|HANDWRITTEN|ATTACHMENT", "confidence": "high|med|low", "reason": "short"}]}"""
 
 
-def _render_thumbnails(pdf_path: str, dpi: int = 70) -> List[str]:
+def _render_thumbnails(pdf_path: str, dpi: int = 110) -> List[str]:
     out = []
     doc = fitz.open(str(pdf_path))
     for page in doc:
         pix = page.get_pixmap(dpi=dpi)
         img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-        max_dim = 900
+        max_dim = 1100
         if img.width > max_dim or img.height > max_dim:
             img.thumbnail((max_dim, max_dim), Image.LANCZOS)
         buf = io.BytesIO()
@@ -72,6 +72,49 @@ def _attach_text_layer(pages: List[Dict], probe: Dict[int, int]) -> List[Dict]:
         chars = probe.get(p.get("page"), 0)
         p["text_chars"] = chars
         p["has_text_layer"] = chars >= PRESTO_TEXT_LAYER_MIN_CHARS
+    return pages
+
+
+# Strong, customs-DECLARATION-specific text markers. Invoices / packing lists /
+# bills of lading do NOT carry these, so they won't be falsely promoted.
+_DECL_MARKERS = (
+    "customs value", "customs duty", "assessment", "exchange rate",
+    "import/export", "maccs", "cusdec", "total customs", "declarant",
+    "tariff", "c.i.f", "cif value",
+)
+
+
+def _marker_rescue(pages: List[Dict], pdf_path: str) -> List[Dict]:
+    """Deterministic safety net for the vision classifier.
+
+    A page the model tagged ATTACHMENT (often "blank/continuation") but that
+    carries a rich text layer containing ≥2 customs-declaration markers is almost
+    certainly the real declaration mis-tagged inside a bundled release order.
+    Flip it to TYPED so an extraction engine actually reads it. No API call.
+    """
+    try:
+        doc = fitz.open(str(pdf_path))
+        texts = {}
+        for i, pg in enumerate(doc, 1):
+            try:
+                texts[i] = (pg.get_text() or "").lower()
+            except Exception:
+                texts[i] = ""
+        doc.close()
+    except Exception:
+        return pages
+    for p in pages:
+        if (p.get("label") or "").upper() != "ATTACHMENT":
+            continue
+        t = texts.get(p.get("page"), "")
+        if len(t.strip()) < 400:
+            continue
+        hits = sum(1 for m in _DECL_MARKERS if m in t)
+        if hits >= 2:
+            p["label"] = "TYPED"
+            p["confidence"] = "med"
+            p["reason"] = f"text-layer rescue ({hits} decl markers)"[:80]
+            p["_rescued"] = True
     return pages
 
 
@@ -150,6 +193,12 @@ def classify_pages(pdf_path: str) -> Dict:
                         })
                         summary[label] += 1
                     _attach_text_layer(pages, text_probe)
+                    # Deterministic rescue: promote mis-tagged declaration pages
+                    # (text layer + decl markers) back to TYPED, then recount.
+                    _marker_rescue(pages, pdf_path)
+                    summary = {"TYPED": 0, "HANDWRITTEN": 0, "ATTACHMENT": 0}
+                    for _p in pages:
+                        summary[_p["label"]] = summary.get(_p["label"], 0) + 1
                     return {"pages": pages, "n_pages": n, "summary": summary}
             elif r.status_code == 429:
                 time.sleep(2 ** (attempt + 1)); continue
