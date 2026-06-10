@@ -127,7 +127,7 @@
   <div style="padding: 8px 14px; border-bottom: 1px solid #1a1a2e; display: flex; justify-content: space-between; align-items: center;">
     <div style="display: flex; align-items: center; gap: 8px;">
       <span style="color: var(--success); font-size: 8px;">●</span>
-      <span style="color: #4b5563; font-size: 10px; font-weight: bold;">RO-ED AI PIPELINE</span>
+      <span style="color: #4b5563; font-size: 10px; font-weight: bold;">CITY AGENT PIPELINE</span>
       <span style="color: #a78bfa; font-size: 9px; border: 1px solid #4c1d95; padding: 1px 6px; border-radius: 2px;">{pipelineLabel(mode)}</span>
       <span style="color: #eab308; font-size: 10px;">{filename}</span>
     </div>

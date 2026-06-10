@@ -381,7 +381,7 @@
         <!-- Command line -->
         <div>
           <span style="color: var(--success);">❯</span>
-          <span style="color: #9ca3af;"> ro-ed extract</span>
+          <span style="color: #9ca3af;"> cityagent extract</span>
           <span style="color: #eab308;"> "{selectedJob.pdf_name}"</span>
         </div>
         <div style="color: #1e1e2e; margin: 4px 0;">────────────────────────────────────────────────────────────</div>
@@ -413,7 +413,7 @@
         {:else}
           <!-- Fallback: generate summary from job data -->
           <div style="color: #9ca3af;">📎 File: {selectedJob.pdf_name} ({(selectedJob.pdf_size / 1024 / 1024).toFixed(1)} MB)</div>
-          <div style="color: #e5e7eb; font-weight: bold; margin-top: 6px;">🤖 RO-ED AI Agent</div>
+          <div style="color: #e5e7eb; font-weight: bold; margin-top: 6px;">🤖 City Agent</div>
           <div style="color: #9ca3af;">📄 Processed {selectedJob.total_pages} pages</div>
           <div style="color: var(--success);">✅ Extracted {items.length} items, 16 declaration fields</div>
           <div style="color: #9ca3af;">📊 Accuracy: {acc.toFixed(1)}% | Time: {selectedJob.processing_time_seconds?.toFixed(1)}s | Cost: ${selectedJob.cost_usd?.toFixed(3)}</div>

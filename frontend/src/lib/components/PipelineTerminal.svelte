@@ -92,7 +92,7 @@
           <span style="width: 8px; height: 8px; border-radius: 50%; background: #22c55e; display: inline-block;"></span>
         </div>
         <span style="color: #4b5563; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; font-weight: bold; cursor: pointer;" onclick={() => collapsed = true}>
-          ro-ed-agent — {filename || 'idle'}
+          cityagent — {filename || 'idle'}
         </span>
       </div>
       <div style="display: flex; align-items: center; gap: 12px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 9px;">
@@ -125,7 +125,7 @@
       <!-- Prompt line -->
       <div>
         <span style="color: #22c55e;">❯</span>
-        <span style="color: #9ca3af;"> ro-ed extract</span>
+        <span style="color: #9ca3af;"> cityagent extract</span>
         <span style="color: #eab308;"> "{filename}"</span>
         <span style="color: #4b5563;"> --model</span>
         <span style="color: #a78bfa;"> {model}</span>

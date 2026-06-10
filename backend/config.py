@@ -19,10 +19,11 @@ BASE_DIR = Path(__file__).parent
 # CalVer year.month.patch; bump patch on each shipped change so a deploy is
 # verifiable at a glance ("is AWS running the latest?").
 # ============================================================================
-APP_VERSION = "2026.6.13"
+APP_VERSION = "2026.6.14"
 APP_ENGINE = "Atlas V14"
 # Short, human changelog of the most recent patches (newest first).
 APP_CHANGELOG = [
+    "2026.6.14 — Rebrand to 'City Agent : PG Release Order' (tab title + CityAgent favicon + in-app RO-ED labels + API title); internal storage/pipeline keys unchanged",
     "2026.6.13 — CUSDEC rescue also reads freight/insurance/adjustment (real number wins; '-' dash stays blank, explicit 0 shows as 0 not —)",
     "2026.6.12 — CUSDEC item rescue also derives invoice_price (Σ qty×unit) so the CIF closure uses the right basis — ro3 now fully reconciles (gap 0, balanced)",
     "2026.6.11 — CUSDEC item rescue: when the LLM item lines don't reconcile but the CUSDEC's do, adopt the authoritative CUSDEC items (name/HS/qty/price/value)",

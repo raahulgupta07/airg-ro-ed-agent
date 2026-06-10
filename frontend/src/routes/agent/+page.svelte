@@ -704,7 +704,7 @@
 
         <!-- Pipeline Mode -->
         <div class="px-3 pt-2 flex items-center gap-2" style="border-top: 1px solid var(--line-2);">
-          <span class="pill ok" style="padding: 2px 8px; font-size: 9px;">RO-ED AI</span>
+          <span class="pill ok" style="padding: 2px 8px; font-size: 9px;">CITY AGENT</span>
           <span class="text-[7px] font-mono" style="color: var(--on-surface-subtle);">SMART EXTRACTION · HD VISION</span>
         </div>
 
@@ -822,7 +822,7 @@
           <div class="flex items-center gap-2">
             <span class="text-xs font-bold uppercase" style="color: var(--on-surface);">Processing: {selectedFile?.filename ?? ''}</span>
             <span class="pill clay">RUNNING</span>
-            <span class="pill ok">RO-ED AI</span>
+            <span class="pill ok">CITY AGENT</span>
           </div>
           {#if running}
             <Button variant="danger" size="sm" onclick={stopPipeline}>
