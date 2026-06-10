@@ -133,7 +133,7 @@ _DOCS_ON = (
     or _os_docs.getenv("ENABLE_DOCS", "").lower() in ("1", "true", "yes")
 )
 app = FastAPI(
-    title="RO-ED AI Agent",
+    title="City Agent : PG Release Order",
     version=_config.APP_VERSION,
     lifespan=lifespan,
     docs_url="/docs" if _DOCS_ON else None,
@@ -590,4 +590,4 @@ if FRONTEND_BUILD.exists():
 else:
     @app.get("/")
     async def root():
-        return {"message": "RO-ED AI Agent API", "docs": "/docs", "health": "/api/health"}
+        return {"message": "City Agent : PG Release Order API", "docs": "/docs", "health": "/api/health"}
