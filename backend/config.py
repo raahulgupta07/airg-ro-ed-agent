@@ -19,10 +19,11 @@ BASE_DIR = Path(__file__).parent
 # CalVer year.month.patch; bump patch on each shipped change so a deploy is
 # verifiable at a glance ("is AWS running the latest?").
 # ============================================================================
-APP_VERSION = "2026.6.11"
+APP_VERSION = "2026.6.12"
 APP_ENGINE = "Atlas V14"
 # Short, human changelog of the most recent patches (newest first).
 APP_CHANGELOG = [
+    "2026.6.12 — CUSDEC item rescue also derives invoice_price (Σ qty×unit) so the CIF closure uses the right basis — ro3 now fully reconciles (gap 0, balanced)",
     "2026.6.11 — CUSDEC item rescue: when the LLM item lines don't reconcile but the CUSDEC's do, adopt the authoritative CUSDEC items (name/HS/qty/price/value)",
     "2026.6.10 — CUSDEC tax/total rescue (deterministic MACCS parse fills CD/CT/AT/SF/MF + real total/rate/decl-no) + reconcile tax-completeness gate (no more false 'balanced' when taxes missing)",
     "2026.6.9 — Finish Atlas rebrand on the agent page (router card), pipeline config + login (Maestro/Veritas/Scrivener → Atlas Router/Swift/Vision)",
