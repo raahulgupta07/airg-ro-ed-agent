@@ -838,6 +838,19 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
         except Exception as _e:
             out["trace"].append({"phase": "decl_rescue_guard", "error": str(_e)})
 
+        # ─── Phase 4.35: CUSDEC tax/total rescue ───
+        # Bundled release-order PDFs carry an authoritative MACCS CUSDEC page
+        # whose tax block (CD/CT/AT/SF/MF) + real total/rate the LLM often misses
+        # when it anchors on the Import-Licence pages. Fill them deterministically.
+        try:
+            from v11.tools import cusdec_rescue as _cusdec
+            out["declaration"], _cus_used = _cusdec.apply_cusdec(out.get("declaration") or {}, pdf_path)
+            if _cus_used:
+                _emit(job_id, "STAGE_DETAIL", {"label": "ATLAS V14", "step": "cusdec",
+                                               "msg": "CUSDEC tax/total rescue applied"})
+        except Exception as _ce:
+            out.setdefault("trace", []).append({"phase": "cusdec_rescue", "error": str(_ce)})
+
         # ─── Phase 4.4: Reconciliation gate (the common invariant) ───
         # One guard, one chokepoint: the declared customs total must equal the
         # sum of item customs values. Any upstream leak — misclassified page,
