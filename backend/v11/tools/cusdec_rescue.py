@@ -81,6 +81,54 @@ def _parse(text: str) -> dict:
     return out
 
 
+def _before(lines, label):
+    """Value on the line immediately before `label` (MACCS prints value→label)."""
+    for i, l in enumerate(lines):
+        if l.strip().lower() == label.lower():
+            return lines[i - 1].strip() if i > 0 else None
+    return None
+
+
+def _is_item_page(text: str) -> bool:
+    tl = text.lower()
+    return "item name" in tl and "quantity (1)" in tl and "customs value" in tl
+
+
+def _parse_item(text: str) -> dict:
+    L = [x.strip() for x in text.split("\n")]
+    hs = _before(L, "HS")
+    hs = re.sub(r"[^\d]", "", hs) if hs else None  # 0406.30.00 00 -> 0406300000
+    return {
+        "item_no": _before(L, "No."),
+        "item_name": _before(L, "Item name"),
+        "hs_code": hs,
+        "quantity": _num(_before(L, "Quantity (1)")),
+        "invoice_unit_price": _num(_before(L, "Invoice unit price")),
+        "customs_value_mmk": _num(_before(L, "Customs value")),
+    }
+
+
+def cusdec_items(pdf_path: str):
+    """All consolidated item lines from the CUSDEC item-detail pages, or []."""
+    if not fitz or not pdf_path:
+        return []
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception:
+        return []
+    out = []
+    for pg in range(doc.page_count):
+        try:
+            t = doc[pg].get_text()
+        except Exception:
+            continue
+        if _is_item_page(t):
+            it = _parse_item(t)
+            if it.get("customs_value_mmk") is not None:
+                out.append(it)
+    return out
+
+
 def cusdec_fields(pdf_path: str):
     """Authoritative CUSDEC fields from the text layer, or None if no CUSDEC page."""
     if not fitz or not pdf_path:
@@ -99,18 +147,39 @@ def cusdec_fields(pdf_path: str):
     return None
 
 
-def apply_cusdec(decl: dict, pdf_path: str):
-    """Fill `decl` with CUSDEC values (preferred for total/taxes/rate/decl_no).
+def apply_cusdec(decl: dict, pdf_path: str, items=None):
+    """Fill `decl` with CUSDEC header values (total/taxes/rate/decl_no), and —
+    when the CUSDEC item lines self-reconcile against that total but the current
+    `items` do NOT — replace `items` with the authoritative CUSDEC items.
 
-    Returns (decl, used: bool). Never raises.
+    Returns (decl, items, used: bool). `items` is returned unchanged (or as
+    passed, possibly None) when no item rescue applies. Never raises.
     """
+    used = False
     try:
         fields = cusdec_fields(pdf_path)
     except Exception:
-        return decl, False
-    if not fields:
-        return decl, False
-    for k in _PREFER:
-        if fields.get(k) is not None:
-            decl[k] = fields[k]
-    return decl, True
+        fields = None
+    if fields:
+        for k in _PREFER:
+            if fields.get(k) is not None:
+                decl[k] = fields[k]
+        used = True
+
+    # Item rescue — only when CUSDEC items reconcile with the (now authoritative)
+    # total and the current items don't, so we never clobber a good extraction.
+    try:
+        total = _num(decl.get("total_customs_value"))
+        cus_items = cusdec_items(pdf_path)
+        if items is not None and total and total > 0 and cus_items:
+            cur_sum = sum(_num(i.get("customs_value_mmk")) or 0 for i in items)
+            cus_sum = sum(_num(i.get("customs_value_mmk")) or 0 for i in cus_items)
+            cus_ok = abs(cus_sum - total) / total <= 0.05
+            cur_ok = bool(items) and abs(cur_sum - total) / total <= 0.05
+            if cus_ok and not cur_ok:
+                items = cus_items
+                used = True
+    except Exception:
+        pass
+
+    return decl, items, used

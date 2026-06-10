@@ -844,10 +844,13 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
         # when it anchors on the Import-Licence pages. Fill them deterministically.
         try:
             from v11.tools import cusdec_rescue as _cusdec
-            out["declaration"], _cus_used = _cusdec.apply_cusdec(out.get("declaration") or {}, pdf_path)
+            _n_before = len(out.get("items") or [])
+            out["declaration"], out["items"], _cus_used = _cusdec.apply_cusdec(
+                out.get("declaration") or {}, pdf_path, out.get("items") or [])
             if _cus_used:
+                _swapped = "; items←CUSDEC" if len(out.get("items") or []) != _n_before else ""
                 _emit(job_id, "STAGE_DETAIL", {"label": "ATLAS V14", "step": "cusdec",
-                                               "msg": "CUSDEC tax/total rescue applied"})
+                                               "msg": "CUSDEC tax/total rescue applied" + _swapped})
         except Exception as _ce:
             out.setdefault("trace", []).append({"phase": "cusdec_rescue", "error": str(_ce)})
 
