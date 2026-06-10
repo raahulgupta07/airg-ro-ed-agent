@@ -15,6 +15,21 @@ from pathlib import Path
 BASE_DIR = Path(__file__).parent
 
 # ============================================================================
+# APP VERSION (single source of truth — shown in UI footer + /api/health)
+# CalVer year.month.patch; bump patch on each shipped change so a deploy is
+# verifiable at a glance ("is AWS running the latest?").
+# ============================================================================
+APP_VERSION = "2026.6.4"
+APP_ENGINE = "Atlas V14"
+# Short, human changelog of the most recent patches (newest first).
+APP_CHANGELOG = [
+    "2026.6.4 — Atlas declaration-rescue for bundled release-order PDFs",
+    "2026.6.3 — Freight / Insurance / Adjustment (CIF build-up) + tighter CIF gate",
+    "2026.6.2 — V14-x engine naming (V14 / V14-1 Swift / V14-2 Vision)",
+    "2026.6.1 — Claude UI redesign + grouped sidebar + branded login",
+]
+
+# ============================================================================
 # PDF CONFIGURATION
 # ============================================================================
 
