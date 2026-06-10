@@ -907,24 +907,26 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
         _v7_used = bool(out.get("v7_used"))
         _v10_used = bool(out.get("v10_used"))
         _eng_choice = (engine or "auto").lower()
+        # Atlas version scheme: V14 = unified; V14-1 = Swift (typed),
+        # V14-2 = Vision (handwriting). Legacy paths keep their Gen-1 names.
         _ran = []
         if locals().get("_use_presto"):
-            _ran.append("Atlas Swift")
+            _ran.append("V14-1 Swift")
         elif _v7_used:
             _ran.append("Atlas Classic")
         if locals().get("_use_scribe"):
-            _ran.append("Atlas Vision")
+            _ran.append("V14-2 Vision")
         elif _v10_used:
             _ran.append("Atlas Heritage")
         _ran_str = (" (" + " + ".join(_ran) + ")") if _ran else ""
         if _eng_choice == "atlas":
-            out["model_used"] = "Atlas Gen 2" + _ran_str
+            out["model_used"] = "Atlas V14" + _ran_str
         elif _eng_choice == "presto":
-            out["model_used"] = "Atlas Swift" + _ran_str
+            out["model_used"] = "Atlas V14-1 Swift" + _ran_str
         elif _eng_choice == "classic":
             out["model_used"] = "Atlas Classic" + _ran_str
         else:
-            out["model_used"] = "Atlas Core" + _ran_str
+            out["model_used"] = "Atlas V14 Core" + _ran_str
 
         # ─── Phase 5: Save merged result to DB ───
         current_stage = "db_save"

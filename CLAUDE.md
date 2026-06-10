@@ -58,16 +58,21 @@ flowchart LR
 
 V7 (legacy sync) is still mounted at `POST /api/extract` for external integrations. V10 PRO standalone at `POST /api/extract-v10-pro` is kept for HW testing. **All UI traffic uses V11.**
 
-## New engines V12–V14 (branch `feature/v13-scribe`, not yet merged to main)
+## New engines V12–V14 (merged to `main`; dev continues on `feature/v13-scribe`)
 
 A new extraction stack — additive, V7/V10/V11 untouched (kept as fallback). Picked per-job via `engine=auto|classic|presto|atlas` on `POST /api/extract-v11`.
 
-**Branding — the "Atlas" family** (display names; code/module names unchanged):
-Atlas Gen 2 = `atlas` flagship · **Atlas Swift** = Presto (typed) · **Atlas Vision** = Scribe (handwriting) · **Atlas Classic** = V7 (legacy typed) · **Atlas Heritage** = V10 (legacy ink) · **Atlas Core** = V11 router · **Atlas Guard** = gates+JUDGE · **Atlas Mend** = self-correct · **Atlas Learn** = learn/. `engine=` IDs stay `auto|classic|presto|atlas`.
+**Version scheme — the "Atlas V14" family** (display names; code/module names unchanged):
+- **Atlas V14** = `atlas` flagship (unified) — the latest.
+  - **V14-1 "Swift"** = Presto (typed sub-engine) — `engine=presto` standalone.
+  - **V14-2 "Vision"** = Scribe (handwriting sub-engine).
+- **Atlas Classic** = V7 (legacy typed) · **Atlas Heritage** = V10 (legacy ink) — Gen-1, default OFF.
+- Shared layers: **Core** = V11 router · **Guard** = gates+JUDGE · **Mend** = self-correct · **Learn** = learn/.
+- `engine=` IDs stay `auto|classic|presto|atlas`. Run label `model_used` reads e.g. `Atlas V14 (V14-1 Swift + V14-2 Vision)`.
 
-- **V12 "Presto"** (`backend/v11/presto.py`) — typed fast-path. Digital PDF → `fitz.get_text` text layer → ONE schema call (gemini-3-flash, schema in `v11/presto_schema.py`) → declaration + items. ~20s/$0.01, ~4× faster + ~10× cheaper than V7. Reads typed ∪ attachment pages so misrouted item pages are caught.
-- **V13 "Scribe"** (`backend/v13/scribe.py`, `v13/config.py`) — handwriting/scanned (no text layer). High-DPI render → vision vote across N reads. **Model = gemini-3-flash** (NOT gemini-2.5-pro — a reasoning model that truncates mid-JSON → empty). `SCRIBE_MODELS` rotates flash + claude-haiku for cross-model agreement. Verifier-lite re-reads item pages on a sum gap. ~15–75s/$0.01–0.02.
-- **V14 "Atlas"** — an engine MODE in `workflow.py` (`engine="atlas"`): typed→Presto AND handwritten→Scribe (`_call_scribe`) + all gates/judge/learn. `atlas.py` facade is a future refactor.
+- **V14-1 "Swift" / Presto** (`backend/v11/presto.py`) — typed fast-path. Digital PDF → `fitz.get_text` text layer → ONE schema call (gemini-3-flash, schema in `v11/presto_schema.py`) → declaration + items. ~20s/$0.01, ~4× faster + ~10× cheaper than V7. Reads typed ∪ attachment pages so misrouted item pages are caught.
+- **V14-2 "Vision" / Scribe** (`backend/v13/scribe.py`, `v13/config.py`) — handwriting/scanned (no text layer). High-DPI render → vision vote across N reads. **Model = gemini-3-flash** (NOT gemini-2.5-pro — a reasoning model that truncates mid-JSON → empty). `SCRIBE_MODELS` rotates flash + claude-haiku for cross-model agreement. Verifier-lite re-reads item pages on a sum gap. ~15–75s/$0.01–0.02.
+- **Atlas V14** — an engine MODE in `workflow.py` (`engine="atlas"`): typed→V14-1 Swift AND handwritten→V14-2 Vision (`_call_scribe`) + all gates/judge/learn. `atlas.py` facade is a future refactor.
 
 **Math gates** (`v11/tools/reconcile.py`, verdict): item-sum (Σ==total), CIF (invoice×rate≈total → catches wrong rate), duty (advisory), per-row (value≈qty×price×rate → `bad_rows`). **Self-correct** (`v11/tools/self_correct.py`): gate fail → re-read only the broken header field (+ few-shot) before any slow fallback. **JUDGE** (`v11/tools/judge.py`): confidence 0..1 → `auto_ok` vs review (`JUDGE_AUTO_THRESHOLD` 0.8). **LEARNER** (`v11/learn/`): priors (importer norms), fewshot (past corrections), weakspots, critic — read-only, advisory, human-approved, inert until data accrues.
 
