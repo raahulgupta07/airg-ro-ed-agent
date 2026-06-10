@@ -22,20 +22,42 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 _DEV_FALLBACK = "ro-ed-dev-secret-change-in-production"
-SECRET_KEY = os.getenv("JWT_SECRET_KEY") or ""
-if not SECRET_KEY:
-    if os.getenv("DEV_MODE", "").lower() in ("1", "true", "yes"):
-        import warnings
-        warnings.warn("JWT_SECRET_KEY missing — using dev fallback. Set in .env for production.")
-        SECRET_KEY = _DEV_FALLBACK
-    else:
+
+
+def _resolve_secret() -> str:
+    """JWT signing secret resolution, in priority order:
+      1. JWT_SECRET_KEY env var (explicit — preferred for prod / key rotation).
+      2. Auto-generated + DB-persisted key (secure-by-default, shared across all
+         app/worker processes and restarts). No manual setup needed.
+      3. Insecure dev fallback — only if DEV_MODE is set and the DB is unreachable.
+    """
+    env = os.getenv("JWT_SECRET_KEY") or ""
+    if env:
+        if len(env) < 32:
+            raise RuntimeError(f"JWT_SECRET_KEY too short ({len(env)} chars). Use ≥32.")
+        return env
+    # No env var — auto-generate + persist (so it survives restarts and is shared
+    # by every uvicorn worker + RQ worker container).
+    try:
+        import database
+        secret = database.get_or_create_jwt_secret()
+        if secret and len(secret) >= 32:
+            logger.info("JWT_SECRET_KEY auto-resolved from DB (set the env var to override/rotate).")
+            return secret
+        raise RuntimeError("auto JWT secret too short")
+    except Exception as e:
+        if os.getenv("DEV_MODE", "").lower() in ("1", "true", "yes"):
+            import warnings
+            warnings.warn(f"JWT secret auto-resolve failed ({e}) — using dev fallback. Not for production.")
+            return _DEV_FALLBACK
         raise RuntimeError(
-            "JWT_SECRET_KEY env var is REQUIRED. Generate one with:\n"
-            "  python3 -c 'import secrets; print(secrets.token_urlsafe(64))'\n"
-            "Or set DEV_MODE=1 to allow the insecure dev fallback."
+            f"Could not resolve a JWT signing secret ({e}). Set JWT_SECRET_KEY "
+            "(python3 -c 'import secrets; print(secrets.token_urlsafe(64))') "
+            "or ensure the database is reachable, or set DEV_MODE=1 for the insecure fallback."
         )
-if SECRET_KEY != _DEV_FALLBACK and len(SECRET_KEY) < 32:
-    raise RuntimeError(f"JWT_SECRET_KEY too short ({len(SECRET_KEY)} chars). Use ≥32.")
+
+
+SECRET_KEY = _resolve_secret()
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 REFRESH_TOKEN_EXPIRE_DAYS = 7
