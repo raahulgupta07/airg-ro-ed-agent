@@ -2,7 +2,9 @@
 
 ## What this project is
 
-**RO-ED AI Agent** is a Myanmar-customs PDF extraction platform. It classifies each page of a customs declaration and routes it to the right specialist (typed pages → **Veritas** / V7, handwritten pages → **Scrivener** / V10 PRO), merges results, and presents them in a side-by-side review UI for human approval. The active production pipeline is **V11 Maestro** — queue-driven (Redis + RQ), Postgres-backed, with live SSE router events. Built by City AI Team — City Holdings Myanmar. Designed for ~10 concurrent users.
+**City Agent : PG Release Order** (product name as of v2026.6.14; the repo dir is still `RO-ED-Lang` and internal keys/modules keep their `ro_ed`/`v11` names) is a Myanmar-customs PDF extraction platform. It classifies each page of a customs declaration and routes it to the right specialist (typed pages → **Atlas Swift** / V14-1, handwritten pages → **Atlas Vision** / V14-2; legacy V7 "Veritas" + V10 PRO "Scrivener" kept as fallback), merges results, and presents them in a side-by-side review UI for human approval. The active production pipeline is **Atlas V14** (formerly V11 Maestro) — queue-driven (Redis + RQ), Postgres-backed, with live SSE router events. Built by City AI Team — City Holdings Myanmar. Designed for ~10 concurrent users.
+
+**Usage + audit:** admin **Settings → Usage** (`GET /api/usage/overview`) shows spend / requests / token-volume KPIs, per-user + per-model breakdowns, date-ranged. Login/logout/all runs/actions are captured in `activity_logs` (via `event_logger`) and shown in **Settings → Activity Log** (`/api/activity/*`, admin).
 
 ## Tech stack
 
