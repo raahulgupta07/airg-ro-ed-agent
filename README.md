@@ -316,9 +316,13 @@ Atlas V14 is the flagship; its two sub-engines are versioned **V14-1** (typed) a
 | **ATLAS CLASSIC** (V7) | Gen 1 | typed (legacy) | vision ensemble | ~85s / $0.16 |
 
 **Self-checking, self-correcting, self-learning:**
-- **Math gates** — item-sum, CIF (invoice×rate≈total), duty, and per-row
-  (value≈qty×price×rate) closures. A field is auto-trusted only if the math
+- **Math gates** — item-sum, CIF ((invoice + **freight + insurance + adjustment**)
+  ×rate ≈ total; tolerance tightens to 4% when the build-up is supplied), duty, and
+  per-row (value≈qty×price×rate) closures. A field is auto-trusted only if the math
   closes **and** two independent models agree.
+- **Declaration rescue** — bundled release-order PDFs sometimes hide the real
+  declaration among attachments; a deterministic text-marker pass re-routes it, and
+  a full-PDF Veritas backstop guarantees the header is never left empty.
 - **Self-correct** — a gate failure re-reads only the broken field (not a slow
   full redo), with few-shot hints from past corrections.
 - **JUDGE** — a confidence score routes each doc to auto-approve or human review.
@@ -612,9 +616,19 @@ Integrations enabled when DSN set: FastAPI, Starlette, AsyncIO, Redis, SQLAlchem
 
 ### Health checks
 
-- `GET /api/health` → `200 {"status":"ok"}`
+- `GET /api/health` → `200 {"status":"ok", "version": "...", "engine": "Atlas V14", "changelog": [...]}`
 - Docker healthchecks on `postgres` (`pg_isready`), `redis` (`redis-cli ping`), `app` (`curl /api/health`), `nginx` (`wget /health`).
 - Use `docker compose ps` to see status at a glance.
+
+### Version / verifying a deploy
+
+The running version is the single source of truth in `backend/config.py` (`APP_VERSION`, CalVer `year.month.patch`). It shows in the **UI footer** (`Atlas V14 · vX`, hover for the changelog) and in `GET /api/health`. After updating on a server, confirm the deploy took:
+
+```bash
+curl -s http://localhost:9000/api/health | grep -o '"version":"[^"]*"'   # or :9443 via nginx
+```
+
+If it still shows the old number, the image wasn't rebuilt — see **Updating an existing deployment**. Bump `APP_VERSION` whenever you ship a change.
 
 ### Logs
 

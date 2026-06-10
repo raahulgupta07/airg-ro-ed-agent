@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+
   let {
     pipelineStatus = 'IDLE',
     model = 'GEMINI-3.1-FLASH-LITE',
@@ -8,6 +10,21 @@
 
   const statusLabel = $derived(pipelineStatus.toString().toLowerCase());
   const modelLabel  = $derived(model.toString().toLowerCase());
+
+  // App version/patch — fetched from the running backend so the UI always
+  // reflects what is actually deployed (handy for verifying an AWS update).
+  let appVersion = $state('');
+  let appEngine = $state('');
+  let changelog = $state<string[]>([]);
+  onMount(async () => {
+    try {
+      const r = await fetch('/api/health');
+      const j = JSON.parse(await r.text());
+      appVersion = j.version || '';
+      appEngine = j.engine || '';
+      changelog = Array.isArray(j.changelog) ? j.changelog : [];
+    } catch {}
+  });
 </script>
 
 <footer class="fixed bottom-0 left-[236px] right-0 h-10 z-40 flex items-center px-6 gap-5 text-xs"
@@ -46,6 +63,14 @@
 
   <!-- Spacer -->
   <div class="flex-1"></div>
+
+  <!-- Version / patch (what's actually deployed) -->
+  {#if appVersion}
+    <div class="font-mono" title={changelog.join('\n')} style="color: var(--on-surface);">
+      {appEngine} · v{appVersion}
+    </div>
+    <span style="color: var(--outline-variant);">·</span>
+  {/if}
 
   <!-- Live feed -->
   <div class="flex items-center gap-1.5">

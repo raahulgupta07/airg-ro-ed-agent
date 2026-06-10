@@ -78,6 +78,10 @@ A new extraction stack — additive, V7/V10/V11 untouched (kept as fallback). Pi
 
 **Engine availability** — `GET/PUT /api/settings/engines` (admin). Default unset = **only `atlas` enabled** (legacy off). Agent page renders only enabled engines; Settings → ENGINES tab toggles them. `model_used` reflects the real engine (e.g. "ATLAS V14 (Presto + Scribe)").
 
+**Declaration rescue** (`v11/agents/page_classifier.py` + `workflow.py` Phase 4.3) — in a bundled release-order PDF the classifier can mis-tag the real customs-declaration pages ATTACHMENT ("blank/continuation"), leaving Atlas with an empty result. Two backstops: (1) `_marker_rescue` flips an ATTACHMENT page back to TYPED when its text layer holds ≥2 declaration markers (customs value/duty, assessment, MACCS, CUSDEC, CIF…) — deterministic, no API; classifier thumbnails also raised to 110 DPI; (2) if the merged declaration is still empty, re-run Veritas on the full PDF and adopt its header+items.
+
+**App version** — single source `config.APP_VERSION` (CalVer `year.month.patch`) + `APP_ENGINE` + `APP_CHANGELOG`, surfaced in `GET /api/health` and the UI footer (`Atlas V14 · vX`). Bump `APP_VERSION` on each shipped change so a deploy is verifiable at a glance.
+
 **Env knobs:** `PRESTO_ENABLED`, `SCRIBE_MODEL`/`SCRIBE_MODELS`/`SCRIBE_VOTES`, `JUDGE_AUTO_THRESHOLD`, `RECONCILE_{,CIF_,DUTY_,ROW_}TOLERANCE_PCT`.
 
 **Don't** point Scribe at a reasoning model (gemini-2.5-pro/o-series) — it truncates JSON. **Don't** assume the new engines are on main/prod — they're on `feature/v13-scribe`.

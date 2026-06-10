@@ -517,6 +517,7 @@ def _split_event(event):
 async def health_check():
     """Health check with system stats."""
     import os
+    import config
     stats = database.get_stats()
 
     # DB size
@@ -525,7 +526,9 @@ async def health_check():
 
     return {
         "status": "ok",
-        "version": "3.0.0",
+        "version": config.APP_VERSION,
+        "engine": config.APP_ENGINE,
+        "changelog": config.APP_CHANGELOG,
         "pipeline": "LLM Assembler + Verifier",
         "database": {
             "total_jobs": stats["total_jobs"],
