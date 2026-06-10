@@ -95,6 +95,11 @@ def verify_token(token: str) -> Optional[TokenData]:
     """Verify and decode a local HS256 JWT token. Returns TokenData or None."""
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        # Refresh tokens must never authenticate a request — only access tokens.
+        # (Tokens without a type predate this field; treat them as access for
+        # backward compat, but reject anything explicitly non-access.)
+        if payload.get("type", "access") != "access":
+            return None
         user_id = payload.get("user_id")
         username = payload.get("username")
         role = payload.get("role")

@@ -124,10 +124,21 @@ if _SENTRY_DSN:
         print(f"[sentry] init failed: {e}")
 
 
+# Interactive API docs leak the full surface — expose only when explicitly
+# allowed (dev, or ENABLE_DOCS=1). Off by default for production.
+import os as _os_docs
+import config as _config
+_DOCS_ON = (
+    _os_docs.getenv("DEV_MODE", "").lower() in ("1", "true", "yes")
+    or _os_docs.getenv("ENABLE_DOCS", "").lower() in ("1", "true", "yes")
+)
 app = FastAPI(
     title="RO-ED AI Agent",
-    version="3.0.0",
+    version=_config.APP_VERSION,
     lifespan=lifespan,
+    docs_url="/docs" if _DOCS_ON else None,
+    redoc_url="/redoc" if _DOCS_ON else None,
+    openapi_url="/openapi.json" if _DOCS_ON else None,
 )
 
 # ── Rate limiting (slowapi + Redis storage) ──
