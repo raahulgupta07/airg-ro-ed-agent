@@ -1860,6 +1860,43 @@ def set_setting(key: str, value: str, updated_by: str = "system"):
     conn.close()
 
 
+def get_or_create_jwt_secret() -> str:
+    """Return a stable JWT signing secret, generating + persisting one on first
+    use. Stored in the `settings` table so every app/worker process and every
+    restart shares the SAME key (a per-process random key would make a token
+    signed by one worker fail verification on another). Atomic: concurrent boots
+    converge on the first-written value via INSERT … ON CONFLICT DO NOTHING.
+
+    Callers should prefer an explicit JWT_SECRET_KEY env var; this is the
+    fallback so a fresh deploy is secure-by-default without manual key wrangling.
+    """
+    import secrets as _secrets
+    conn = _connect()
+    cursor = conn.cursor()
+    # Make sure the settings table exists even if init_database hasn't run yet
+    # (auth resolves the secret at import time).
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_by TEXT
+        )
+    """)
+    candidate = _secrets.token_urlsafe(64)
+    # Insert only if absent; whoever wins keeps their value, losers no-op.
+    cursor.execute("""
+        INSERT INTO settings (key, value, updated_at, updated_by)
+        VALUES ('jwt_secret_key', ?, CURRENT_TIMESTAMP, 'auto-generated')
+        ON CONFLICT(key) DO NOTHING
+    """, (candidate,))
+    conn.commit()
+    cursor.execute("SELECT value FROM settings WHERE key = 'jwt_secret_key'")
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else candidate
+
+
 def get_settings_by_prefix(prefix: str) -> Dict:
     """Get all settings matching a prefix as a dict."""
     conn = _connect()

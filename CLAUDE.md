@@ -120,7 +120,7 @@ Every cell change writes a row in `field_edits` (job_id, field_path, old, new, u
 
 ## Auth
 
-- **Local** — bcrypt password hash, HS256 JWT. `JWT_SECRET_KEY` ≥ 32 chars enforced unless `DEV_MODE=1`.
+- **Local** — bcrypt password hash, HS256 JWT. Signing secret resolved by `auth._resolve_secret()`: `JWT_SECRET_KEY` env (≥32 chars, preferred for prod/rotation) → else **auto-generated + persisted** in the `settings` table (`database.get_or_create_jwt_secret`, atomic `ON CONFLICT`, shared by every app/worker process + restart) → else dev fallback only if `DEV_MODE=1` and DB unreachable. So a fresh deploy is secure-by-default without setting the env var.
 - **LDAP** — multi-config cascade in `backend/ldap_auth.py`. Configs in `ldap_configs` table (Fernet-encrypted bind passwords via `ldap_crypto.py`). On successful bind: user upserted with `auth_source=ldap`, `default_ldap_id=N` for next-time fast path.
 - **Keycloak** — OIDC RS256 + PKCE. Config from `KEYCLOAK_*` env vars *or* the Settings UI (`settings` table). `/api/auth/config` exposes discovery to frontend. `/api/auth/token` exchanges code; `/api/auth/refresh` refreshes.
 - **Force-change-password** — flag set on first admin boot when password was randomly generated. Frontend redirects to `/change-password` until cleared.
