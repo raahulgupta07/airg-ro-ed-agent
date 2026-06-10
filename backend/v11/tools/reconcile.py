@@ -237,10 +237,19 @@ def reconcile(declaration: Dict, items: List[Dict]) -> Dict:
 
     gap = round(declared - isum, 2)
     gap_pct = round(abs(gap) / declared * 100, 2)
+    # Tax-completeness: a MACCS declaration with a customs total but NO tax/fee
+    # fields at all (CD/CT/AT/SF/MF) is an extraction miss, not a clean doc —
+    # flag it and refuse "balanced" so value-balance alone cannot mask it.
+    _tax_keys = ("import_export_customs_duty", "commercial_tax_ct",
+                 "advance_income_tax_at", "security_fee_sf", "maccs_service_fee_mf")
+    _taxes_present = any(_to_float(declaration.get(k)) is not None for k in _tax_keys)
+    taxes_missing = bool(declared) and declared > 0 and not _taxes_present
     return {
         "checked": True,
-        # Balanced requires BOTH the item-sum closure and the CIF closure.
-        "balanced": (gap_pct <= tol) and cif["cif_ok"],
+        # Balanced requires the item-sum closure, the CIF closure, AND that the
+        # tax block was actually captured.
+        "balanced": (gap_pct <= tol) and cif["cif_ok"] and not taxes_missing,
+        "taxes_missing": taxes_missing,
         "declared_total": declared,
         "items_sum": isum,
         "gap_value": gap,
