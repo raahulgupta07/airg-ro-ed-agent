@@ -147,6 +147,9 @@ class DeclarationResponse(BaseModel):
     currency: Optional[str] = None
     exchange_rate: Optional[float] = None
     currency_2: Optional[str] = None
+    freight_value: Optional[float] = None
+    insurance_value: Optional[float] = None
+    adjustment_value: Optional[float] = None
     total_customs_value: Optional[float] = None
     import_export_customs_duty: Optional[float] = None
     commercial_tax_ct: Optional[float] = None

@@ -27,17 +27,22 @@ from v11.tools import reconcile as _rc
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # Fields the CIF closure pins. Re-read just these.
-_HEADER_FIELDS = ["exchange_rate", "invoice_price", "total_customs_value", "customs_duty"]
+_HEADER_FIELDS = ["exchange_rate", "invoice_price", "freight_value",
+                  "insurance_value", "adjustment_value", "total_customs_value",
+                  "customs_duty"]
 
 _PROMPT = """Read ONLY these values from this Myanmar customs declaration header
 and return strict JSON (numbers only, strip separators):
 {"exchange_rate": <invoice-currency→MMK rate, e.g. 57.3984>,
  "invoice_price": <total invoice price in invoice currency>,
+ "freight_value": <freight in invoice currency, 0 if none>,
+ "insurance_value": <insurance in invoice currency, 0 if none>,
+ "adjustment_value": <other additions/deductions in invoice currency, signed, 0 if none>,
  "total_customs_value": <total customs value in MMK>,
  "customs_duty": <total customs duty in MMK>}
-Note: invoice_price × exchange_rate should ≈ total_customs_value. The form may
-show several rates (e.g. a THB rate ~57 and a USD rate ~2100) — pick the one that
-makes that equation hold. Return ONLY the JSON object."""
+Note: (invoice_price + freight_value + insurance_value + adjustment_value) × exchange_rate
+should ≈ total_customs_value. The form may show several rates (e.g. a THB rate ~57 and a
+USD rate ~2100) — pick the one that makes that equation hold. Return ONLY the JSON object."""
 
 
 def _render_page(pdf_path: str, page_no: int, dpi: int = 400) -> Optional[str]:

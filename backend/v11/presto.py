@@ -39,7 +39,8 @@ shape (omit nothing you can find; use null when truly absent):
   "declaration": {
     "declaration_no","declaration_date","importer_name","consignor_name",
     "invoice_number","invoice_number_customs","invoice_number_commercial",
-    "currency","currency_2","exchange_rate","invoice_price","total_customs_value",
+    "currency","currency_2","exchange_rate","invoice_price",
+    "freight_value","insurance_value","adjustment_value","total_customs_value",
     "customs_duty","commercial_tax","advance_income_tax","security_fee",
     "maccs_service_fee","exemption"
   },
@@ -76,11 +77,20 @@ Per-field guidance (read carefully — these columns are easy to confuse):
   typically like "AM-PD-012/2024". NOT a Bill of Lading / container / BoL number
   (e.g. TCLBIL...). If only one invoice number is shown, use it for both.
 - currency: the invoice currency code (e.g. THB); currency_2 the secondary (e.g. USD).
+- freight_value: the freight / shipping cost, in the INVOICE currency (NOT MMK).
+  Labelled Freight / FRT / Carriage. 0 if the terms are CIF/CIP (already included)
+  or none is shown.
+- insurance_value: the insurance cost, in the INVOICE currency (NOT MMK). Labelled
+  Insurance / INS. 0 if none shown.
+- adjustment_value: any other additions or deductions to the customs value, in the
+  INVOICE currency (NOT MMK) — e.g. other charges, discounts. SIGNED: negative for a
+  deduction. 0 if none shown.
 - exchange_rate: the rate converting the INVOICE currency (`currency`) to MMK.
   The form may print SEVERAL rates (e.g. a THB rate ~57 and a USD rate ~2100) —
-  pick the one for `currency`. Self-check: invoice_price × exchange_rate must be
-  approximately total_customs_value. If your chosen rate fails this badly, you
-  picked the wrong rate.
+  pick the one for `currency`. Self-check: the CIF build-up
+  (invoice_price + freight_value + insurance_value + adjustment_value) × exchange_rate
+  must be approximately total_customs_value. If it fails badly, you picked the wrong
+  rate or mis-read a value.
 
 Return ONLY the JSON object.
 

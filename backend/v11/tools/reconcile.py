@@ -59,28 +59,47 @@ def items_value_sum(items: List[Dict]) -> float:
 
 
 def cif_tolerance_pct() -> float:
-    """Allowed |invoice_price×rate − total| as percent. Generous (default 15) so
-    genuine freight/insurance differences don't flag, but a wrong exchange rate
-    (off by ~36× on a THB-vs-USD mixup) trips it loudly."""
+    """Allowed |(invoice build-up)×rate − total| as percent when freight/insurance/
+    adjustment are NOT given (default 15) so genuine CIF additions don't flag, but a
+    wrong exchange rate (off by ~36× on a THB-vs-USD mixup) trips it loudly."""
     try:
         return float(os.environ.get("RECONCILE_CIF_TOLERANCE_PCT", "15.0"))
     except Exception:
         return 15.0
 
 
+def cif_tight_tolerance_pct() -> float:
+    """Tighter tolerance used when freight/insurance/adjustment ARE present — the
+    CIF build-up is now fully explained, so a small (default 4%) gap is all we allow."""
+    try:
+        return float(os.environ.get("RECONCILE_CIF_TIGHT_TOLERANCE_PCT", "4.0"))
+    except Exception:
+        return 4.0
+
+
 def _cif_closure(decl: Dict, declared) -> Dict:
-    """Secondary invariant: invoice_price × exchange_rate ≈ total_customs_value.
+    """Secondary invariant: CIF build-up × exchange_rate ≈ total_customs_value, where
+        CIF build-up = invoice_price + freight + insurance + adjustment   (invoice currency)
 
     Catches a wrong exchange_rate, which the item-sum check cannot see (the rate
-    isn't in that math). Returns {cif_checked, cif_ok, cif_gap_pct}.
+    isn't in that math). When freight/insurance/adjustment are supplied the build-up
+    is complete, so the tolerance tightens. Returns
+    {cif_checked, cif_ok, cif_gap_pct, cif_basis, cif_tol_pct}.
     """
     inv = _to_float(decl.get("invoice_price") or decl.get("Invoice Price"))
     rate = _to_float(decl.get("exchange_rate") or decl.get("Exchange Rate"))
     if not (inv and rate and declared and declared > 0):
-        return {"cif_checked": False, "cif_ok": True, "cif_gap_pct": 0.0}
-    gap_pct = round(abs(inv * rate - declared) / declared * 100, 2)
-    return {"cif_checked": True, "cif_ok": gap_pct <= cif_tolerance_pct(),
-            "cif_gap_pct": gap_pct}
+        return {"cif_checked": False, "cif_ok": True, "cif_gap_pct": 0.0,
+                "cif_basis": None, "cif_tol_pct": 0.0}
+    frt = _to_float(decl.get("freight_value") or decl.get("Freight"))
+    ins = _to_float(decl.get("insurance_value") or decl.get("Insurance"))
+    adj = _to_float(decl.get("adjustment_value") or decl.get("Adjustment"))
+    has_buildup = any(v is not None for v in (frt, ins, adj))
+    basis = inv + (frt or 0.0) + (ins or 0.0) + (adj or 0.0)
+    tol = cif_tight_tolerance_pct() if has_buildup else cif_tolerance_pct()
+    gap_pct = round(abs(basis * rate - declared) / declared * 100, 2)
+    return {"cif_checked": True, "cif_ok": gap_pct <= tol,
+            "cif_gap_pct": gap_pct, "cif_basis": round(basis, 2), "cif_tol_pct": tol}
 
 
 def duty_tolerance_pct() -> float:

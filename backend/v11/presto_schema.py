@@ -42,6 +42,9 @@ class PrestoDeclaration(BaseModel):
     currency_2: Optional[str] = None
     exchange_rate: Optional[float] = None
     invoice_price: Optional[float] = None
+    freight_value: Optional[float] = None             # CIF build-up, invoice currency
+    insurance_value: Optional[float] = None           # CIF build-up, invoice currency
+    adjustment_value: Optional[float] = None          # other additions/deductions (signed)
     total_customs_value: Optional[float] = None       # reconcile anchor
     customs_duty: Optional[float] = None
     commercial_tax: Optional[float] = None
