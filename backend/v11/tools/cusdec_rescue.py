@@ -33,10 +33,13 @@ _TAXES = [
 ]
 
 # Fields the CUSDEC is authoritative for (override licence-derived values).
+# freight/insurance/adjustment are only set when the CUSDEC carries a real number
+# (a "-" dash → None → left as-is, so a genuine value is never erased to blank).
 _PREFER = (
     "import_export_customs_duty", "commercial_tax_ct", "advance_income_tax_at",
     "security_fee_sf", "maccs_service_fee_mf", "total_customs_value",
     "exchange_rate", "declaration_no",
+    "freight_value", "insurance_value", "adjustment_value",
 )
 
 
@@ -50,6 +53,20 @@ def _num(s):
 def _is_cusdec(text: str) -> bool:
     tl = text.lower()
     return sum(m in tl for m in _MARKERS) >= 2
+
+
+def _adj_num(lines, label):
+    """Numeric value adjacent (prev or next line) to an exact-match label.
+    Returns None when neither neighbour is numeric (e.g. a '-' dash)."""
+    for i, l in enumerate(lines):
+        if l == label:
+            for cand in ((lines[i - 1] if i > 0 else None),
+                         (lines[i + 1] if i + 1 < len(lines) else None)):
+                v = _num(cand)
+                if v is not None:
+                    return v
+            return None
+    return None
 
 
 def _parse(text: str) -> dict:
@@ -78,6 +95,12 @@ def _parse(text: str) -> dict:
     # MACCS declaration number: 12 consecutive digits.
     dm = re.search(r"\b(\d{12})\b", text)
     out["declaration_no"] = dm.group(1) if dm else None
+    # CIF build-up fields — captured only when the CUSDEC carries a real number
+    # ("-" dash stays None). Adjustment "0" is an explicit zero (shown as 0, not —).
+    lines = [x.strip() for x in text.split("\n")]
+    out["freight_value"] = _adj_num(lines, "Freight")
+    out["insurance_value"] = _adj_num(lines, "Insurance")
+    out["adjustment_value"] = _adj_num(lines, "Adjustment")
     return out
 
 
