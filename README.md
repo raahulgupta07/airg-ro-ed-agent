@@ -299,18 +299,21 @@ Some of these are already wired by the documented prod setup (see [Production de
 
 ---
 
-## Extraction engines (V12–V14) — branch `feature/v13-scribe`
+## Extraction engines — Atlas V14 family
 
 A new, faster, self-checking extraction stack. Additive — the legacy V7/V10/V11
 engines are kept as a fallback. Users pick an engine per upload (or the admin
-restricts the choice); **the default is ATLAS only**.
+restricts the choice); **the default is ATLAS V14 only**.
 
-| Engine | Handles | How | Speed / cost |
-|---|---|---|---|
-| **ATLAS** (V14) | everything | typed→Presto + handwritten→Scribe + all gates | mixed |
-| **PRESTO** (V12) | typed (digital) | PDF text layer → 1 schema call | ~20s / $0.01 |
-| **SCRIBE** (V13) | handwriting / scans | high-DPI → 2-model vote + verifier | ~15–75s / $0.01–0.02 |
-| **CLASSIC** (V7) | typed (legacy) | vision ensemble | ~85s / $0.16 |
+Atlas V14 is the flagship; its two sub-engines are versioned **V14-1** (typed) and
+**V14-2** (handwriting). `engine=` ids stay `auto|classic|presto|atlas`.
+
+| Engine | Version | Handles | How | Speed / cost |
+|---|---|---|---|---|
+| **ATLAS V14** | V14 | everything | typed→V14-1 Swift + handwritten→V14-2 Vision + all gates | mixed |
+| **ATLAS V14-1 SWIFT** (Presto) | V14-1 | typed (digital) | PDF text layer → 1 schema call | ~20s / $0.01 |
+| **V14-2 VISION** (Scribe) | V14-2 | handwriting / scans | high-DPI → 2-model vote + verifier | ~15–75s / $0.01–0.02 |
+| **ATLAS CLASSIC** (V7) | Gen 1 | typed (legacy) | vision ensemble | ~85s / $0.16 |
 
 **Self-checking, self-correcting, self-learning:**
 - **Math gates** — item-sum, CIF (invoice×rate≈total), duty, and per-row

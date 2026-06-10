@@ -105,7 +105,7 @@
         </p>
         <div class="login-status">
           <span class="w-2 h-2 rounded-full" style="background: var(--success);"></span>
-          Atlas Gen 2 · Maestro router · queue-driven
+          Atlas V14 · Maestro router · queue-driven
         </div>
 
         <!-- Form card -->
