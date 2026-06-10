@@ -630,6 +630,14 @@ curl -s http://localhost:9000/api/health | grep -o '"version":"[^"]*"'   # or :9
 
 If it still shows the old number, the image wasn't rebuilt — see **Updating an existing deployment**. Bump `APP_VERSION` whenever you ship a change.
 
+**v2026.6.15** — new admin **Settings → Usage** dashboard: spend / requests / token-volume KPIs, per-user breakdown, spend-by-model chart + table, date range (week/month/3mo/all), backed by `GET /api/usage/overview` (admin). The audit log (login/logout/all runs/actions) already lives in **Settings → Activity Log**.
+
+**v2026.6.14** — project renamed to **City Agent : PG Release Order** (browser title + CityAgent favicon + in-app labels + API title). Internal storage/pipeline keys unchanged.
+
+**v2026.6.10–6.13** — CUSDEC rescue for bundled release-order PDFs: deterministic MACCS text-layer parse fills the tax block (CD/CT/AT/SF/MF), real total / exchange-rate / declaration-no, the consolidated item line (when the LLM's items don't reconcile), derived `invoice_price` (Σ qty×unit) for the CIF closure, and freight/insurance/adjustment. Plus a reconcile **tax-completeness gate** (a total with no taxes can't read "balanced").
+
+**v2026.6.6–6.9** — JWT signing secret auto-generated + DB-persisted when `JWT_SECRET_KEY` is unset (secure-by-default); prod hardening (`verify_token` rejects non-access tokens, `/docs` gated off, `DEV_MODE` off); Atlas live-log rebrand (Maestro/Veritas/Scrivener → Atlas Router / Swift / Vision) + mid-stage "extracting…" heartbeat.
+
 **v2026.6.5** — performance + UX hardening. Backend: index pass (alembic `0004_perf_indexes`), review-queue rewritten to one `LATERAL` join, bulk approve/reject as a single `UPDATE … ANY() RETURNING`, cost stats aggregated in SQL, N+1 removed from the items/declarations list + Excel exports. Frontend: ECharts modular import (lazy ~600 KB off the main bundle), debounced field search, stats polling paused while the tab is hidden. Review UI: theme-token colors (no raw hex), error toasts on every failure, unsaved-edit `beforeunload` guard, PDF-fallback banner, Tab-to-next-cell, delete-row Undo, branded approve modal, and an off-canvas mobile sidebar.
 
 ### Logs
