@@ -549,9 +549,9 @@
       <div class="flex items-start gap-3 flex-wrap">
         <span class="material-symbols-outlined" style="color: var(--primary); font-size: 22px;">auto_awesome</span>
         <div class="flex-1 min-w-[200px]">
-          <div class="font-serif text-base" style="color: var(--on-surface); font-weight: 500;">Maestro Router <span style="color: var(--on-surface-muted); font-weight: 400;">· auto</span></div>
+          <div class="font-serif text-base" style="color: var(--on-surface); font-weight: 500;">Atlas Router <span style="color: var(--on-surface-muted); font-weight: 400;">· auto</span></div>
           <div class="text-sm mt-1" style="color: var(--on-surface-muted); line-height: 1.5;">
-            Auto-classifies each page → PRINTED runs Veritas, INKED runs Scrivener, EXTRA attachments skipped. Best for any doc — printed, inked, or mixed.
+            Auto-classifies each page → PRINTED runs Atlas Swift, INKED runs Atlas Vision, EXTRA attachments skipped. Best for any doc — printed, inked, or mixed.
           </div>
         </div>
         <div class="flex gap-4 text-xs" style="color: var(--on-surface-muted);">
@@ -635,8 +635,8 @@
       <div class="mb-3 px-3 py-2 flex items-center gap-2"
            style="background: var(--primary-tint); border: 1px solid var(--line); border-radius: var(--radius-md);">
         <span class="material-symbols-outlined text-sm" style="color: var(--primary);">auto_awesome</span>
-        <span class="text-xs font-medium" style="color: var(--on-surface);">Maestro Router</span>
-        <span class="text-[11px] flex-1" style="color: var(--on-surface-muted);">auto · PRINTED→Veritas · INKED→Scrivener</span>
+        <span class="text-xs font-medium" style="color: var(--on-surface);">Atlas Router</span>
+        <span class="text-[11px] flex-1" style="color: var(--on-surface-muted);">auto · PRINTED→Atlas Swift · INKED→Atlas Vision</span>
         <span class="text-[11px]" style="color: var(--on-surface-muted);">$0.08–0.40</span>
       </div>
       <!-- V12 engine selector: typed-page extraction engine -->

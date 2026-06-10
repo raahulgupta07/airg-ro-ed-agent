@@ -17,7 +17,7 @@ export const PIPELINES: Record<PipelineKey, PipelineConfig> = {
     key: 'v11',
     name: 'Smart Router',
     endpoint: '/api/extract-v11',
-    description: 'Auto-classifies each page → routes typed→Veritas, handwritten→Scrivener, drops attachments. Best for mixed bundles.',
+    description: 'Auto-classifies each page → routes typed→Atlas Swift, handwritten→Atlas Vision, drops attachments. Best for mixed bundles.',
     estCost: '$0.08–0.40',
     estTime: '60–150s',
     isDefault: true,
