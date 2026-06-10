@@ -19,10 +19,11 @@ BASE_DIR = Path(__file__).parent
 # CalVer year.month.patch; bump patch on each shipped change so a deploy is
 # verifiable at a glance ("is AWS running the latest?").
 # ============================================================================
-APP_VERSION = "2026.6.7"
+APP_VERSION = "2026.6.8"
 APP_ENGINE = "Atlas V14"
 # Short, human changelog of the most recent patches (newest first).
 APP_CHANGELOG = [
+    "2026.6.8 — Live-log Atlas rebrand (MAESTRO→ATLAS V14, VERITAS→SWIFT, SCRIVENER→VISION) + mid-stage 'extracting…' heartbeat in the agent terminal",
     "2026.6.7 — Prod hardening: verify_token rejects non-access tokens, /docs gated off by default, DEV_MODE off",
     "2026.6.6 — JWT signing secret auto-generated + DB-persisted when JWT_SECRET_KEY unset (secure-by-default deploy)",
     "2026.6.5 — Perf pass (DB indexes, review-queue join, SQL cost rollups, bulk approve) + UX hardening (theme-var review colors, mobile sidebar, error toasts, undo)",

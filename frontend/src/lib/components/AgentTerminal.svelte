@@ -34,11 +34,16 @@
     evidence?: string;
   };
 
-  // ─── Fancy V11 naming (Combo A) ───────────────────────────────────────────
+  // ─── Atlas V14 naming ─────────────────────────────────────────────────────
+  // Orchestrator = ATLAS V14; typed branch = ATLAS SWIFT (V14-1);
+  // handwriting branch = ATLAS VISION (V14-2). Legacy engine keys map here too.
   const PIPELINE_LABEL: Record<string, string> = {
-    V7: 'VERITAS', V10_PRO: 'SCRIVENER', V11: 'MAESTRO',
-    Veritas: 'VERITAS', Scrivener: 'SCRIVENER', Maestro: 'MAESTRO',
-    VERITAS: 'VERITAS', SCRIVENER: 'SCRIVENER', MAESTRO: 'MAESTRO',
+    V7: 'ATLAS SWIFT', V10_PRO: 'ATLAS VISION', V11: 'ATLAS V14',
+    Veritas: 'ATLAS SWIFT', Scrivener: 'ATLAS VISION', Maestro: 'ATLAS V14',
+    VERITAS: 'ATLAS SWIFT', SCRIVENER: 'ATLAS VISION', MAESTRO: 'ATLAS V14',
+    presto: 'ATLAS SWIFT', PRESTO: 'ATLAS SWIFT', Swift: 'ATLAS SWIFT',
+    scribe: 'ATLAS VISION', SCRIBE: 'ATLAS VISION', Vision: 'ATLAS VISION',
+    atlas: 'ATLAS V14', ATLAS: 'ATLAS V14',
   };
   const VERDICT_LABEL: Record<string, string> = {
     typed: 'PRINTED', handwritten: 'INKED', attachment: 'EXTRA',
@@ -62,10 +67,10 @@
   }
   function pipelineColor(p: string): string {
     switch (p) {
-      case 'VERITAS':   return '#93c5fd';
-      case 'SCRIVENER': return '#fdba74';
-      case 'MAESTRO':   return '#c4b5fd';
-      default:          return '#9ca3af';
+      case 'ATLAS SWIFT':  return '#93c5fd';
+      case 'ATLAS VISION': return '#fdba74';
+      case 'ATLAS V14':    return '#c4b5fd';
+      default:             return '#9ca3af';
     }
   }
 
@@ -103,6 +108,24 @@
   let totalCost = $state(0);
   let totalDuration = $state(0);
   let pendingBuffer = $state<SseLine[]>([]);
+
+  // ─── Mid-stage heartbeat ──────────────────────────────────────────────────
+  // Veritas/Scrivener (Swift/Vision) run as one blocking call that emits nothing
+  // between STAGE_START and STAGE_DONE (60–150s). Show a live "extracting…" line
+  // so the terminal doesn't look frozen. Cleared on the stage's terminal event.
+  let activeStage = $state<string | null>(null);
+  let stageStartTs = $state(0);
+  let stageTick = $state(0);  // bumped every second to refresh the elapsed counter
+  const stageElapsed = $derived.by(() => {
+    void stageTick;  // re-evaluate every second
+    if (!activeStage || !stageStartTs) return 0;
+    return Math.max(0, Math.round((Date.now() - stageStartTs) / 1000));
+  });
+  $effect(() => {
+    if (!activeStage) return;
+    const iv = setInterval(() => { stageTick++; }, 1000);
+    return () => clearInterval(iv);
+  });
 
   let es: EventSource | null = null;
 
@@ -142,7 +165,7 @@
           const pages = d.pages ?? d.page_count ?? '?';
           const sizeMb = d.size_mb ?? d.size ?? null;
           const sizeStr = sizeMb !== null && sizeMb !== undefined ? ` size=${fmt(sizeMb, 2)}MB` : '';
-          return `[MAESTRO] start file=${file} pages=${pages}${sizeStr}`;
+          return `[ATLAS V14] start file=${file} pages=${pages}${sizeStr}`;
         }
         case 'CLASSIFY': {
           const p = d.page ?? d.p ?? '?';
@@ -161,7 +184,7 @@
           const vp = d.v10_pro_pages ?? d.v10_pro ?? d.V10_PRO ?? d.v10p ?? d.scrivener ?? [];
           const dropped = d.dropped ?? d.drop ?? d.skip ?? [];
           const a = (arr: any[]) => `[${(arr as any[]).join(',')}] (${(arr as any[]).length})`;
-          return `[ROUTE]  Veritas pages=${a(v7)}  Scrivener pages=${a(vp)}  SKIP=${a(dropped)}`;
+          return `[ROUTE]  Swift pages=${a(v7)}  Vision pages=${a(vp)}  SKIP=${a(dropped)}`;
         }
         case 'STAGE_START': {
           const lbl = pipeLabel(d.label ?? d.pipeline ?? d.stage ?? d.name);
@@ -192,7 +215,7 @@
           const inT = d.tokens_in ?? d.in ?? 0;
           const outT = d.tokens_out ?? d.out ?? 0;
           const tokStr = (inT || outT) ? `  tokens ${fmtTok(inT)}/${fmtTok(outT)}` : '';
-          return `[MAESTRO] DONE  total ${fmt(dur, 1)}s  $${fmt(cost, 3)}${tokStr}`;
+          return `[ATLAS V14] DONE  total ${fmt(dur, 1)}s  $${fmt(cost, 3)}${tokStr}`;
         }
         case 'FAIL':
           return `[FAIL] stage=${pipeLabel(d.label ?? d.pipeline ?? d.stage)} error=${d.error ?? d.message ?? '?'}`;
@@ -270,8 +293,8 @@
     const stageStr = String(d.stage ?? d.name ?? '').toUpperCase();
     const cost = Number(d.cost ?? d.cost_usd ?? 0);
     const dur = Number(d.duration ?? d.duration_s ?? 0);
-    if (lbl === 'SCRIVENER' || stageStr.includes('V10')) costV10P += cost;
-    else if (lbl === 'VERITAS' || stageStr.includes('V7')) costV7 += cost;
+    if (lbl.includes('VISION') || stageStr.includes('V10')) costV10P += cost;
+    else if (lbl.includes('SWIFT') || stageStr.includes('V7')) costV7 += cost;
     totalCost += cost;
     totalDuration += dur;
   }
@@ -296,12 +319,20 @@
         pushLine(ev, payload);
         if (ev === 'CLASSIFY') applyClassify(payload);
         else if (ev === 'ROUTE') applyRoute(payload);
-        else if (ev === 'STAGE_DONE') applyStageDone(payload);
+        else if (ev === 'STAGE_START') {
+          // Open a heartbeat for this stage (cleared by its terminal event).
+          activeStage = pipeLabel(payload?.label ?? payload?.pipeline ?? payload?.stage ?? payload?.name);
+          stageStartTs = Date.now();
+        }
+        else if (ev === 'STAGE_DONE') { applyStageDone(payload); activeStage = null; }
+        else if (ev === 'MERGE') { activeStage = null; }
         else if (ev === 'DONE') {
           applyDone(payload);
+          activeStage = null;
           sseDone = true;
           closeStream();
         } else if (ev === 'FAIL') {
+          activeStage = null;
           sseFailed = true;
           closeStream();
         }
@@ -340,6 +371,8 @@
     sseFailed = false;
     paused = false;
     pendingBuffer = [];
+    activeStage = null;
+    stageStartTs = 0;
 
     const stream = new EventSource(`/api/extract-v11/stream/${jobId}`);
     es = stream;
@@ -384,7 +417,7 @@
   }
 
   function pageTooltip(b: PageBox): string {
-    const routeLabel = b.route === 'V7' ? 'Veritas' : b.route === 'V10P' ? 'Scrivener' : b.route === 'DROP' ? 'SKIP' : '?';
+    const routeLabel = b.route === 'V7' ? 'Swift' : b.route === 'V10P' ? 'Vision' : b.route === 'DROP' ? 'SKIP' : '?';
     const parts: string[] = [`Page ${b.page}`];
     if (b.verdict) parts.push(`verdict=${verdictLabel(b.verdict)}`);
     if (b.confidence !== undefined) {
@@ -438,7 +471,7 @@
         white-space: nowrap;
       "
     >
-      VERITAS ${costV7.toFixed(2)} + SCRIVENER ${costV10P.toFixed(2)} = ${totalCost.toFixed(2)}
+      SWIFT ${costV7.toFixed(2)} + VISION ${costV10P.toFixed(2)} = ${totalCost.toFixed(2)}
     </div>
   </div>
 {/if}
@@ -502,6 +535,12 @@
       {#each sseLines as line}
         <div style="color: {line.color};">{line.text}</div>
       {/each}
+
+      {#if activeStage && !paused && !sseDone && !sseFailed}
+        <div style="color: {pipelineColor(activeStage)};">
+          {spin} [{activeStage}] extracting… {stageElapsed}s elapsed
+        </div>
+      {/if}
 
       {#if sseActive && !paused && sseLines.length === 0}
         <div style="color: #6b7280;">// awaiting JOB_START …</div>

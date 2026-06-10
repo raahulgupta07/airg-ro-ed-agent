@@ -754,7 +754,7 @@
       {filename}
     </span>
     <span class="text-[10px] font-mono" style="color: var(--outline);">
-      {totalPages} pg · ${cost.toFixed(3)} · ITEMS:{itemsCount} · ACC:{accuracy.toFixed(1)}% · DEC:{decision} · TIME:{duration ? duration.toFixed(0) + 's' : '—'} · TOK:{(((job as any)?.tokens_in ?? 0)/1000).toFixed(1)}k/{(((job as any)?.tokens_out ?? 0)/1000).toFixed(1)}k · {(job as any)?.model_used || 'V11 Maestro'} · EDITS:{editCount} · FLAGS:{flagCount}
+      {totalPages} pg · ${cost.toFixed(3)} · ITEMS:{itemsCount} · ACC:{accuracy.toFixed(1)}% · DEC:{decision} · TIME:{duration ? duration.toFixed(0) + 's' : '—'} · TOK:{(((job as any)?.tokens_in ?? 0)/1000).toFixed(1)}k/{(((job as any)?.tokens_out ?? 0)/1000).toFixed(1)}k · {(job as any)?.model_used || 'Atlas V14'} · EDITS:{editCount} · FLAGS:{flagCount}
     </span>
     <div class="flex-1"></div>
     <div class="flex flex-wrap gap-2">

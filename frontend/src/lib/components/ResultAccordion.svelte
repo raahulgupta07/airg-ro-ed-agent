@@ -502,13 +502,13 @@
               <div class="flex items-center gap-2 flex-wrap">
                 <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] bg-zinc-200 dark:bg-zinc-800">
                   Pipeline: <strong>{pipeLabel(v10.mode)}</strong>
-                  {#if v10.v7_used && v10.v10_used}<span>(VERITAS + SCRIVENER hybrid)</span>{/if}
+                  {#if v10.v7_used && v10.v10_used}<span>(Atlas Swift + Vision hybrid)</span>{/if}
                 </span>
                 {#if v10.v7_used && !v10.v10_used}
-                  <span class="inline-flex items-center px-2 py-1 rounded-full text-[11px] bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">VERITAS</span>
+                  <span class="inline-flex items-center px-2 py-1 rounded-full text-[11px] bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">ATLAS SWIFT</span>
                 {/if}
                 {#if v10.v10_used && !v10.v7_used}
-                  <span class="inline-flex items-center px-2 py-1 rounded-full text-[11px] bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200">SCRIVENER</span>
+                  <span class="inline-flex items-center px-2 py-1 rounded-full text-[11px] bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200">ATLAS VISION</span>
                 {/if}
               </div>
             {/if}
