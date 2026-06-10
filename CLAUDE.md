@@ -236,11 +236,9 @@ scripts/
 
 ### Known security gaps (see README "Security" → hardening checklist)
 Config/code one-liners, not repo leaks (`.env`/certs are gitignored):
+- **Closed (v2026.6.7):** `verify_token()` now rejects non-`access` tokens; `/docs` + `/redoc` + `/openapi.json` gated off unless `DEV_MODE`/`ENABLE_DOCS`; `DEV_MODE` emptied in `.env`; JWT secret auto-resolves (env → DB-persisted, v2026.6.6).
 - Keycloak `verify_aud=False` (`auth.py`) — enable if relying on Keycloak.
-- `verify_token()` doesn't assert `type=="access"` — refresh token usable as access.
-- FastAPI `/docs` exposed — set `docs_url=None` in prod.
 - No CSP header; no per-account lockout (only rate limit).
-- `DEV_MODE` non-empty → insecure hardcoded JWT fallback; keep empty in prod.
 - Fernet keys fall back to ephemeral `/tmp` if `LDAP_FERNET_KEY`/`STORAGE_FERNET_KEY` unset → set them.
 
 ## Concurrency targets (10 users)
