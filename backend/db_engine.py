@@ -367,11 +367,14 @@ class _Sqlite3CompatConnection:
         try:
             self._raw.commit()
         except Exception as exc:
-            logger.debug("commit() raised: %s", exc)
+            # A failed commit means the write is GONE. Swallowing it (the old
+            # behaviour) reported success to the caller and silently lost data.
+            logger.error("commit() failed — rolling back and re-raising: %s", exc)
             try:
                 self._raw.rollback()
             except Exception:
                 pass
+            raise
 
     def rollback(self):
         try:

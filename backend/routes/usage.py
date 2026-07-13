@@ -109,7 +109,7 @@ async def usage_overview(
 
 
 @router.get("/summary")
-async def usage_summary():
+async def usage_summary(current_user: dict = Depends(require_admin)):
     """Grand totals: total cost, tokens, jobs, avg cost/doc."""
     conn = database._connect()
     cur = conn.cursor()
@@ -141,7 +141,8 @@ async def usage_summary():
 
 @router.get("/per-doc")
 async def usage_per_doc(limit: int = Query(100, ge=1, le=500),
-                         offset: int = Query(0, ge=0)):
+                         offset: int = Query(0, ge=0),
+                         current_user: dict = Depends(require_admin)):
     """Paginated list of jobs with cost/tokens/type/mode."""
     conn = database._connect()
     cur = conn.cursor()
@@ -180,7 +181,7 @@ async def usage_per_doc(limit: int = Query(100, ge=1, le=500),
 
 
 @router.get("/by-type")
-async def usage_by_type():
+async def usage_by_type(current_user: dict = Depends(require_admin)):
     """Aggregate cost by document_type."""
     conn = database._connect()
     cur = conn.cursor()
@@ -213,7 +214,7 @@ async def usage_by_type():
 
 
 @router.get("/by-pipeline")
-async def usage_by_pipeline():
+async def usage_by_pipeline(current_user: dict = Depends(require_admin)):
     """Aggregate cost by pipeline_mode (v7/v10/v11)."""
     conn = database._connect()
     cur = conn.cursor()

@@ -8,7 +8,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Request
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Request, Depends, Query
 from typing import Optional
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -18,6 +18,22 @@ import database
 import event_logger
 
 
+def _claim_auto_approve_sweep() -> bool:
+    """Only ONE process may run a given hourly sweep.
+
+    The app runs with --workers 2, and lifespan fires in every worker, so both
+    used to sweep concurrently: jobs got double-handled and the last-count
+    setting raced. A short-lived Redis lock (NX + TTL) elects a single sweeper;
+    if Redis is unavailable we fall back to running (a missed sweep is worse
+    than a duplicated one — update_review_status is idempotent).
+    """
+    try:
+        from jobs.queue import get_redis
+        return bool(get_redis().set("v11:auto_approve:lock", "1", nx=True, ex=3000))
+    except Exception:
+        return True
+
+
 async def _auto_approve_loop():
     """Periodic task: auto-approve high-confidence pending jobs.
 
@@ -25,6 +41,18 @@ async def _auto_approve_loop():
     accuracy_percent >= threshold * 100. Marked reviewed_by='SYSTEM_AUTO'.
     """
     while True:
+        try:
+            if _claim_auto_approve_sweep():
+                # DB calls here are synchronous — keep them off the event loop,
+                # or the sweep stalls every in-flight request on this worker.
+                await asyncio.to_thread(_auto_approve_sweep)
+        except Exception as e:
+            print(f"[auto_approve] error: {e}")
+        await asyncio.sleep(3600)  # hourly
+
+
+def _auto_approve_sweep():
+        """Blocking sweep body — always called via asyncio.to_thread()."""
         try:
             enabled = (database.get_app_setting("auto_approve_enabled", "false") or "false").lower() == "true"
             if enabled:
@@ -63,8 +91,7 @@ async def _auto_approve_loop():
                 database.set_app_setting("auto_approve_last_count", approved)
                 print(f"[auto_approve] swept {len(jobs)} pending — approved {approved} (threshold={threshold})")
         except Exception as e:
-            print(f"[auto_approve] error: {e}")
-        await asyncio.sleep(3600)  # hourly
+            print(f"[auto_approve] sweep error: {e}")
 
 
 @asynccontextmanager
@@ -179,6 +206,7 @@ except Exception:
     pass
 
 # --- API Routes ---
+from middleware import get_current_user, get_data_scope
 from routes import auth as auth_routes
 from routes import jobs as job_routes
 from routes import users as user_routes
@@ -211,6 +239,7 @@ async def extract_pdf(
     request: Request,
     file: UploadFile = File(...),
     mode: str = "ro_ed",
+    current_user: dict = Depends(get_current_user),
 ):
     """T4.1 — REST API Mode: Upload PDF, run extraction, return JSON results.
     No WebSocket needed. For external system integration.
@@ -268,7 +297,8 @@ async def extract_pdf(
 
 @app.post("/api/extract-v10-pro")
 @_maybe_limit(_LIMIT_EXTRACT)
-async def extract_pdf_v10_pro(request: Request, file: UploadFile = File(...)):
+async def extract_pdf_v10_pro(request: Request, file: UploadFile = File(...),
+                              current_user: dict = Depends(get_current_user)):
     """V10 PRO — HW with shape-validation + memory + 800 DPI digit-list + box detection."""
     import asyncio, shutil, uuid
 
@@ -326,7 +356,9 @@ async def extract_pdf_v10_pro(request: Request, file: UploadFile = File(...)):
 
 @app.post("/api/extract-v11", status_code=202)
 @_maybe_limit(_LIMIT_EXTRACT)
-async def extract_pdf_v11(request: Request, file: UploadFile = File(...), job_id: Optional[str] = Form(None), engine: Optional[str] = Form("auto")):
+async def extract_pdf_v11(request: Request, file: UploadFile = File(...), job_id: Optional[str] = Form(None),
+                          engine: Optional[str] = Form("auto"),
+                          current_user: dict = Depends(get_current_user)):
     """V11 — Master Router. Queues extraction; returns immediately with job_id.
 
     Behavior change: this endpoint no longer blocks for 90-180s. It saves the PDF,
@@ -379,6 +411,10 @@ async def extract_pdf_v11(request: Request, file: UploadFile = File(...), job_id
             pass
         raise HTTPException(500, f"Failed to enqueue V11 job: {e}")
 
+    # Bind this stream to its creator. Stream ids are client-supplied, so without
+    # an owner record anyone authenticated could poll/stream someone else's job.
+    _set_stream_owner(sse_job_id, current_user)
+
     return {
         "status": "queued",
         "filename": file.filename,
@@ -388,6 +424,40 @@ async def extract_pdf_v11(request: Request, file: UploadFile = File(...), job_id
         "queue_position": _queue_position(rq_job),
         "message": f"PDF queued. Stream live router events at /api/extract-v11/stream/{sse_job_id}",
     }
+
+
+_STREAM_OWNER_TTL = 86400  # a stream is pollable for a day; RQ result_ttl is 1h
+
+
+def _set_stream_owner(stream_id: str, user: dict) -> None:
+    """Remember who started a stream (best-effort — never blocks the enqueue)."""
+    try:
+        from jobs.queue import get_redis
+        get_redis().setex(f"v11:owner:{stream_id}", _STREAM_OWNER_TTL, str(user.get("id", "")))
+    except Exception as e:
+        print(f"[v11] could not record stream owner for {stream_id}: {e}")
+
+
+def _assert_stream_access(stream_id: str, user: dict) -> None:
+    """403 unless the caller owns this stream (or may read all data).
+
+    Fails OPEN only when the owner record is genuinely absent (Redis evicted it,
+    or the job predates this check) — an owner that exists and does not match is
+    always rejected.
+    """
+    if get_data_scope(user) in ("all_readonly", "all_full"):
+        return
+    try:
+        from jobs.queue import get_redis
+        owner = get_redis().get(f"v11:owner:{stream_id}")
+    except Exception:
+        return
+    if owner is None:
+        return
+    if isinstance(owner, bytes):
+        owner = owner.decode()
+    if owner != str(user.get("id", "")):
+        raise HTTPException(status_code=403, detail="Access denied")
 
 
 def _queue_position(rq_job) -> int:
@@ -401,7 +471,7 @@ def _queue_position(rq_job) -> int:
 
 
 @app.get("/api/extract-v11/status/{stream_id}")
-async def extract_v11_status(stream_id: str):
+async def extract_v11_status(stream_id: str, current_user: dict = Depends(get_current_user)):
     """Poll RQ job status by stream_id (== rq job id).
 
     Returns:
@@ -410,6 +480,7 @@ async def extract_v11_status(stream_id: str):
       result: dict if finished
       error: string if failed
     """
+    _assert_stream_access(stream_id, current_user)
     try:
         from rq.job import Job
         from jobs.queue import get_redis
@@ -429,10 +500,25 @@ async def extract_v11_status(stream_id: str):
 
 
 @app.get("/api/extract-v11/stream/{job_id}")
-async def extract_v11_stream(job_id: str):
-    """V11 — SSE live event stream for a router job."""
+async def extract_v11_stream(job_id: str, token: str = Query(...)):
+    """V11 — SSE live event stream for a router job.
+
+    Auth via `?token=` rather than a bearer header: the browser client is a
+    native EventSource, which cannot set request headers. Same pattern as the
+    PDF/page-image routes in routes/jobs.py.
+    """
     import asyncio, json as _json
     from fastapi.responses import StreamingResponse
+    from middleware import _try_keycloak, _try_local
+
+    user = None
+    if _config.get_keycloak_config():
+        user = _try_keycloak(token)
+    if not user:
+        user = _try_local(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    _assert_stream_access(job_id, user)
 
     try:
         from v11.event_bus import subscribe as _v11_subscribe
