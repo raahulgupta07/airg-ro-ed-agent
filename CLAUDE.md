@@ -36,11 +36,19 @@ PDF upload (browser)
        4. Merger                → combine declarations + items
        5. field_bbox            → fitz.search_for() → highlight rects
        6. DB save → DONE
-  → SSE /api/extract-v11/stream/{id} streams:
+  → SSE /api/extract-v11/stream/{id}?token=<jwt> streams:
        JOB_START, CLASSIFY, ROUTE,
-       STAGE_START, STAGE_DONE,
-       MERGE, RECONCILE, DB_SAVE, DONE, FAIL   (Redis pubsub channel `job:{id}`)
+       STAGE_START, STAGE_DONE, STAGE_DETAIL,
+       MERGE, RECONCILE, DB_SAVE, DONE, FAIL
+       (Redis pubsub channel `v11:events:{job_id}`, history list `v11:history:{job_id}`)
 ```
+
+**SSE auth:** the stream takes the JWT as `?token=` — the browser client is a native
+`EventSource`, which cannot set an `Authorization` header (same pattern as the PDF /
+page-image routes in `routes/jobs.py`). Every other extract route uses a normal bearer
+header. All of them are behind `Depends(get_current_user)` as of v2026.6.16; the stream
+id is additionally bound to its creator in Redis (`v11:owner:{stream_id}`) so one user
+cannot poll or stream another's job by guessing a client-supplied id.
 
 ```mermaid
 flowchart LR
@@ -60,7 +68,7 @@ flowchart LR
 
 V7 (legacy sync) is still mounted at `POST /api/extract` for external integrations. V10 PRO standalone at `POST /api/extract-v10-pro` is kept for HW testing. **All UI traffic uses V11.**
 
-## New engines V12–V14 (merged to `main`; dev continues on `feature/v13-scribe`)
+## New engines V12–V14 (merged — `main` == `origin/main` == `feature/v13-scribe`)
 
 A new extraction stack — additive, V7/V10/V11 untouched (kept as fallback). Picked per-job via `engine=auto|classic|presto|atlas` on `POST /api/extract-v11`.
 
@@ -88,17 +96,38 @@ A new extraction stack — additive, V7/V10/V11 untouched (kept as fallback). Pi
 
 **Env knobs:** `PRESTO_ENABLED`, `SCRIBE_MODEL`/`SCRIBE_MODELS`/`SCRIBE_VOTES`, `JUDGE_AUTO_THRESHOLD`, `RECONCILE_{,CIF_,DUTY_,ROW_}TOLERANCE_PCT`.
 
-**Don't** point Scribe at a reasoning model (gemini-2.5-pro/o-series) — it truncates JSON. **Don't** assume the new engines are on main/prod — they're on `feature/v13-scribe`.
+**Don't** point Scribe at a reasoning model (gemini-2.5-pro/o-series) — it truncates JSON.
+
+**Reconcile runs on TWO key spaces — keep both alive.** Presto/Scribe emit the raw schema
+names (`customs_duty`, `commercial_tax`, `advance_income_tax`, `security_fee`,
+`maccs_service_fee`); the Phase-4 merge alias map then rewrites them to the DB names
+(`import_export_customs_duty`, `commercial_tax_ct`, …). `reconcile()` is called on BOTH —
+once inside `_call_typed` / `scribe.run` on the RAW dict, and again in Phase 4.4 on the
+merged one. Until v2026.6.16 the tax-completeness gate only knew the DB names, so every
+pre-merge call saw `taxes_missing=True` → `balanced=False` → **the Presto fast-path could
+never pass its own gate and silently fell back to full V7 on every run** (paying for both),
+and every Scribe run fired self-correct + a redundant per-page recovery pass and was
+flagged for review. Any new gate must accept both spellings (`_duty_closure` always did).
+
+**`backend/v13/` must be COPYed in the Dockerfile.** `workflow._call_scribe` does
+`from v13.scribe import run`. It was missing from the image until v2026.6.16, so the
+default `atlas` engine raised `ModuleNotFoundError: No module named 'v13'` in the worker
+for any PDF with a handwritten page — while working fine locally (repo on `sys.path`).
+If you add a new top-level backend package, add the `COPY` line with it.
 
 ## Active extract endpoints
 
 ```
-POST /api/extract                          V7 sync (legacy / external)
-POST /api/extract-v10-pro                  V10 PRO standalone (HW testing)
-POST /api/extract-v11                      V11 Maestro queue → 202        ← MAIN
-GET  /api/extract-v11/stream/{stream_id}   SSE Redis pubsub
-GET  /api/extract-v11/status/{stream_id}   Poll RQ status
+POST /api/extract                          V7 sync (legacy / external)      auth: bearer
+POST /api/extract-v10-pro                  V10 PRO standalone (HW testing)  auth: bearer
+POST /api/extract-v11                      V11 Maestro queue → 202  ← MAIN  auth: bearer
+GET  /api/extract-v11/status/{stream_id}   Poll RQ status                   auth: bearer + owner
+GET  /api/extract-v11/stream/{stream_id}   SSE Redis pubsub                 auth: ?token= + owner
 ```
+
+All five require authentication (v2026.6.16 — they were open before). "owner" = the
+stream id is bound to its creator; a user with `data_scope` `own` gets 403 on someone
+else's stream.
 
 ## Review API (`backend/routes/review.py`, 15 endpoints)
 
@@ -240,8 +269,9 @@ scripts/
 
 ### Known security gaps (see README "Security" → hardening checklist)
 Config/code one-liners, not repo leaks (`.env`/certs are gitignored):
-- **Closed (v2026.6.7):** `verify_token()` now rejects non-`access` tokens; `/docs` + `/redoc` + `/openapi.json` gated off unless `DEV_MODE`/`ENABLE_DOCS`; `DEV_MODE` emptied in `.env`; JWT secret auto-resolves (env → DB-persisted, v2026.6.6).
-- Keycloak `verify_aud=False` (`auth.py`) — enable if relying on Keycloak.
+- **Closed (v2026.6.16):** all 3 `/api/extract*` endpoints + `/api/extract-v11/status|stream` now require auth (they were fully open — anyone reachable could burn OpenRouter credits, and `status/{id}` returned the whole extraction to anyone who guessed a *client-supplied* stream id) + stream-owner binding; `routes/usage.py` `/summary`, `/per-doc`, `/by-type`, `/by-pipeline` now `require_admin` (were open, leaking org-wide spend + per-doc job names/costs); the rate-limit bucket now **verifies the JWT signature** (it used to decode unverified, so a forged `user_id` bought a fresh budget per request — defeating both the per-user cap and the 5/min login brute-force cap).
+- **Closed (v2026.6.7):** `verify_token()` rejects non-`access` tokens (note: a token with NO `type` claim is still accepted, by design, for backward compat); `/docs` + `/redoc` + `/openapi.json` gated off unless `DEV_MODE`/`ENABLE_DOCS`; `DEV_MODE` emptied in `.env`; JWT secret auto-resolves (env → DB-persisted, v2026.6.6).
+- Keycloak `verify_aud=False` (`auth.py:187`) — enable if relying on Keycloak. **The top remaining item.**
 - No CSP header; no per-account lockout (only rate limit).
 - Fernet keys fall back to ephemeral `/tmp` if `LDAP_FERNET_KEY`/`STORAGE_FERNET_KEY` unset → set them.
 
@@ -288,6 +318,7 @@ Config/code one-liners, not repo leaks (`.env`/certs are gitignored):
 - **Don't use uppercase + ultra-bold for body chrome** — the design system is sentence-case with serif headings (Source Serif 4) and Inter body. Reserve uppercase for tiny labels (`.tag-label`, table column headers).
 - **Don't reintroduce the top `Header` nav or black/heavy borders** — navigation is the grouped left `Sidebar.svelte`; borders use `var(--line)` (soft). Build new pages from the `cl-*` layer in `app.css`, not bespoke boxes. Dark terminal/log consoles (history, PipelineVisualizer) stay intentionally dark.
 - **Don't add slowapi limits without `request: Request` in the handler signature** — it 500s.
+- **Don't add a declaration/item field without updating BOTH Excel writers.** The exports build rows from hand-written dicts — `routes/jobs.py` `download_job_excel` (per-job, Declaration sheet) and `routes/data.py` `download_declarations_excel` / `download_items_excel` (bulk). A new column in the DB + review UI does NOT appear in the spreadsheet on its own. That's exactly how freight/insurance/adjustment shipped in v2026.6.13 but stayed missing from every download until v2026.6.16 — the field was on screen, in the DB, and in the export's `SELECT d.*`, just absent from the dict. `jobs.py` also passes `columns=` to `pd.DataFrame`, so the column list must be updated too or the key is silently dropped.
 - **Don't store the legacy SQLite file.** Postgres has been the only backend since `0001_initial_schema.py`. Use `backend/scripts/migrate_sqlite_to_pg.py` if you find one in the wild.
 
 ## Common issues + troubleshooting
@@ -295,7 +326,11 @@ Config/code one-liners, not repo leaks (`.env`/certs are gitignored):
 | Issue | Cause / Fix |
 |---|---|
 | `JWT_SECRET_KEY too short` on boot | Set ≥ 32 chars, e.g. `openssl rand -hex 32`. Empty `DEV_MODE` in prod. |
-| SSE silent / hangs | Check Redis pubsub: `docker exec ro-ed-redis redis-cli SUBSCRIBE 'job:*'`. Confirm nginx `proxy_buffering off` for `/api/extract-v11/stream`. |
+| SSE silent / hangs | Channel is **`v11:events:{job_id}`**, not `job:{id}`: `docker exec ro-ed-redis redis-cli PSUBSCRIBE 'v11:events:*'`. Confirm nginx `proxy_buffering off` for `/api/extract-v11/stream`. |
+| SSE 401 / 422 | The stream needs `?token=<jwt>` (EventSource can't send headers). 422 = param missing entirely; 401 = bad/expired token; 403 = not your stream. |
+| `ModuleNotFoundError: No module named 'v13'` in the worker | The Dockerfile isn't COPYing `backend/v13/`. Works locally, dies in the image. Any new top-level backend package needs its own `COPY` line. |
+| Presto always "falls back to V7 Veritas" in the log | A gate is being evaluated against the wrong key space. `reconcile()` runs pre-merge (raw `customs_duty`…) AND post-merge (`import_export_customs_duty`…) — gates must accept both. |
+| Handwritten pages never route to Scribe | Scribe only runs on `engine=atlas` (`SCRIBE_ENABLED` is dead code). Presto only engages when **every** typed page has a text layer (`_typed_digital = all(has_text_layer)`) — a scanned/bundled release order routes to V7 instead. |
 | OOM mid-job | Bump worker `mem_limit` in `docker-compose.yml` (default 8g) and Docker Desktop allocation ≥ 12 GB. |
 | `500` on rate-limited route | slowapi requires `request: Request` (or `response: Response`) parameter on the handler. |
 | `database is locked` | Legacy SQLite path. Re-run `alembic upgrade head` and verify `DATABASE_URL` is Postgres. |
