@@ -540,7 +540,7 @@ async def download_job_excel(job_id: str, current_user: dict = Depends(get_curre
         df_items = pd.DataFrame(items_data, columns=all_item_cols) if items_data else pd.DataFrame(columns=all_item_cols)
         _style_sheet(writer, df_items, 'Product Items')
 
-        # Sheet 2: Declaration (all 18 columns)
+        # Sheet 2: Declaration (incl. the CIF build-up: freight / insurance / adjustment)
         declarations = job.get('declarations', [])
         decl_data = []
         for decl in declarations:
@@ -554,6 +554,9 @@ async def download_job_excel(job_id: str, current_user: dict = Depends(get_curre
                 'Invoice Number (Customs Declaration)': decl.get('invoice_number_customs_declaration', ''),
                 'Invoice Number (Commercial Invoice)': decl.get('invoice_number_commercial_invoice', ''),
                 'Invoice Price': decl.get('invoice_price', ''),
+                'Freight': decl.get('freight_value', ''),
+                'Insurance': decl.get('insurance_value', ''),
+                'Adjustment': decl.get('adjustment_value', ''),
                 'Currency': decl.get('currency', ''),
                 'Exchange Rate': decl.get('exchange_rate', ''),
                 'Currency 2': decl.get('currency_2', ''),
@@ -568,7 +571,8 @@ async def download_job_excel(job_id: str, current_user: dict = Depends(get_curre
             })
         all_decl_cols = ['Job', 'Declaration No', 'Declaration Date', 'Importer (Name)', 'Consignor (Name)',
                          'Invoice Number', 'Invoice Number (Customs Declaration)', 'Invoice Number (Commercial Invoice)',
-                         'Invoice Price', 'Currency', 'Exchange Rate', 'Currency 2',
+                         'Invoice Price', 'Freight', 'Insurance', 'Adjustment',
+                         'Currency', 'Exchange Rate', 'Currency 2',
                          'Total Customs Value', 'Import/Export Customs Duty', 'Commercial Tax (CT)',
                          'Advance Income Tax (AT)', 'Security Fee (SF)', 'MACCS Service Fee (MF)',
                          'Exemption/Reduction', 'Processed']

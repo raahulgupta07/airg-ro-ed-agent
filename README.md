@@ -283,19 +283,27 @@ flowchart TB
 
 Some of these are already wired by the documented prod setup (see [Production deployment](#production-deployment-linux-server)); verify each:
 
+**Already closed in code** (verify, don't redo):
+
+- [x] **Extract + stream endpoints authenticated** (v2026.6.16) — `POST /api/extract`, `/api/extract-v10-pro`, `/api/extract-v11` and `GET /api/extract-v11/status|stream` were **fully unauthenticated**: anyone who could reach the API could spend OpenRouter credits, and `status/{id}` returned the complete extraction to anyone who guessed a stream id (ids are client-supplied). All now require a bearer token — the SSE stream takes `?token=` because `EventSource` cannot set headers — and each stream is bound to its creator.
+- [x] **Usage endpoints gated** (v2026.6.16) — `/api/usage/summary`, `/per-doc`, `/by-type`, `/by-pipeline` had **no auth dependency at all** and leaked org-wide spend plus per-document job names, costs and timestamps. Now `require_admin`, like `/overview`.
+- [x] **Rate-limit bucket verifies the JWT signature** (v2026.6.16) — it used to decode the token *unverified* to pick the bucket, so a forged `user_id` earned a fresh budget on every request, defeating both the per-user cap and the 5/min login brute-force cap. Unverifiable tokens now fall back to the IP bucket.
+- [x] **Token-type check** (v2026.6.7) — `verify_token()` rejects non-`access` tokens (`auth.py:101`). Caveat: a token with **no** `type` claim is still accepted, deliberately, for backward compat.
+- [x] **`/docs` disabled by default** (v2026.6.7) — Swagger/OpenAPI is off unless `DEV_MODE` / `ENABLE_DOCS` (`main.py:139`).
+
+**Still to do:**
+
 - [ ] **Rotate on-disk dev secrets** — the development `.env` holds a real OpenRouter key + JWT secret; generate fresh ones for prod.
 - [ ] **`DEV_MODE=` empty in prod** — non-empty enables an insecure hardcoded JWT fallback (`auth.py:_DEV_FALLBACK`).
 - [ ] **Persistent Fernet keys** — set `LDAP_FERNET_KEY` / `STORAGE_FERNET_KEY`; without them an ephemeral `/tmp` key is used and encrypted secrets become unrecoverable on restart.
-- [ ] **Keycloak audience** — `verify_aud=False` today (`auth.py`); set `verify_aud=True` + pass `client_id` if you rely on Keycloak.
-- [ ] **Token-type check** — `verify_token()` does not assert `type=="access"`; a refresh token can be presented as an access token. Add the check.
-- [ ] **Disable `/docs` in prod** — FastAPI Swagger/OpenAPI is currently exposed; set `docs_url=None, redoc_url=None, openapi_url=None`.
+- [ ] **Keycloak audience** — `verify_aud=False` today (`auth.py:187`); set `verify_aud=True` + pass `client_id` if you rely on Keycloak. **Top remaining item.**
 - [ ] **Add CSP header** — nginx sets HSTS + frame/content-type/referrer headers but no `Content-Security-Policy`.
 - [ ] **Account lockout** — brute-force is rate-limited but there's no per-account lockout after N failures.
 - [ ] **First-admin password** — printed to stdout on first boot (lands in container logs); rotate immediately after first login, or seed via `ADMIN_INITIAL_PASSWORD`.
 - [ ] **CORS** — set `CORS_ALLOWED_ORIGINS` to your exact frontend domain only (no wildcards with `allow_credentials`).
 - [ ] **TLS** — replace dev self-signed cert with Let's Encrypt / CA cert; consider `ssl_prefer_server_ciphers on`.
 
-> Severity note: with the documented prod `.env` (empty `DEV_MODE`, set Fernet keys, scoped CORS, real TLS), the residual high-value items are **Keycloak `verify_aud`**, **token-type validation**, and **disabling `/docs`** — none are repo-level leaks; all are config/code one-liners.
+> Severity note: with the documented prod `.env` (empty `DEV_MODE`, set Fernet keys, scoped CORS, real TLS), the residual high-value item is **Keycloak `verify_aud`** — not a repo-level leak; a config/code one-liner.
 
 ---
 
@@ -630,6 +638,13 @@ curl -s http://localhost:9000/api/health | grep -o '"version":"[^"]*"'   # or :9
 
 If it still shows the old number, the image wasn't rebuilt — see **Updating an existing deployment**. Bump `APP_VERSION` whenever you ship a change.
 
+**v2026.6.16** — correctness + security pass.
+- **Excel exports carry Freight / Insurance / Adjustment.** Both writers (per-job download and the bulk Declarations export) build their rows from hand-written dicts and were never updated when the CIF fields shipped in v2026.6.13 — the values were in the DB and on the review screen, but every downloaded spreadsheet was missing the columns. A genuine "-" on the declaration still exports blank; a confirmed `0` exports as `0`.
+- **V13 Scribe now ships in the Docker image.** The Dockerfile never `COPY`d `backend/v13/`, so the default `atlas` engine raised `ModuleNotFoundError: No module named 'v13'` in the worker for any PDF with a handwritten page — while working fine locally (repo on `sys.path`).
+- **The Presto fast-path can actually pass its gate.** The tax-completeness check only knew the post-merge DB field names, so when `reconcile()` ran on Presto's/Scribe's raw output it always saw "no taxes" → never balanced → Presto silently fell back to full V7 on **every** run (paying for both), and every Scribe run fired a redundant self-correct + per-page recovery pass and was force-flagged for review. The gate now accepts both key spaces.
+- **Extract / status / SSE endpoints and the four `usage` endpoints now require auth** (see Security). The SSE stream takes `?token=`; stream ids are bound to their creator. The rate-limit bucket now verifies the JWT signature.
+- Review is no longer auto-flagged on every handwritten job (the flag carried no signal); `commit()` re-raises instead of silently losing a write; auto-approve no longer double-sweeps across both uvicorn workers and no longer blocks the event loop.
+
 **v2026.6.15** — new admin **Settings → Usage** dashboard: spend / requests / token-volume KPIs, per-user breakdown, spend-by-model chart + table, date range (week/month/3mo/all), backed by `GET /api/usage/overview` (admin). The audit log (login/logout/all runs/actions) already lives in **Settings → Activity Log**.
 
 **v2026.6.14** — project renamed to **City Agent : PG Release Order** (browser title + CityAgent favicon + in-app labels + API title). Internal storage/pipeline keys unchanged.
@@ -846,7 +861,11 @@ alembic upgrade head
 | `database is locked` retries | Was a SQLite artefact. Postgres + advisory locks fixes it. If you still see it, you're hitting the legacy path — re-run migrations. |
 | `column "model_used" of relation "jobs" does not exist` (or similar) | Old DB stamped at alembic head without the column. Self-heals on boot from this build onward; one-time manual backfill: `docker compose exec postgres psql -U ro_ed -d ro_ed -c "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS model_used VARCHAR(100); ALTER TABLE jobs ADD COLUMN IF NOT EXISTS processed_at TIMESTAMP;"` |
 | Worker `(unhealthy)` but processing jobs | Healthcheck false-fail (strict env / slow probe on a shared host). Pull latest → `docker compose up -d worker`, wait ~60s. Real error: `docker inspect --format '{{json .State.Health.Log}}' <worker>`. Workers function regardless — nothing depends on the status. |
-| SSE stream silent | Check Redis pubsub: `docker exec ro-ed-redis redis-cli SUBSCRIBE 'job:*'`. Confirm nginx has `proxy_buffering off` for `/api/extract-v11/stream`. |
+| SSE stream silent | The channel is **`v11:events:{job_id}`**, not `job:{id}`: `docker exec ro-ed-redis redis-cli PSUBSCRIBE 'v11:events:*'`. Confirm nginx has `proxy_buffering off` for `/api/extract-v11/stream`. |
+| SSE returns 401 / 422 | The stream authenticates via `?token=<jwt>` (an `EventSource` cannot send an `Authorization` header). 422 = the param is missing; 401 = bad/expired token; 403 = the stream belongs to another user. |
+| `ModuleNotFoundError: No module named 'v13'` in the worker | The Dockerfile isn't `COPY`ing `backend/v13/`. Works locally (repo on `sys.path`), fails in the image. Every new top-level backend package needs its own `COPY` line. |
+| Log says Presto is "falling back to V7 Veritas" on every doc | A reconcile gate is being checked against the wrong field names. `reconcile()` runs twice — pre-merge on the engine's raw output (`customs_duty`…) and post-merge on the DB names (`import_export_customs_duty`…). Gates must accept both. |
+| A new declaration field is missing from the Excel download | The exports build rows from hand-written dicts in `routes/jobs.py` and `routes/data.py`. Adding a DB column + review-UI cell does **not** put it in the spreadsheet — update both writers (and the `columns=` list in `jobs.py`). |
 | OOM during V11 | Bump Docker Desktop RAM to ≥ 12 GB; raise worker `mem_limit` in `docker-compose.yml`. |
 | `JWT_SECRET_KEY too short` on prod boot | Must be ≥ 32 chars. Regenerate: `openssl rand -hex 32`. `DEV_MODE=` (empty) in prod. |
 | Login storm 429s | Bump `RATE_LIMIT_LOGIN=20/minute`. |

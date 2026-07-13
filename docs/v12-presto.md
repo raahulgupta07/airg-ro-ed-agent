@@ -1,7 +1,20 @@
-# V12 "Presto" — typed fast-path
+# V12 "Presto" — typed fast-path  ·  now **V14-1 "Swift"**
 
-> Status: **built, flag OFF.** Safe to deploy as-is (no behavior change until
-> `PRESTO_ENABLED=1`). Branch: `feature/v12-presto`.
+> **Status (v2026.6.16): MERGED AND LIVE.** This document describes the original
+> Phase-0 rollout and is kept for background — parts of it are now historical:
+>
+> - Presto is the typed sub-engine of the **Atlas V14** family, displayed as
+>   **V14-1 "Swift"**. See CLAUDE.md for the current picture.
+> - `PRESTO_ENABLED` is **ignored** when `engine` is `presto` or `atlas` (the
+>   default enabled engine is `atlas`), so the "flag OFF / zero risk" framing
+>   below no longer holds — Presto runs on typed-digital pages by default.
+> - Presto only engages when **every** typed page has a text layer
+>   (`_typed_digital = all(has_text_layer)`); a scanned/bundled release order
+>   still routes to V7.
+> - The math-gate fallback described below was **silently always failing** until
+>   v2026.6.16: the tax-completeness check only knew the post-merge DB field
+>   names, so Presto's raw output never balanced and every run fell through to
+>   V7 (paying for both). Fixed — the gate now accepts both key spaces.
 
 ## What it is
 A fast lane for **typed, digital** customs PDFs (machine-printed MACCS with a

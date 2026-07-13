@@ -13,6 +13,8 @@
   // terminal body, otherwise the legacy log is shown.
   // ─────────────────────────────────────────────────────────────────────────
 
+  import { auth } from '$lib/stores/auth.svelte';
+
   type LegacyLine = { text: string; type: string };
 
   type SseLine = {
@@ -374,7 +376,11 @@
     activeStage = null;
     stageStartTs = 0;
 
-    const stream = new EventSource(`/api/extract-v11/stream/${jobId}`);
+    // EventSource cannot set an Authorization header — the stream route takes
+    // the JWT as a query param instead (same as the PDF / page-image routes).
+    const stream = new EventSource(
+      `/api/extract-v11/stream/${jobId}?token=${encodeURIComponent(auth.token ?? '')}`
+    );
     es = stream;
     sseActive = true;
     attachListeners(stream);

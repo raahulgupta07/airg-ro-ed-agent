@@ -25,20 +25,30 @@ try:
         user their own budget. Unauthenticated requests (login) have no token →
         fall back to IP, preserving brute-force protection.
 
-        The token is decoded WITHOUT signature verification — this only picks a
-        rate-limit bucket, never grants access (endpoints still verify auth).
+        The signature IS verified. It previously wasn't ("this only picks a
+        bucket") — but an attacker could then forge an arbitrary user_id per
+        request and get a fresh budget every time, which defeats the per-user
+        limit AND the 5/min brute-force limit on login. An unverifiable token
+        falls back to the IP bucket.
         """
         try:
-            auth = request.headers.get("authorization", "")
-            if auth.lower().startswith("bearer "):
-                import base64
-                import json as _json
-                payload = auth.split(" ", 1)[1].split(".")[1]
-                payload += "=" * (-len(payload) % 4)  # pad base64
-                data = _json.loads(base64.urlsafe_b64decode(payload))
-                uid = data.get("user_id") or data.get("username") or data.get("sub")
-                if uid:
-                    return f"user:{uid}"
+            header = request.headers.get("authorization", "")
+            if header.lower().startswith("bearer "):
+                token = header.split(" ", 1)[1]
+                import auth as _auth   # lazy — avoids a circular import at module load
+
+                td = _auth.verify_token(token)          # local HS256 → TokenData | None
+                if td is not None:
+                    return f"user:{td.user_id}"
+
+                try:
+                    payload = _auth.verify_keycloak_token(token)   # OIDC RS256, JWKS cached
+                except Exception:
+                    payload = None
+                if payload:
+                    uid = payload.get("sub") or payload.get("preferred_username")
+                    if uid:
+                        return f"user:{uid}"
         except Exception:
             pass
         return get_remote_address(request)

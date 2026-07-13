@@ -46,6 +46,8 @@ COPY backend/routes/ /app/routes/
 COPY backend/v10_pro/ /app/v10_pro/
 # Backend code — V11 (Master Router: per-page classify → V7 + V10 parallel → merge)
 COPY backend/v11/ /app/v11/
+# Backend code — V13 Scribe (V14-2 "Vision" handwriting engine; imported by v11/workflow._call_scribe)
+COPY backend/v13/ /app/v13/
 
 # Backend code — storage abstraction (local + S3)
 COPY backend/storage/ /app/storage/

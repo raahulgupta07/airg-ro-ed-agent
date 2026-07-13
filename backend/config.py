@@ -19,10 +19,11 @@ BASE_DIR = Path(__file__).parent
 # CalVer year.month.patch; bump patch on each shipped change so a deploy is
 # verifiable at a glance ("is AWS running the latest?").
 # ============================================================================
-APP_VERSION = "2026.6.15"
+APP_VERSION = "2026.6.16"
 APP_ENGINE = "Atlas V14"
 # Short, human changelog of the most recent patches (newest first).
 APP_CHANGELOG = [
+    "2026.6.16 — Excel exports now carry Freight/Insurance/Adjustment (both the per-job download and the Declarations export); v13 Scribe shipped in the Docker image (handwritten pages used to crash the worker); tax gate accepts the engines' own field names so the Presto fast-path can actually pass (was always falling back to the slow V7); extract/status/SSE endpoints + the 4 usage endpoints now require auth; review flag no longer auto-set on every handwritten job",
     "2026.6.15 — New Settings → Usage tab: spend/requests/token-volume KPIs, per-user breakdown, spend-by-model chart + table, date-range (week/month/3mo/all). Backed by GET /api/usage/overview (admin).",
     "2026.6.14 — Rebrand to 'City Agent : PG Release Order' (tab title + CityAgent favicon + in-app RO-ED labels + API title); internal storage/pipeline keys unchanged",
     "2026.6.13 — CUSDEC rescue also reads freight/insurance/adjustment (real number wins; '-' dash stays blank, explicit 0 shows as 0 not —)",

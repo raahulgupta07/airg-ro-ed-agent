@@ -156,7 +156,12 @@ def merge_results(v7_result: Optional[Dict], v10_result: Optional[Dict]) -> Dict
 
     sanity_flags = list(v7.get("sanity_flags") or []) + list(v10.get("sanity_flags") or [])
     has_count_mismatch = any(f.startswith("item_count_mismatch") for f in sanity_flags)
-    needs_review = (bool(v10) or bool(v7.get("needs_review"))
+    # Review is driven by the engines' own verdicts + the gates in workflow
+    # Phase 4.4 — NOT by the mere presence of a handwritten branch. `bool(v10)`
+    # used to force needs_review on every mixed-page job (and Atlas routes
+    # Scribe through this same slot), so the flag carried no signal: a fully
+    # balanced, high-confidence job was queued for review anyway.
+    needs_review = (bool(v7.get("needs_review"))
                     or bool(v10.get("needs_review")) or has_count_mismatch)
 
     return {
