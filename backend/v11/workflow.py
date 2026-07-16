@@ -316,6 +316,7 @@ def _save_to_db(out: Dict, pdf_path: str) -> str:
             tokens_out=out.get("tokens_out", 0),
             document_type=doc_type,
             pipeline_mode="v11",
+            doc_class=(out.get("triage") or {}).get("doc_class") or out.get("doc_class"),
         )
     except Exception as e:
         print(f"[V11 DB] update_job_usage error: {e}")
@@ -460,6 +461,25 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
             cls = {"pages": [{"page": 1, "label": "TYPED"}], "n_pages": 1,
                    "summary": {"TYPED": 1, "HANDWRITTEN": 0, "ATTACHMENT": 0}}
 
+        # ─── Phase 1.5: Document-type triage (single authority) ───
+        # Compute the doc class ONCE from the classified pages + a CUSDEC text
+        # probe. Everything downstream READS this instead of re-sniffing text
+        # layers: routing (fast-path vs vision), the CUSDEC rescue path (text vs
+        # vision), and the review expectation for scanned docs. Recorded on the
+        # job + emitted so "why slow / why flagged?" is answered up front.
+        try:
+            from v11.triage import compute_triage
+            triage = compute_triage(pdf_path, cls, engine=engine)
+            out["triage"] = triage
+            out["doc_class"] = triage.get("doc_class")
+            out["trace"].append({"phase": "triage", **triage})
+            _emit(job_id, "TRIAGE", triage)
+            _log_event("TRIAGE", triage, job_id=job_id)
+        except Exception as _te:
+            triage = {"doc_class": "MIXED", "fast_path_available": False,
+                      "needs_vision_rescue": True, "cusdec_page": None}
+            out["trace"].append({"phase": "triage", "error": str(_te)})
+
         # ─── Phase 2: Split PDF ───
         current_stage = "split"
         try:
@@ -536,8 +556,10 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
         # V12 Presto eligibility: flag ON and every TYPED page is digital (has a
         # text layer). Flag off → identical to today's V7 path.
         from v11.config import PRESTO_ENABLED
-        _typed_meta = [p for p in cls.get("pages", []) if (p.get("label") or "").upper() == "TYPED"]
-        _typed_digital = bool(_typed_meta) and all(p.get("has_text_layer") for p in _typed_meta)
+        # Single source of truth: fast-path eligibility comes from triage (Phase
+        # 1.5), not a re-derivation here — so routing, rescue, and the DB record
+        # can never disagree about whether the doc is digital.
+        _typed_digital = bool(triage.get("fast_path_available"))
         # Per-job engine choice overrides the global flag:
         #   "presto" → force fast-path (only takes effect if typed pages digital)
         #   "classic" → force V7 Veritas
@@ -854,6 +876,51 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
         except Exception as _ce:
             out.setdefault("trace", []).append({"phase": "cusdec_rescue", "error": str(_ce)})
 
+        # ─── Phase 4.36: Scanned-CUSDEC vision rescue (L2) ───
+        # When triage says the CUSDEC page is a SCAN (no text layer), the
+        # deterministic text rescue above can't run — so a targeted single vision
+        # read of that page recovers rate/date/taxes/total. Only fires on scanned
+        # docs still missing those fields, so digital docs pay nothing. Vision-read
+        # values fill only blanks (never clobber a deterministic value); CUSDEC
+        # remains the legal source. Never raises.
+        try:
+            _decl = out.get("declaration") or {}
+            # Fires on any scanned-CUSDEC doc (the deterministic text rescue can't
+            # run there). One focused vision call (~$0.01 / ~30s, scanned docs only)
+            # recovers the authoritative header — cheaper and more accurate than
+            # trusting V7's whole-doc vision guess for these fields.
+            if triage.get("needs_vision_rescue"):
+                from v11.tools.vision_rescue import vision_cusdec_fields
+                _vf = vision_cusdec_fields(pdf_path, triage.get("cusdec_page"))
+                if _vf:
+                    # On a scanned CUSDEC the page-focused vision read is more
+                    # authoritative than V7's whole-doc vision guess, so for the
+                    # legal-source header fields the CUSDEC value WINS (same as the
+                    # deterministic text rescue's _PREFER) — otherwise a wrong-but-
+                    # non-blank rate from V7 would never be replaced. Softer fields
+                    # only fill blanks. The rate guard (Phase 4.4) still validates.
+                    _authoritative = {
+                        "exchange_rate", "currency", "declaration_date",
+                        "total_customs_value", "declaration_no",
+                        "import_export_customs_duty", "commercial_tax_ct",
+                        "advance_income_tax_at", "security_fee_sf", "maccs_service_fee_mf",
+                        "freight_value", "insurance_value", "adjustment_value",
+                    }
+                    _filled = []
+                    for _k, _v in _vf.items():
+                        if _k.startswith("_") or _v is None:
+                            continue
+                        if _k in _authoritative or not _decl.get(_k):
+                            _decl[_k] = _v
+                            _filled.append(_k)
+                    out["declaration"] = _decl
+                    if _filled:
+                        out.setdefault("sanity_flags", []).append("vision_cusdec_rescue")
+                        _emit(job_id, "STAGE_DETAIL", {"label": "ATLAS V14", "step": "vision_rescue",
+                            "msg": f"scanned CUSDEC vision rescue: {', '.join(_filled[:6])}"})
+        except Exception as _ve:
+            out.setdefault("trace", []).append({"phase": "vision_rescue", "error": str(_ve)})
+
         # ─── Phase 4.4: Reconciliation gate (the common invariant) ───
         # One guard, one chokepoint: the declared customs total must equal the
         # sum of item customs values. Any upstream leak — misclassified page,
@@ -865,7 +932,16 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
             verdict = _reconcile.reconcile(out.get("declaration") or {}, out.get("items") or [])
             recovery = {"attempted": False, "added_items": 0, "from_pages": []}
 
-            if (not verdict["balanced"]
+            # Recovery re-extracts dropped item pages — only worth its cost when the
+            # ITEM SUM is genuinely short (declared > Σitems beyond tolerance). A pure
+            # rate / CIF / tax imbalance (balanced=False for those reasons) is NOT a
+            # missing-item problem, so re-running full V7 on the attachment pages can't
+            # help — the rate guard + review handle it. Gating here avoids the wasteful
+            # second full-V7 vision pass on scanned docs whose only issue is the rate.
+            _item_short = (verdict.get("checked")
+                           and verdict.get("gap_pct", 0) > verdict.get("tolerance_pct", 5)
+                           and (verdict.get("gap_value") or 0) > 0)
+            if (_item_short
                     and _reconcile.recovery_enabled()
                     and splits.get("ATTACHMENT")):
                 recovery["attempted"] = True
@@ -903,6 +979,33 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
             out["reconcile"] = {**verdict, "recovery": recovery}
             if not out["cross_val_passed"]:
                 out["needs_review"] = True
+
+            # ─── Exchange-rate guard: auto-correct + fail-closed (v2026.6.17) ───
+            # The FX rate is the single most error-prone header field — a magnitude-
+            # capped regex, scrambled MACCS text layers, and scanned CUSDECs all
+            # produce silently-wrong rates (500 for USD, 636.2576 for THB, an
+            # invoice fragment like 887.18). reconcile() now cross-checks it against
+            # the math-derived rate (total ÷ CIF/item basis). On a suspect rate,
+            # adopt the derived value when we have one and ALWAYS force review — a
+            # wrong rate must never reach the export unflagged. Original + derived
+            # are preserved in out["reconcile"] (extracted_rate/derived_rate).
+            if verdict.get("rate_suspect"):
+                _decl = out.get("declaration") or {}
+                _dr = verdict.get("derived_rate")
+                # Auto-correct ONLY when the derivation is trustworthy (full CIF basis
+                # present). On an incomplete basis `derived_rate` over-estimates, so we
+                # never overwrite with it — we flag for human review instead. Fail-closed
+                # either way: a suspect rate never ships silently.
+                _corrected = bool(_dr and verdict.get("derived_trustworthy"))
+                if _corrected:
+                    _decl["exchange_rate"] = _dr   # existing column; audit in reconcile
+                    out["declaration"] = _decl
+                out.setdefault("sanity_flags", []).append("exchange_rate_suspect")
+                out["needs_review"] = True
+                _emit(job_id, "STAGE_DETAIL", {"label": "ATLAS V14", "step": "rate_guard",
+                    "msg": ("exchange rate suspect (extracted="
+                            f"{verdict.get('extracted_rate')}, derived={_dr}) → "
+                            + ("auto-corrected + flagged" if _corrected else "flagged for review"))})
 
             # Per-row math gate: a suspect individual item (value ≠ qty×price×rate)
             # → force review even if the total balances.

@@ -1,0 +1,26 @@
+{
+  "_note": "Ground truth for exchange-rate regression tests. rate = approx from manual sheet / fx-band; validate within tol_pct. currency drives sanity band. digital=text-layer CUSDEC present (deterministic extractor should nail it); scanned=image CUSDEC (must FLAG rate_suspect, not silently ship).",
+  "tol_pct": 3,
+  "bands": {
+    "THB": [40, 90], "USD": [1500, 5000], "SGD": [1500, 2500],
+    "CNY": [250, 600], "EUR": [2000, 5000], "JPY": [12, 40], "AUD": [1200, 3500]
+  },
+  "docs": {
+    "100313488550": {"currency": "USD", "type": "digital", "cusdec_page": 1, "code_grabbed_wrong": 500.0, "expect": "not_500_and_in_USD_band_or_flag"},
+    "100313868761": {"currency": "THB", "type": "digital", "cusdec_page": 10, "rate_approx": 65.0, "code_grabbed": 65.0025},
+    "100313870641": {"currency": "THB", "type": "digital", "cusdec_page": 10, "rate_approx": 65.0025, "code_grabbed": 65.0025},
+    "100314743761": {"currency": "THB", "type": "digital", "cusdec_page": 14, "rate_approx": 64.04, "code_grabbed": 64.408},
+    "100319699762": {"currency": "THB", "type": "digital", "cusdec_page": 1, "rate_approx": 67.21, "code_grabbed_wrong": 636.2576},
+    "100304950542": {"currency": "SGD", "type": "scanned", "total": 112097371.76, "expect": "rate_suspect_true"},
+    "100305819941": {"currency": "USD", "type": "scanned", "total": 64566866.28, "expect": "rate_suspect_true"},
+    "100305869051": {"currency": "USD", "type": "scanned", "total": 64566866.28, "expect": "rate_suspect_true"},
+    "100306351722": {"currency": "USD", "type": "scanned", "total": 145374516.72, "expect": "rate_suspect_true"},
+    "100306920231": {"currency": "USD", "type": "scanned", "total": 64691481.29, "expect": "rate_suspect_true"},
+    "100306920561": {"currency": "USD", "type": "scanned", "total": 63008263.95, "expect": "rate_suspect_true"},
+    "100306920821": {"currency": "USD", "type": "scanned", "total": 63008263.95, "expect": "rate_suspect_true"},
+    "100306922661": {"currency": "USD", "type": "scanned", "total": 45791072.89, "expect": "rate_suspect_true"},
+    "100308480420": {"currency": "SGD", "type": "scanned", "total": 106513352.56, "expect": "rate_suspect_true"},
+    "MA0259100405": {"currency": "THB", "type": "scanned", "expect": "rate_suspect_true"},
+    "MA0259100560": {"currency": "THB", "type": "scanned", "expect": "rate_suspect_true"}
+  }
+}

@@ -427,6 +427,10 @@ def init_database():
         # on boot (no manual ALTER needed on update).
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS model_used VARCHAR(100)",
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS processed_at TIMESTAMP",
+        # Document-type triage (v2026.6.19): DIGITAL / SCANNED / MIXED, recorded
+        # per job so the scanned-vs-digital population is queryable and every bad
+        # result can be audited against the path it took. Self-heals on boot.
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS doc_class TEXT",
         # CIF build-up fields (migration 0003); self-heal on boot so an existing
         # DB picks them up without a manual ALTER on update.
         "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS freight_value REAL",
@@ -924,15 +928,18 @@ def update_job_metrics(job_id: str, processing_time: float, cost: float, accurac
     conn.close()
 
 def update_job_usage(job_id: str, tokens_in: int = 0, tokens_out: int = 0,
-                     document_type: str = None, pipeline_mode: str = None):
-    """Update token + doc-type + pipeline-mode fields on an existing job."""
+                     document_type: str = None, pipeline_mode: str = None,
+                     doc_class: str = None):
+    """Update token + doc-type + pipeline-mode + triage doc_class on an existing job."""
     conn = _connect()
     cursor = conn.cursor()
     cursor.execute("""
         UPDATE jobs
-        SET tokens_in = ?, tokens_out = ?, document_type = ?, pipeline_mode = ?
+        SET tokens_in = ?, tokens_out = ?, document_type = ?, pipeline_mode = ?,
+            doc_class = COALESCE(?, doc_class)
         WHERE job_id = ?
-    """, (tokens_in or 0, tokens_out or 0, document_type, pipeline_mode, job_id))
+    """, (tokens_in or 0, tokens_out or 0, document_type, pipeline_mode,
+          doc_class, job_id))
     conn.commit()
     conn.close()
 

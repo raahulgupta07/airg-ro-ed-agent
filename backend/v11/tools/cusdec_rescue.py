@@ -16,12 +16,31 @@ except Exception:  # pragma: no cover
     fitz = None
 
 # A page is the MACCS CUSDEC when it carries the tax block + release-order markers.
+# Broadened (v2026.6.x) with generic CUSDEC markers so more declaration pages are
+# caught; the ">= 2 markers" gate below keeps it precise (a licence page rarely
+# carries two of these), so this doesn't false-positive on Appendix-4b pages.
 _MARKERS = (
     "taxes and fees",
     "maccs service fee",
     "import/export customs duty",
     "release order",
+    "cusdec",
+    "customs declaration",
+    "exchange rate",
 )
+
+# Per-currency plausibility band for the FX rate (invoice currency → MMK).
+# A geometry- or regex-derived candidate outside its band is rejected outright,
+# so a stray customs figure can never masquerade as the rate.
+_RATE_BANDS = {
+    "THB": (40.0, 90.0),
+    "USD": (1500.0, 5000.0),
+    "SGD": (1500.0, 2500.0),
+    "CNY": (250.0, 600.0),
+    "EUR": (2000.0, 5000.0),
+    "JPY": (12.0, 40.0),
+    "AUD": (1200.0, 3500.0),
+}
 
 # (declaration field, label as printed on the CUSDEC tax block)
 _TAXES = [
@@ -38,7 +57,7 @@ _TAXES = [
 _PREFER = (
     "import_export_customs_duty", "commercial_tax_ct", "advance_income_tax_at",
     "security_fee_sf", "maccs_service_fee_mf", "total_customs_value",
-    "exchange_rate", "declaration_no",
+    "exchange_rate", "declaration_no", "declaration_date",
     "freight_value", "insurance_value", "adjustment_value",
 )
 
@@ -48,6 +67,131 @@ def _num(s):
         return float(str(s).replace(",", "").strip())
     except Exception:
         return None
+
+
+# yyyy/mm/dd | yyyy-mm-dd | dd/mm/yyyy | dd-mm-yyyy
+_DATE_RE = re.compile(r"\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b|\b(\d{1,2})[-/](\d{1,2})[-/](\d{4})\b")
+# a numeric token that could be an FX rate: 2,100  65.0025  67.2133333  4200
+_RATE_TOK = re.compile(r"^\(?\d{1,3}(?:,\d{3})+(?:\.\d+)?\)?$|^\(?\d{1,4}(?:\.\d+)?\)?$")
+
+
+def _to_iso(s):
+    """Normalise a matched date string to ISO yyyy-mm-dd, or None."""
+    if not s:
+        return None
+    m = _DATE_RE.search(str(s))
+    if not m:
+        return None
+    if m.group(1):  # yyyy-first
+        y, mo, d = m.group(1), m.group(2), m.group(3)
+    else:           # dd-first
+        d, mo, y = m.group(4), m.group(5), m.group(6)
+    try:
+        y, mo, d = int(y), int(mo), int(d)
+        if not (1 <= mo <= 12 and 1 <= d <= 31 and 1900 <= y <= 2100):
+            return None
+        return f"{y:04d}-{mo:02d}-{d:02d}"
+    except Exception:
+        return None
+
+
+def _rate_in_band(rate, currency) -> bool:
+    """True if `rate` is plausible for `currency`. Unknown currency → a broad
+    positive sanity window (1 < rate < 10000) so we still reject obvious junk."""
+    if rate is None:
+        return False
+    band = _RATE_BANDS.get((currency or "").upper())
+    if band:
+        return band[0] <= rate <= band[1]
+    return 1.0 < rate < 10000.0
+
+
+def _row_band(words, y0, tol=4.0):
+    """Words sharing a horizontal row (similar top-y), left-to-right."""
+    band = [w for w in words if abs(w[1] - y0) <= tol]
+    band.sort(key=lambda w: w[0])
+    return band
+
+
+def _geo_exchange_rate(page):
+    """Geometry-anchored FX rate + invoice currency from the CUSDEC page.
+
+    On the MACCS layout the label row reads:  ... Exchange Rate (1) THB - 65.0025
+    so the value is the right-most numeric word in the *same row band* as the
+    "Exchange"/"Rate" label — NOT line-stream order (whose neighbour is the
+    MACCS service fee). Returns (rate|None, currency|None). Never raises.
+    """
+    try:
+        words = page.get_text("words")
+    except Exception:
+        return None, None
+    if not words:
+        return None, None
+    try:
+        # anchor on the "Exchange" label, paired with a "Rate" word to its right
+        for w in words:
+            if w[4].lower() != "exchange":
+                continue
+            band = _row_band(words, w[1])
+            rate_lbl = next((b for b in band
+                             if b[4].lower() == "rate" and b[0] >= w[2] - 1), None)
+            if rate_lbl is None:
+                continue
+            right = [b for b in band if b[0] > rate_lbl[2]]
+            currency = next((b[4].upper() for b in right
+                             if re.fullmatch(r"[A-Za-z]{3}", b[4])), None)
+            # right-most numeric-looking token that parses to a number
+            rate = None
+            for b in reversed(right):
+                if _RATE_TOK.match(b[4]):
+                    v = _num(b[4].strip("()"))
+                    if v is not None:
+                        rate = v
+                        break
+            if rate is not None or currency is not None:
+                return rate, currency
+    except Exception:
+        return None, None
+    return None, None
+
+
+def _geo_decl_date(page):
+    """Geometry-anchored RO/ID (registration) date — the value in the
+    "Declaration date" row, distinct from "Expected declaration date".
+    Returns ISO yyyy-mm-dd or None. Never raises."""
+    try:
+        words = page.get_text("words")
+    except Exception:
+        return None
+    if not words:
+        return None
+    try:
+        for w in words:
+            if w[4].lower() != "declaration":
+                continue
+            band = _row_band(words, w[1])
+            idx = band.index(w)
+            # skip "Expected declaration date" (a word sits to the left in-row)
+            if idx > 0 and band[idx - 1][4].lower() in ("expected", "special"):
+                continue
+            # require the immediately following word to be "date"
+            if idx + 1 >= len(band) or band[idx + 1][4].lower() != "date":
+                continue
+            for b in band[idx + 2:]:
+                iso = _to_iso(b[4])
+                if iso:
+                    return iso
+    except Exception:
+        return None
+    return None
+
+
+def _text_currency(text: str):
+    """Fallback currency read from the text layer (Exchange-Rate context)."""
+    m = re.search(r"exchange\s*rate.{0,20}?\b([A-Z]{3})\b", text, re.I | re.S)
+    if m and m.group(1).upper() in _RATE_BANDS:
+        return m.group(1).upper()
+    return None
 
 
 def _is_cusdec(text: str) -> bool:
@@ -69,11 +213,14 @@ def _adj_num(lines, label):
     return None
 
 
-def _parse(text: str) -> dict:
-    """Pull the tax block + total/rate/decl-no from one CUSDEC page's text.
+def _parse(text: str, page=None) -> dict:
+    """Pull the tax block + total/rate/date/decl-no from one CUSDEC page.
 
     The MACCS text layer extracts in a scrambled order, so each tax amount is
     taken as the numeric line immediately before (or after) its label line.
+    When `page` is supplied the exchange rate and declaration date are resolved
+    by page geometry (row-band anchoring), which is robust to that scrambling;
+    text-layer heuristics are the fallback.
     """
     lines = [x.strip() for x in text.split("\n")]
     out: dict = {}
@@ -84,10 +231,36 @@ def _parse(text: str) -> dict:
                 nxt = _num(lines[i + 1]) if i + 1 < len(lines) else None
                 out[field] = prev if prev is not None else nxt
                 break
-    # Exchange rate: a small decimal (1 < x < 10000) — the THB→MMK rate.
-    rates = [float(x) for x in re.findall(r"\b(\d{1,3}\.\d{2,4})\b", text)
-             if 1 < float(x) < 10000]
-    out["exchange_rate"] = rates[0] if rates else None
+
+    # Exchange rate + invoice currency — geometry first (anchored on the
+    # "Exchange Rate" label row), then a band-filtered regex fallback.
+    rate, currency = (None, None)
+    if page is not None:
+        rate, currency = _geo_exchange_rate(page)
+    if currency is None:
+        currency = _text_currency(text)
+    if not _rate_in_band(rate, currency):
+        rate = None  # geometry candidate failed its currency band → drop it
+    if rate is None:
+        # \d{1,4}\.\d{1,4} allows the 4-digit integer part real USD rates carry,
+        # plus comma-grouped integers (e.g. "2,100"); band-filter picks the FX.
+        cands = [_num(x) for x in re.findall(
+            r"\b(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d{1,4}\.\d{1,4})\b", text)]
+        cands = [c for c in cands if _rate_in_band(c, currency)]
+        rate = cands[0] if cands else None
+    out["exchange_rate"] = rate
+    if currency:
+        out["currency"] = currency
+
+    # Declaration / RO-ID (registration) date — geometry-anchored, ISO yyyy-mm-dd.
+    ddate = _geo_decl_date(page) if page is not None else None
+    if ddate is None:  # line-stream fallback (value printed before its label)
+        for lbl in ("Declaration date", "Registration", "RO/ID Date", "Release order"):
+            ddate = _to_iso(_before(lines, lbl))
+            if ddate:
+                break
+    out["declaration_date"] = ddate
+
     # Total customs value (MMK): the largest 7+ digit decimal on the page.
     big = sorted({_num(x) for x in re.findall(r"\b[\d,]{7,}\.\d{2}\b", text) if _num(x)},
                  reverse=True)
@@ -166,7 +339,7 @@ def cusdec_fields(pdf_path: str):
         except Exception:
             continue
         if _is_cusdec(t):
-            return _parse(t)
+            return _parse(t, page=doc[pg])
     return None
 
 

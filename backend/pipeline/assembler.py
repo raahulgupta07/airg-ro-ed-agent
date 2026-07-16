@@ -1627,9 +1627,35 @@ def normalize_hs_code(value) -> str:
     return f"{d[0:4]}.{d[4:6]}.{d[6:8]} {d[8:].ljust(2, '0')}"
 
 
+def _bld_val(declaration: Dict, *keys) -> float:
+    """First numeric CIF build-up value found under any of the given key spellings
+    (Title Case or snake_case). 0.0 when none present/parseable."""
+    for k in keys:
+        v = declaration.get(k)
+        if v is None:
+            continue
+        try:
+            return float(str(v).replace(",", "").strip())
+        except (ValueError, TypeError):
+            continue
+    return 0.0
+
+
 def validate_arithmetic_closure(declaration: Dict, items: List[Dict]) -> List[str]:
-    """Both equations must close: qty×unit ≈ invoice_price AND price×exch ≈ customs_value.
-    Catches self-consistent wrong currency cases."""
+    """Both equations must close: qty×unit ≈ invoice_price AND basis×exch ≈ customs_value.
+    Catches self-consistent wrong currency cases.
+
+    Eq1 uses the FULL CIF basis (invoice + freight + insurance + adjustment), not the
+    bare invoice price — on CIF/DAP terms the customs value legitimately includes a
+    freight/insurance/commission uplift, so bare invoice×rate is ALWAYS short and used
+    to false-fire HIGH on every such doc, dragging it through the whole (fruitless)
+    arbiter→cell-zoom→cell-zoom-PRO cascade + a recovery re-extraction. When the
+    build-up isn't captured and the customs value merely EXCEEDS invoice×rate (the
+    expected CIF direction), that's a basis gap the reconcile guard handles by math —
+    NOT a misread — so it's emitted LOW (advisory, no vision thrash). HIGH is reserved
+    for genuinely suspicious cases: customs value BELOW invoice×rate, or the build-up
+    supplied and it still doesn't close.
+    """
     flags = []
     try:
         price = float(declaration.get("Invoice Price") or 0)
@@ -1638,13 +1664,24 @@ def validate_arithmetic_closure(declaration: Dict, items: List[Dict]) -> List[st
     except (ValueError, TypeError):
         return flags
 
-    # Eq 1: invoice_price × exch ≈ customs_value (foreign × rate ≈ MMK)
+    # Eq 1: (invoice + freight + insurance + adjustment) × exch ≈ customs_value
     if price > 0 and er > 0 and cv > 0:
-        expected_cv = price * er
+        freight = _bld_val(declaration, "Freight", "Freight Value", "freight_value")
+        insurance = _bld_val(declaration, "Insurance", "Insurance Value", "insurance_value")
+        adjustment = _bld_val(declaration, "Adjustment", "Adjustment Value", "adjustment_value")
+        build_up = freight + insurance + adjustment
+        basis = price + build_up
+        expected_cv = basis * er
         if expected_cv > 0:
             ratio = cv / expected_cv
             if ratio < 0.85 or ratio > 1.15:
-                flags.append(f"closure_eq1:HIGH:price×exch={expected_cv:.0f}_vs_cv={cv:.0f}_ratio={ratio:.2f}")
+                # A missing/partial build-up that only makes the customs value LARGER
+                # is the expected CIF uplift, not a misread → advisory, skip the cascade.
+                basis_gap = (build_up == 0 and ratio > 1.15)
+                sev = "LOW" if basis_gap else "HIGH"
+                tag = "basis_gap_" if basis_gap else ""
+                flags.append(f"closure_eq1:{sev}:{tag}basis×exch={expected_cv:.0f}"
+                             f"_vs_cv={cv:.0f}_ratio={ratio:.2f}")
 
     # Eq 2: Σ(qty × unit_price) ≈ invoice_price (single item only — multi-item already cross-validated)
     if items and len(items) == 1 and price > 0:
