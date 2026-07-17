@@ -25,7 +25,10 @@
     {
       title: 'ROVER',
       items: [
-        { label: 'ROVER Review', href: '/rover', icon: '◆', page: 'rover' },
+        { label: 'Process',      href: '/rover/process',      icon: '⇪', page: 'rover' },
+        { label: 'History',      href: '/rover/history',      icon: '▤', page: 'rover' },
+        { label: 'Items',        href: '/rover/items',        icon: '≣', page: 'rover' },
+        { label: 'Declarations', href: '/rover/declarations', icon: '▣', page: 'rover' },
       ],
     },
     {

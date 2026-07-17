@@ -161,6 +161,12 @@ export const api = {
     request<any>(`/rover/review/${encodeURIComponent(docId)}/apply`, {
       method: 'POST', body: JSON.stringify({ corrections }),
     }),
+  roverPending: () => request<any[]>('/rover/pending'),
+  roverHistory: () => request<any[]>('/rover/history'),
+  roverApprove: (docId: string, corrections: Record<string, any>) =>
+    request<any>(`/rover/documents/${encodeURIComponent(docId)}/approve`, {
+      method: 'POST', body: JSON.stringify({ corrections }),
+    }),
   // annotated PNG needs the auth header, so fetch as a blob and return an object URL
   roverAnnotateUrl: async (docId: string): Promise<string> => {
     await auth.ensureValidToken();
@@ -170,6 +176,23 @@ export const api = {
     if (!res.ok) throw new Error('annotate failed');
     return URL.createObjectURL(await res.blob());
   },
+  // full source PDF (all pages) as an authed object URL for inline <iframe> viewing
+  roverPdfUrl: async (docId: string): Promise<string> => {
+    await auth.ensureValidToken();
+    const res = await fetch(`${BASE}/rover/documents/${encodeURIComponent(docId)}/pdf`, {
+      headers: auth.token ? { Authorization: `Bearer ${auth.token}` } : {},
+    });
+    if (!res.ok) throw new Error('pdf failed');
+    return URL.createObjectURL(await res.blob());
+  },
+
+  // ROVER Report Builder — OLAP-style cube over extracted documents/products
+  cubeFields: (grain: string) => request<any>(`/rover/cube/fields?grain=${encodeURIComponent(grain)}`),
+  cubeRun: (spec: any) => request<any>('/rover/cube/run', { method: 'POST', body: JSON.stringify(spec) }),
+  cubeSave: (spec: any) => request<any>('/rover/cube/save', { method: 'POST', body: JSON.stringify(spec) }),
+  cubeList: () => request<any[]>('/rover/cube/list'),
+  cubeGet: (name: string) => request<any>(`/rover/cube/${encodeURIComponent(name)}`),
+  cubeDelete: (name: string) => request<any>(`/rover/cube/${encodeURIComponent(name)}`, { method: 'DELETE' }),
 
   // Health
   health: () => request<any>('/health'),

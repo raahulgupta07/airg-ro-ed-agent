@@ -1,5 +1,6 @@
 """OpenRouter call (project rule: OpenRouter ONLY, never a direct vendor SDK).
 Shared by the vision fleet and the challenger. Retries + 429 backoff."""
+import base64
 import json
 import os
 import re
@@ -15,6 +16,17 @@ URL = "https://openrouter.ai/api/v1/chat/completions"
 
 PRIMARY = os.environ.get("ROVER_PRIMARY_MODEL", "x-ai/grok-4.5")
 CHALLENGER = os.environ.get("ROVER_CHALLENGER_MODEL", "openai/gpt-5.6-luna-pro")
+
+
+def pdf_content(pdf_path: str) -> list:
+    """Native-PDF content block for PDF-capable models (Gemini / Claude on
+    OpenRouter). The model reads the doc's text layer directly (no OCR of a
+    downscaled JPEG) — higher accuracy + far fewer tokens than page-images.
+    Image-only models (grok) must NOT be fed this; use router.image_content."""
+    b64 = base64.b64encode(open(pdf_path, "rb").read()).decode()
+    return [{"type": "file",
+             "file": {"filename": "doc.pdf",
+                      "file_data": f"data:application/pdf;base64,{b64}"}}]
 
 
 def call(model: str, prompt: str, image_content: list, max_tokens: int = 3000):

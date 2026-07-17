@@ -40,7 +40,7 @@ _COLS = ["declaration_no", "declaration_no_official", "declaration_date",
 
 def run(image_content: List[dict], model: str = None) -> Dict[str, Cell]:
     model = model or llm.PRIMARY
-    parsed, raw, usage, err = llm.call(model, _PROMPT, image_content)
+    parsed, raw, usage, err = llm.call(model, _PROMPT, image_content, max_tokens=8000)
     out = {"_usage": usage, "_err": err}
     items = (parsed or {}).get("items") if isinstance(parsed, dict) else None
     out["_items"] = items if isinstance(items, list) else []

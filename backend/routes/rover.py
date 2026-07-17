@@ -17,9 +17,13 @@ an authenticated user; every body is wrapped in try/except → HTTPException(500
 """
 import os
 import tempfile
+import asyncio
+import queue
+import threading
+import json
 from typing import Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Body
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from middleware import get_current_user
@@ -66,20 +70,63 @@ def _process_pdf(dest: str):
 
 
 @router.post("/upload")
-async def upload(background: BackgroundTasks, file: UploadFile = File(...),
+async def upload(file: UploadFile = File(...),
                  user=Depends(get_current_user)):
-    """Accept a PDF, kick off ROVER extraction in the background, return at once.
-    The client polls /documents until the new doc appears."""
+    """Accept a PDF and stage it. Extraction is driven separately by the client
+    via GET /extract/stream?pdf=<name>, which streams live progress over SSE."""
     try:
         os.makedirs(_UPLOAD_DIR, exist_ok=True)
         safe = os.path.basename(file.filename or "upload.pdf")
         dest = os.path.join(_UPLOAD_DIR, safe)
         with open(dest, "wb") as fh:
             fh.write(await file.read())
-        background.add_task(_process_pdf, dest)
-        return {"status": "processing", "pdf": safe}
+        return {"status": "staged", "pdf": safe}
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+@router.get("/extract/stream")
+async def extract_stream(pdf: str, user=Depends(get_current_user)):
+    """Run ROVER on a staged PDF and stream live pipeline progress as SSE.
+    Emits `log` events (one per pipeline checkpoint), then a terminal `done`
+    (with doc_id) or `error` event. The heavy pipeline runs in a worker thread;
+    its log callback hands lines to a queue drained by the async generator."""
+    dest = os.path.join(_UPLOAD_DIR, os.path.basename(pdf))
+    if not os.path.exists(dest):
+        raise HTTPException(404, "staged PDF not found")
+
+    q: "queue.Queue" = queue.Queue()
+
+    def worker():
+        try:
+            from rover import pipeline_fast, store
+            res = pipeline_fast.run(dest, on_log=lambda ev: q.put(("log", ev)))
+            doc_id = store.save_document(res)
+            q.put(("done", {
+                "doc_id": doc_id,
+                "needs_review": res.get("needs_review"),
+                "n_items": res.get("n_items"),
+            }))
+        except Exception as e:
+            q.put(("error", {"msg": str(e)}))
+        finally:
+            q.put((None, None))
+
+    threading.Thread(target=worker, daemon=True).start()
+
+    async def gen():
+        loop = asyncio.get_event_loop()
+        while True:
+            kind, data = await loop.run_in_executor(None, q.get)
+            if kind is None:
+                break
+            yield f"event: {kind}\ndata: {json.dumps(data)}\n\n"
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/documents")
@@ -157,6 +204,59 @@ async def export_csv(user=Depends(get_current_user)):
         raise HTTPException(500, str(e))
 
 
+_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+@router.get("/export.xlsx")
+async def export_xlsx(user=Depends(get_current_user)):
+    """Excel report of the whole store — Documents sheet + Products sheet."""
+    try:
+        from rover import excel
+        data = excel.workbook_bytes()
+        return Response(content=data, media_type=_XLSX,
+                        headers={"Content-Disposition": "attachment; filename=rover_report.xlsx"})
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.get("/documents/{doc_id}/export.xlsx")
+async def export_doc_xlsx(doc_id: str, user=Depends(get_current_user)):
+    """Excel report for one document — Fields sheet (with evidence) + Products."""
+    try:
+        from rover import store, excel
+        doc = store.load_document(doc_id)
+        if doc is None:
+            raise HTTPException(404, "document not found")
+        data = excel.one_doc_bytes(doc)
+        return Response(content=data, media_type=_XLSX,
+                        headers={"Content-Disposition": f"attachment; filename={doc_id}.xlsx"})
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.get("/documents/{doc_id}/pdf")
+async def document_pdf(doc_id: str, user=Depends(get_current_user)):
+    """Serve the original source PDF (all pages) for inline viewing."""
+    try:
+        from rover import store
+        doc = store.load_document(doc_id)
+        if doc is None:
+            raise HTTPException(404, "document not found")
+        name = doc.get("pdf") or ""
+        for pdf_dir in (_UPLOAD_DIR, "/app/data/_uat_test"):
+            path = os.path.join(pdf_dir, name)
+            if name and os.path.exists(path):
+                return FileResponse(path, media_type="application/pdf",
+                                    headers={"Content-Disposition": f"inline; filename={name}"})
+        raise HTTPException(404, "source PDF not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @router.get("/annotate/{doc_id}")
 async def annotate(doc_id: str, user=Depends(get_current_user)):
     try:
@@ -174,6 +274,150 @@ async def annotate(doc_id: str, user=Depends(get_current_user)):
         if not paths:
             raise HTTPException(404, "no annotation available")
         return FileResponse(paths[0], media_type="image/png")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# --------------------------------------------------------------------------- #
+# CUBE / REPORT ENGINE
+# --------------------------------------------------------------------------- #
+@router.get("/cube/fields")
+async def cube_fields(grain: str = "document", user=Depends(get_current_user)):
+    try:
+        from rover import cube
+        return cube.discover_fields(grain)
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/cube/run")
+async def cube_run(spec: dict = Body(...), user=Depends(get_current_user)):
+    try:
+        from rover import cube
+        return cube.run_cube(spec)
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/cube/save")
+async def cube_save(spec: dict = Body(...), user=Depends(get_current_user)):
+    try:
+        from rover import cube
+        return {"name": cube.save_cube(spec)}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.get("/cube/list")
+async def cube_list(user=Depends(get_current_user)):
+    try:
+        from rover import cube
+        return cube.list_cubes()
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.get("/cube/{name}")
+async def cube_get(name: str, user=Depends(get_current_user)):
+    try:
+        from rover import cube
+        spec = cube.load_cube(name)
+        if spec is None:
+            raise HTTPException(404, "cube not found")
+        return spec
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.delete("/cube/{name}")
+async def cube_delete(name: str, user=Depends(get_current_user)):
+    try:
+        from rover import cube
+        return {"deleted": cube.delete_cube(name)}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.get("/cube/{name}/run")
+async def cube_named_run(name: str, user=Depends(get_current_user)):
+    try:
+        from rover import cube
+        spec = cube.load_cube(name)
+        if spec is None:
+            raise HTTPException(404, "cube not found")
+        return cube.run_cube(spec)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# --------------------------------------------------------------------------- #
+# APPROVAL WORKFLOW — uploads are PENDING until a human approves; approved docs
+# move to History. `approved` lives on each document (see rover/store_pg.py).
+# --------------------------------------------------------------------------- #
+class ApproveReq(BaseModel):
+    corrections: dict = {}
+
+
+@router.post("/documents/{doc_id}/approve")
+async def approve(doc_id: str, req: ApproveReq, user=Depends(get_current_user)):
+    """Approve a document (optionally applying {column: value} corrections),
+    moving it out of the pending queue into History. 404 if the doc is absent."""
+    try:
+        from rover import store
+        username = getattr(user, "username", None) or (
+            user.get("username") if isinstance(user, dict) else "admin"
+        )
+        doc = store.approve_document(doc_id, req.corrections, username)
+        if doc is None:
+            raise HTTPException(404, "document not found")
+        return doc
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.get("/pending")
+async def pending(user=Depends(get_current_user)):
+    """Review inbox — documents awaiting human approval."""
+    try:
+        from rover import store
+        return [r for r in store.overall_rows() if not r.get("approved")]
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.get("/history")
+async def history(user=Depends(get_current_user)):
+    """Approved documents, newest approval first."""
+    try:
+        from rover import store
+        rows = [r for r in store.overall_rows() if r.get("approved")]
+        rows.sort(key=lambda r: r.get("approved_at") or "", reverse=True)
+        return rows
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.get("/cube/{name}/export.csv")
+async def cube_export_csv(name: str, user=Depends(get_current_user)):
+    try:
+        from rover import cube
+        spec = cube.load_cube(name)
+        if spec is None:
+            raise HTTPException(404, "cube not found")
+        csv_text = cube.to_csv(cube.run_cube(spec))
+        fd, path = tempfile.mkstemp(suffix=".csv", prefix="rover_cube_")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(csv_text)
+        return FileResponse(path, media_type="text/csv",
+                            filename=cube._sanitize(name) + ".csv")
     except HTTPException:
         raise
     except Exception as e:

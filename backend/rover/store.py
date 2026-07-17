@@ -93,6 +93,38 @@ def all_documents() -> list:
     return docs
 
 
+def approve_document(doc_id, corrections=None, user=None):
+    """File-store approve: load JSON, apply {column: value} corrections, mark it
+    approved (out of the review queue), save back. Fail-safe → None if missing."""
+    try:
+        doc = load_document(doc_id)
+        if doc is None:
+            return None
+        corrections = corrections or {}
+        values = doc.setdefault("values", {})
+        record = doc.get("record")
+        confirmed = []
+        for col, val in corrections.items():
+            values[col] = val
+            if isinstance(record, dict) and isinstance(record.get(col), dict):
+                cell = record[col]
+                cell["value"] = val
+                cell["status"] = "confirmed"
+                cell["model"] = "human"
+            confirmed.append(col)
+        import datetime as _dt
+        doc["approved"] = True
+        doc["approved_at"] = _dt.datetime.utcnow().isoformat()
+        doc["approved_by"] = user
+        doc["needs_review"] = False
+        if confirmed:
+            doc["suspect"] = [c for c in (doc.get("suspect") or []) if c not in confirmed]
+        save_document(doc)
+        return load_document(doc_id)
+    except Exception:
+        return None
+
+
 # --------------------------------------------------------------------------- #
 # row projections (grains)
 # --------------------------------------------------------------------------- #
@@ -257,6 +289,7 @@ if _BACKEND == "pg":
         from . import store_pg as _pg
 
         save_document = _pg.save_document
+        approve_document = _pg.approve_document
         load_document = _pg.load_document
         list_document_ids = _pg.list_document_ids
         all_documents = _pg.all_documents

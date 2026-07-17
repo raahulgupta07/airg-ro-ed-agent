@@ -53,8 +53,12 @@ def ensure_tables():
                 created_at   TIMESTAMPTZ DEFAULT now()
             )
         """)
-        # for tables created before `raw` existed
+        # for tables created before these columns existed
         cur.execute("ALTER TABLE rover_documents ADD COLUMN IF NOT EXISTS raw JSONB")
+        cur.execute("ALTER TABLE rover_documents ADD COLUMN IF NOT EXISTS job_id TEXT")
+        cur.execute("ALTER TABLE rover_documents ADD COLUMN IF NOT EXISTS approved BOOLEAN DEFAULT FALSE")
+        cur.execute("ALTER TABLE rover_documents ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ")
+        cur.execute("ALTER TABLE rover_documents ADD COLUMN IF NOT EXISTS approved_by TEXT")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS rover_items (
                 id          BIGSERIAL PRIMARY KEY,
@@ -159,6 +163,14 @@ def _item_get(item, *keys):
     return None
 
 
+def _gen_job_id(doc_id: str = "") -> str:
+    """A stable, human-readable id for one extraction run."""
+    import datetime as _dt
+    import secrets as _sec
+    ts = _dt.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    return f"JOB_{ts}_{_sec.token_hex(3)}"
+
+
 def _row_to_doc(row):
     """Reconstruct a result-shaped dict from a rover_documents row (dict-like).
     Prefer the full stored `raw` result (record/evidence, notes, …) when present;
@@ -166,6 +178,11 @@ def _row_to_doc(row):
     raw = _loads(row.get("raw"))
     if isinstance(raw, dict) and raw:
         raw["_stored_id"] = row.get("doc_id")
+        raw["job_id"] = row.get("job_id") or raw.get("job_id")
+        raw["pdf"] = raw.get("pdf") or row.get("pdf")
+        raw["approved"] = row.get("approved")
+        raw["approved_at"] = row.get("approved_at")
+        raw["approved_by"] = row.get("approved_by")
         return raw
     return {
         "pdf": row.get("pdf"),
@@ -175,6 +192,10 @@ def _row_to_doc(row):
         "suspect": _loads(row.get("suspect")),
         "reviewed": row.get("reviewed"),
         "cost": row.get("cost"),
+        "job_id": row.get("job_id"),
+        "approved": row.get("approved"),
+        "approved_at": row.get("approved_at"),
+        "approved_by": row.get("approved_by"),
         "_stored_id": row.get("doc_id"),
     }
 
@@ -192,13 +213,17 @@ def save_document(result: dict) -> str:
     try:
         header = result.get("values") or {}
         items = result.get("items") or []
+        # stable job id per extraction run (kept if the caller already set one)
+        job_id = result.get("job_id") or _gen_job_id(doc_id)
+        result["job_id"] = job_id
         conn = _conn()
         cur = conn.cursor()
         cur.execute(
             """
             INSERT INTO rover_documents
-                (doc_id, pdf, header, items, needs_review, suspect, cost, raw)
-            VALUES (?, ?, ?::jsonb, ?::jsonb, ?, ?::jsonb, ?, ?::jsonb)
+                (doc_id, pdf, header, items, needs_review, suspect, cost, raw, job_id,
+                 approved, approved_at, approved_by)
+            VALUES (?, ?, ?::jsonb, ?::jsonb, ?, ?::jsonb, ?, ?::jsonb, ?, ?, ?, ?)
             ON CONFLICT (doc_id) DO UPDATE SET
                 pdf          = EXCLUDED.pdf,
                 header       = EXCLUDED.header,
@@ -206,7 +231,11 @@ def save_document(result: dict) -> str:
                 needs_review = EXCLUDED.needs_review,
                 suspect      = EXCLUDED.suspect,
                 cost         = EXCLUDED.cost,
-                raw          = EXCLUDED.raw
+                raw          = EXCLUDED.raw,
+                job_id       = COALESCE(rover_documents.job_id, EXCLUDED.job_id),
+                approved     = COALESCE(rover_documents.approved, EXCLUDED.approved),
+                approved_at  = COALESCE(rover_documents.approved_at, EXCLUDED.approved_at),
+                approved_by  = COALESCE(rover_documents.approved_by, EXCLUDED.approved_by)
             """,
             (
                 doc_id,
@@ -217,6 +246,10 @@ def save_document(result: dict) -> str:
                 _dumps(result.get("suspect")),
                 _num(result.get("cost")),
                 _dumps(result),          # full raw result — record/evidence, notes, etc.
+                job_id,
+                bool(result.get("approved")),
+                result.get("approved_at"),
+                result.get("approved_by"),
             ),
         )
         # Replace line-item rows for this doc.
@@ -329,31 +362,95 @@ def all_documents() -> list:
                 pass
 
 
+def approve_document(doc_id, corrections=None, user=None):
+    """Approve one document: apply optional {column: value} corrections, mark it
+    approved and move it out of the review queue. Persists via save_document (for
+    the corrected values) then a direct UPDATE of the approval columns, because
+    save_document's COALESCE would otherwise preserve the old approved=False.
+    Fail-safe — returns the updated doc, or None on any error/missing doc."""
+    ensure_tables()
+    try:
+        doc = load_document(doc_id)
+        if doc is None:
+            return None
+        corrections = corrections or {}
+        values = doc.setdefault("values", {})
+        record = doc.get("record")
+        confirmed = []
+        for col, val in corrections.items():
+            values[col] = val
+            if isinstance(record, dict) and isinstance(record.get(col), dict):
+                cell = record[col]
+                cell["value"] = val
+                cell["status"] = "confirmed"
+                cell["model"] = "human"
+            confirmed.append(col)
+        doc["approved"] = True
+        doc["approved_by"] = user
+        doc["needs_review"] = False
+        if confirmed:
+            doc["suspect"] = [c for c in (doc.get("suspect") or []) if c not in confirmed]
+        # persist the mutated values/record (approval cols are COALESCE-preserved
+        # to the OLD False here, so stamp them directly right after).
+        save_document(doc)
+        conn = None
+        try:
+            conn = _conn()
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE rover_documents SET approved = TRUE, approved_at = now(), "
+                "approved_by = ? WHERE doc_id = ?",
+                (user, str(_doc_id(doc))),
+            )
+            conn.commit()
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+        return load_document(doc_id)
+    except Exception as exc:
+        print(f"[rover.store_pg.approve_document] {exc}")
+        return None
+
+
 # --------------------------------------------------------------------------- #
 # row projections (grains) — same shapes as store.py, computed in Python
 # --------------------------------------------------------------------------- #
+def _doc_meta(doc):
+    return {
+        "doc_id": doc.get("_stored_id") or _doc_id(doc),
+        "job_id": doc.get("job_id"),
+        "document_name": doc.get("pdf"),
+        "pdf": doc.get("pdf"),
+        "approved": doc.get("approved"),
+        "approved_at": doc.get("approved_at"),
+        "approved_by": doc.get("approved_by"),
+    }
+
+
 def overall_rows() -> list:
-    """One flat row per document: header values + doc_id/pdf/needs_review."""
+    """One flat row per document: header values + doc_id/job_id/document_name/review."""
     rows = []
     for doc in all_documents():
         row = dict(doc.get("values") or {})
-        row["doc_id"] = doc.get("_stored_id") or _doc_id(doc)
-        row["pdf"] = doc.get("pdf")
+        row.update(_doc_meta(doc))
         row["needs_review"] = doc.get("needs_review")
         rows.append(row)
     return rows
 
 
 def product_rows() -> list:
-    """One flat row per line item across all documents: item fields + doc_id."""
+    """One flat row per line item: item fields + doc_id/job_id/document_name."""
     rows = []
     for doc in all_documents():
-        doc_id = doc.get("_stored_id") or _doc_id(doc)
+        meta = _doc_meta(doc)
         for item in doc.get("items") or []:
             if not isinstance(item, dict):
                 continue
             row = dict(item)
-            row["doc_id"] = doc_id
+            row.update(meta)
             rows.append(row)
     return rows
 
@@ -363,19 +460,19 @@ def joined_rows() -> list:
     clash). Documents with zero items contribute one header-only row."""
     rows = []
     for doc in all_documents():
-        doc_id = doc.get("_stored_id") or _doc_id(doc)
+        meta = _doc_meta(doc)
         header = dict(doc.get("values") or {})
         items = doc.get("items") or []
         if not items:
             row = dict(header)
-            row["doc_id"] = doc_id
+            row.update(meta)
             rows.append(row)
             continue
         for item in items:
             row = dict(header)
             if isinstance(item, dict):
                 row.update(item)  # item field wins on clash
-            row["doc_id"] = doc_id
+            row.update(meta)      # doc_id/job_id/document_name always present
             rows.append(row)
     return rows
 

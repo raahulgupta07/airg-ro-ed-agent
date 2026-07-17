@@ -53,6 +53,9 @@ services:
       DATABASE_URL: postgresql+psycopg://ro_ed:${PG_PASSWORD:-ro_ed_dev_pass}@postgres:5432/ro_ed
       REDIS_URL: redis://redis:6379/0
       ROVER_STORE: "pg"          # ROVER persists extractions to Postgres (rover_documents/items/reports)
+      ROVER_PDF_NATIVE: "1"                          # primary reader gets the raw PDF (text layer), not JPEGs
+      ROVER_PRIMARY_MODEL: "google/gemini-3.5-flash" # PDF-capable primary; grok stays image-only challenger
+      ROVER_CHALLENGER_MODEL: "x-ai/grok-4.5"        # second opinion on math-flagged fields (images)
     volumes:
       - app-data:/app/data
     depends_on:
@@ -86,6 +89,9 @@ services:
       DATABASE_URL: postgresql+psycopg://ro_ed:${PG_PASSWORD:-ro_ed_dev_pass}@postgres:5432/ro_ed
       REDIS_URL: redis://redis:6379/0
       ROVER_STORE: "pg"          # ROVER persists extractions to Postgres (rover_documents/items/reports)
+      ROVER_PDF_NATIVE: "1"                          # primary reader gets the raw PDF (text layer), not JPEGs
+      ROVER_PRIMARY_MODEL: "google/gemini-3.5-flash" # PDF-capable primary; grok stays image-only challenger
+      ROVER_CHALLENGER_MODEL: "x-ai/grok-4.5"        # second opinion on math-flagged fields (images)
     volumes:
       - app-data:/app/data
     depends_on:
