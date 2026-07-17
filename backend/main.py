@@ -219,6 +219,8 @@ from routes import ldap as ldap_routes
 from routes import activity as activity_routes
 from routes import storage as storage_routes
 from routes import review as review_routes
+from routes import learn as learn_routes
+from routes import rover as rover_routes
 app.include_router(auth_routes.router, prefix="/api/auth", tags=["auth"])
 app.include_router(job_routes.router, prefix="/api/jobs", tags=["jobs"])
 app.include_router(user_routes.router, prefix="/api/users", tags=["users"])
@@ -227,10 +229,12 @@ app.include_router(settings_routes.router, prefix="/api/settings", tags=["settin
 app.include_router(group_routes.router, prefix="/api/groups", tags=["groups"])
 app.include_router(correction_routes.router, prefix="/api/corrections", tags=["corrections"])
 app.include_router(usage_routes.router, prefix="/api/usage", tags=["usage"])
+app.include_router(learn_routes.router, prefix="/api/learn", tags=["learn"])
 app.include_router(ldap_routes.router, prefix="/api/ldap", tags=["ldap"])
 app.include_router(activity_routes.router, prefix="/api/activity", tags=["activity"])
 app.include_router(storage_routes.router, prefix="/api/storage", tags=["storage"])
 app.include_router(review_routes.router, prefix="/api/review", tags=["review"])
+app.include_router(rover_routes.router, prefix="/api/rover", tags=["rover"])
 
 
 @app.post("/api/extract")

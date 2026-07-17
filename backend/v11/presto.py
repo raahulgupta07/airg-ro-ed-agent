@@ -181,20 +181,37 @@ def _find_bbox(value, words_by_page) -> Optional[dict]:
     return None
 
 
+def _primary_hints(importer_name: Optional[str]) -> str:
+    """Flag-gated learned-correction hint block (LEARN_FEWSHOT_PRIMARY). Never
+    raises — an inert/empty learner degrades to no injection."""
+    try:
+        from v11.learn import fewshot
+        return fewshot.primary_hint_block(importer_name) or ""
+    except Exception:
+        return ""
+
+
 def run(pdf_path: str, pages: Optional[List[int]] = None,
-        model: Optional[str] = None) -> Dict:
+        model: Optional[str] = None, importer_name: Optional[str] = None) -> Dict:
     """Extract a typed/digital PDF via the text layer + one LLM call.
 
     Returns a V7-shaped dict: declaration, items, document_format, cost_usd,
     tokens_in/out, cost_breakdown, duration_seconds, plus presto diagnostics.
+
+    When LEARN_FEWSHOT_PRIMARY is on, a values-free attention list of the fields
+    reviewers most often correct (+ per-importer value hints if importer_name is
+    known) is prepended to the prompt — the Phase-1 self-improvement loop.
     """
     t0 = time.time()
     model = model or config.EXTRACTION_MODEL
     full_text, words_by_page = _extract_words(pdf_path, pages)
 
+    hints = _primary_hints(importer_name)
+    prompt = (hints + "\n" + PROMPT) if hints else PROMPT
+
     payload = {
         "model": model,
-        "messages": [{"role": "user", "content": PROMPT + full_text}],
+        "messages": [{"role": "user", "content": prompt + full_text}],
         "temperature": 0,
         "max_tokens": 8000,
         "response_format": {"type": "json_object"},
@@ -271,6 +288,7 @@ def run(pdf_path: str, pages: Optional[List[int]] = None,
             "pages": sorted(words_by_page.keys()),
             "field_confidence": result.field_confidence,
             "text_chars": len(full_text),
+            "fewshot_injected": bool(hints),
             "error": err,
         },
     }

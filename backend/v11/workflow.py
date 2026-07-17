@@ -996,7 +996,14 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
                 # present). On an incomplete basis `derived_rate` over-estimates, so we
                 # never overwrite with it — we flag for human review instead. Fail-closed
                 # either way: a suspect rate never ships silently.
-                _corrected = bool(_dr and verdict.get("derived_trustworthy"))
+                # Never overwrite a printed rate that is already inside its currency
+                # band — that value was read straight off the doc and the derivation
+                # can be skewed by a misread basis (adjustment code "2" vs the real
+                # 44,612.82). Auto-correct only when the extracted rate is missing or
+                # out-of-band (the genuine failures: 500 for USD, 636 for THB) AND the
+                # derivation is trustworthy. Fail-closed either way: still forced review.
+                _corrected = bool(_dr and verdict.get("derived_trustworthy")
+                                  and not verdict.get("extracted_in_band"))
                 if _corrected:
                     _decl["exchange_rate"] = _dr   # existing column; audit in reconcile
                     out["declaration"] = _decl

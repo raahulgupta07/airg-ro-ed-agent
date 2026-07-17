@@ -2434,6 +2434,71 @@ def update_field_accuracy(importer_name: str, field_key: str, was_corrected: boo
     conn.close()
 
 
+def bump_field_correction(importer_name: str, field_key: str):
+    """Record a HUMAN correction against (importer, field) WITHOUT inflating
+    total_extractions (extractions are counted separately at save time via
+    update_field_accuracy(was_corrected=False)). Keeps the weakspots error-rate
+    = corrections_count / total_extractions meaningful. Never raises."""
+    try:
+        norm = _normalize_importer(importer_name)
+        if not norm or not field_key:
+            return
+        conn = _connect()
+        # Ensure a row exists (a correction can arrive before a total was booked),
+        # then bump corrections_count + stamp last_correction_at. If the row is
+        # created here total_extractions starts at 1 so the ratio stays sane.
+        conn.execute("""
+            INSERT INTO field_accuracy (importer_name_normalized, field_key, total_extractions, corrections_count, last_correction_at)
+            VALUES (?, ?, 1, 1, datetime('now'))
+            ON CONFLICT(importer_name_normalized, field_key)
+            DO UPDATE SET
+                corrections_count = corrections_count + 1,
+                last_correction_at = datetime('now')
+        """, (norm, field_key))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def get_approved_jobs_full(limit: Optional[int] = None) -> list:
+    """Approved jobs with their declaration + items — the ground-truth corpus
+    (Phase-6 self-improvement: regenerate a golden set from real review). Returns
+    ``[{job_id, pdf_name, pdf_hash, declaration:{...}, items:[...]}, ...]``.
+    Never raises → ``[]`` on any error."""
+    try:
+        conn = _connect()
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        q = ("SELECT job_id, pdf_name, pdf_hash FROM jobs "
+             "WHERE review_status = 'approved' ORDER BY created_at DESC")
+        if limit:
+            q += f" LIMIT {int(limit)}"
+        jobs = [dict(r) for r in cur.execute(q).fetchall()]
+        out = []
+        for j in jobs:
+            jid = j["job_id"]
+            decl_rows = cur.execute(
+                "SELECT * FROM declarations WHERE job_id = ?", (jid,)).fetchall()
+            decl = dict(decl_rows[0]) if decl_rows else {}
+            item_rows = cur.execute(
+                "SELECT * FROM items WHERE job_id = ? AND COALESCE(is_deleted,0)=0 "
+                "ORDER BY COALESCE(display_order, id)", (jid,)).fetchall()
+            out.append({
+                "job_id": jid,
+                "pdf_name": j.get("pdf_name"),
+                "pdf_hash": j.get("pdf_hash"),
+                "declaration": {k: v for k, v in decl.items()
+                                if k not in ("id", "job_id")},
+                "items": [{k: v for k, v in dict(it).items()
+                           if k not in ("id", "job_id")} for it in item_rows],
+            })
+        conn.close()
+        return out
+    except Exception:
+        return []
+
+
 def get_recent_declarations_by_importer(importer_name: str, limit: int = 5) -> list:
     """Recent declarations for same importer — for baseline cross-check."""
     if not importer_name:

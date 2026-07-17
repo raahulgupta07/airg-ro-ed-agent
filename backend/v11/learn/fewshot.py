@@ -46,7 +46,8 @@ CLI
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Optional
+import os
+from typing import Dict, List, Optional, Tuple
 
 from v11.learn.priors import _norm_importer
 
@@ -224,6 +225,146 @@ def prompt_block(importer_name: str, limit: int = DEFAULT_LIMIT) -> str:
             lines.append(f"  - {field} should be {new}")
     # Trailing newline so the block sits cleanly when appended to a prompt.
     return "\n".join(lines) + "\n"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PRIMARY-PASS hints (Phase 1 self-improvement — inject into Presto/Scribe)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# The importer is usually UNKNOWN before extraction runs, so the primary pass
+# cannot use the per-importer value hints above (an exchange_rate that was right
+# for one importer's THB doc would mislead another's USD doc). Instead the
+# primary pass gets a *values-free ATTENTION list*: the fields human reviewers
+# correct most often, so the model spends extra care exactly where it historically
+# errs. Per-importer value hints are still layered on when the importer IS known
+# (e.g. a rerun / correction-driven re-extract passes it in).
+#
+# Everything here is flag-gated (LEARN_FEWSHOT_PRIMARY) and fails safe to "".
+
+#: How many distinct frequently-corrected fields to surface in the attention list.
+ATTENTION_LIMIT = 8
+#: A field must have been corrected at least this many times to be surfaced —
+#: keeps one-off edits out of the attention list.
+ATTENTION_MIN_COUNT = 2
+
+
+def _flag(name: str, default: str = "0") -> bool:
+    return str(os.getenv(name, default)).strip().lower() in ("1", "true", "yes", "on")
+
+
+def frequently_corrected_fields(limit: int = ATTENTION_LIMIT,
+                                min_count: int = ATTENTION_MIN_COUNT) -> List[Tuple[str, int]]:
+    """The most-corrected declaration fields across ALL importers, as
+    ``[(field_name, times_corrected), ...]`` most-corrected first. Values-free
+    aggregate — safe to show on any document. Returns ``[]`` on empty DB / error."""
+    if database is None:
+        return []
+    conn = None
+    try:
+        conn = database._connect()
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT fe.field_name AS field_name, COUNT(*) AS n
+            FROM field_edits fe
+            WHERE fe.field_name IS NOT NULL AND TRIM(fe.field_name) <> ''
+              AND fe.corrected_value IS NOT NULL
+              AND TRIM(COALESCE(fe.corrected_value,'')) <> ''
+              AND COALESCE(fe.original_value,'') <> COALESCE(fe.corrected_value,'')
+            GROUP BY fe.field_name
+            ORDER BY n DESC
+            LIMIT ?
+            """,
+            (max(1, int(limit)) * 3,),  # over-fetch, then min_count filter in Python
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        logger.debug("frequently_corrected_fields failed: %s", exc)
+        _safe_close(conn)
+        return []
+    _safe_close(conn)
+
+    out: List[Tuple[str, int]] = []
+    for r in rows:
+        field = _clean(r.get("field_name"))
+        try:
+            n = int(r.get("n") or 0)
+        except (TypeError, ValueError):
+            n = 0
+        if field and n >= min_count:
+            out.append((field, n))
+        if len(out) >= limit:
+            break
+    return out
+
+
+def attention_block(limit: int = ATTENTION_LIMIT) -> str:
+    """Render the values-free attention list. ``""`` when nothing qualifies."""
+    fields = frequently_corrected_fields(limit=limit)
+    if not fields:
+        return ""
+    names = ", ".join(f for f, _ in fields)
+    return (
+        "Fields human reviewers have most often had to correct on past documents "
+        "(extract these with extra care and double-check them against the rest of "
+        "the page before finalizing): " + names + ".\n"
+    )
+
+
+def primary_hint_block(importer_name: Optional[str] = None,
+                       limit: int = ATTENTION_LIMIT) -> str:
+    """Prompt hint for the PRIMARY extraction pass (Presto / Scribe).
+
+    Gated by env ``LEARN_FEWSHOT_PRIMARY`` (default OFF). When ``LEARN_FEWSHOT_SHADOW``
+    is on the block is COMPUTED and logged but NOT returned (returns "") — lets you
+    see what would be injected before enabling injection. Composition:
+      * global values-free attention list (always, when enabled), plus
+      * per-importer value hints IF ``importer_name`` is known.
+    Fails safe to "" on any error; never raises into the extractor."""
+    try:
+        shadow = _flag("LEARN_FEWSHOT_SHADOW")
+        rules_on = _flag("LEARN_PROMPT_RULES")
+        if not _flag("LEARN_FEWSHOT_PRIMARY") and not shadow and not rules_on:
+            return ""
+        parts = []
+        # P4: admin-approved learned prompt rules (independent flag; always shown
+        # when enabled since they're human-vetted).
+        if rules_on:
+            try:
+                from v11.learn import rules as _rules
+                rb = _rules.approved_rules_block()
+                if rb:
+                    parts.append(rb)
+            except Exception:
+                pass
+        if importer_name:
+            imp = prompt_block(importer_name, limit=5)
+            if imp:
+                parts.append(imp)
+        att = attention_block(limit=limit)
+        if att:
+            parts.append(att)
+        block = "\n".join(parts)
+        primary_on = _flag("LEARN_FEWSHOT_PRIMARY")
+        if block and (shadow or primary_on or rules_on):
+            logger.info("primary_hint_block (%s): %s",
+                        "SHADOW" if (shadow and not primary_on) else "INJECT",
+                        block.replace("\n", " | ")[:400])
+        # shadow mode observes the few-shot block only — do not inject it. But
+        # admin-approved rules (rules_on) are injected regardless of shadow.
+        if shadow and not primary_on:
+            if rules_on:
+                try:
+                    from v11.learn import rules as _rules
+                    return _rules.approved_rules_block() or ""
+                except Exception:
+                    return ""
+            return ""
+        return block
+    except Exception as exc:  # never break extraction
+        logger.debug("primary_hint_block failed: %s", exc)
+        return ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────

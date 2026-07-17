@@ -115,6 +115,47 @@ default `atlas` engine raised `ModuleNotFoundError: No module named 'v13'` in th
 for any PDF with a handwritten page — while working fine locally (repo on `sys.path`).
 If you add a new top-level backend package, add the `COPY` line with it.
 
+## Self-improvement loop (`backend/v11/learn/`, v2026.6.21–6.23)
+
+Human review is fed back into extraction — a closed flywheel, **all flag-gated OFF by
+default, fail-safe (degrade to no-op, never raise into the pipeline), human-gated, and
+subordinate to the arithmetic gates** (JUDGE hard-interlock `judge.py:203` — a learned hint
+can never override reconcile; arithmetic still decides truth). Only `review_status='approved'`
+data feeds learning.
+
+- **P1 — few-shot into the PRODUCTION engines** (`LEARN_FEWSHOT_PRIMARY`, +`LEARN_FEWSHOT_SHADOW`
+  to log-without-injecting). `fewshot.primary_hint_block()` prepends a **values-free attention
+  list** (the fields reviewers correct most, from `field_edits`) to the Presto (`presto.py`) +
+  Scribe (`scribe.py`) primary prompt, plus per-importer value hints when the importer is known.
+  Before this, only the legacy V7 assembler learned; the Atlas engines had static prompts.
+- **P2 — auto-priors on approve** (`LEARN_AUTO_PRIORS`). `routes/review.py` approve →
+  `priors.build_priors(importer)` so `check_against_priors` drift-warnings go live (was CLI-only).
+- **P3 — adaptive Scribe votes** (`LEARN_ADAPTIVE_VOTES`, cap `SCRIBE_MAX_VOTES`). `scribe.run`
+  uses `weakspots.vote_plan` to spend extra cross-model votes on historically-weak fields.
+- **P4 — admin-approved prompt rules** (`LEARN_PROMPT_RULES`). `critic.analyze` proposes →
+  admin approves via `POST /api/learn/rules` (`rules.py`, stored in `settings.learn_prompt_rules`)
+  → injected into the primary prompt. Never auto-applied.
+- **P5 — accuracy tracking.** Every human correction (`review.py _apply_edit` + `corrections.py`)
+  → `database.bump_field_correction(importer, field)` (corrections-only, no total-skew) → fills
+  `field_accuracy` so `weakspots` error-rates become real.
+- **P6 — golden corpus from approvals** (`golden.py`, `GET /api/learn/golden/export`). Every
+  approved job is a labelled example → reconstructs the (lost) ground-truth corpus from real review.
+- **P7 — eval harness** (ALMA-inspired; `evaluate.py`). `score_against_golden(engine)` replays the
+  golden corpus through real extraction and scores fields vs approved truth (numeric tol / ISO-date
+  prefix / string-norm), **honestly counting skips when a source PDF can't be located** (never faked);
+  a scored archive + `promote_if_better()` adopt a change only when it beats baseline. `proposer.py`
+  (`LEARN_PROPOSER`, OpenRouter-only) is a bounded LLM meta-agent that proposes ≤5 general rules from
+  the accumulated signals — human-approved, never auto-applied.
+
+**Admin API** (`routes/learn.py`, all `require_admin`): `GET /api/learn/{status,proposals,rules,
+weakspots,golden/export,evaluate,evaluate/scores,proposals/llm}`, `POST /api/learn/{rules,
+priors/rebuild,evaluate/promote}`, `DELETE /api/learn/rules`. `GET /api/learn/status` reports which
+flags are on + how much data has accrued.
+
+**Do NOT** let any learn path change an extracted value directly, run without its flag, feed on
+unreviewed data, or raise — every function is advisory + fail-safe by contract. **Don't** point the
+proposer/any learn LLM call at a non-OpenRouter SDK.
+
 ## Active extract endpoints
 
 ```
@@ -181,7 +222,10 @@ backend/
   cost_tracker.py          token + USD accounting
   alembic/versions/        DB migrations (0001_initial_schema.py = full schema)
   routes/                  auth, jobs, users, groups, data, settings, corrections,
-                           usage, ldap, activity, storage, review
+                           usage, ldap, activity, storage, review, learn
+  v11/learn/               self-improvement layer: priors, fewshot, weakspots,
+                           critic, rules, golden, evaluate, proposer (all advisory,
+                           flag-gated, fail-safe — see "Self-improvement loop" above)
   jobs/queue.py            RQ + Redis singletons
   jobs/tasks.py            run_v11_task (background entry)
   v11/workflow.py          Maestro orchestrator

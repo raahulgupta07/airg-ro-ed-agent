@@ -177,18 +177,25 @@ def verify_keycloak_token(token: str) -> dict:
         jwks_data = _fetch_jwks(jwks_url, force=True)
         key_data = _get_signing_key(jwks_data, token)
 
-    # Decode and verify
-    payload = jwt.decode(
-        token,
-        key_data,
+    # Decode and verify. Audience verification is OPT-IN (Settings →
+    # keycloak_verify_aud): Keycloak access tokens carry aud that varies by realm
+    # config (often "account", not the client_id), so enabling it without a
+    # matching audience mapper locks every user out — hence default off. When on,
+    # the token's aud must contain the client_id (expected_audience).
+    verify_aud = bool(kc_config.get("verify_aud"))
+    audience = kc_config.get("expected_audience") or kc_config.get("client_id") or None
+    decode_kwargs = dict(
         algorithms=["RS256"],
         issuer=issuer,
         options={
-            "verify_aud": False,  # Keycloak aud can vary (account, client_id, etc.)
+            "verify_aud": verify_aud,
             "verify_iss": True,
             "verify_exp": True,
         },
     )
+    if verify_aud and audience:
+        decode_kwargs["audience"] = audience
+    payload = jwt.decode(token, key_data, **decode_kwargs)
     return payload
 
 

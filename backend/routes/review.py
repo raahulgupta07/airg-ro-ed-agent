@@ -116,6 +116,47 @@ def _autosave_fee_baseline(job_id: str) -> None:
         pass
 
 
+def _job_importer(job_id: str) -> Optional[str]:
+    """Importer name for a job (from its declaration). None on any error."""
+    try:
+        conn = database._connect()
+        row = conn.execute(
+            "SELECT importer_name FROM declarations WHERE job_id = ?", (job_id,)
+        ).fetchone()
+        conn.close()
+        return row[0] if row and row[0] else None
+    except Exception:
+        return None
+
+
+def _track_correction(job_id: str, field_name: str) -> None:
+    """P5 measurement: record a human correction against (importer, field) so the
+    weakspots error-rate becomes real (not just edit-frequency). Never raises."""
+    try:
+        imp = _job_importer(job_id)
+        if imp and field_name:
+            database.bump_field_correction(imp, field_name)
+    except Exception:
+        pass
+
+
+def _auto_build_priors(job_id: str) -> None:
+    """P2: on approval, (re)build this importer's priors so the drift-warning
+    read-path (priors.check_against_priors, wired in workflow) goes live.
+    Flag-gated LEARN_AUTO_PRIORS; deterministic SQL, fast; never raises."""
+    import os
+    if str(os.getenv("LEARN_AUTO_PRIORS", "0")).strip().lower() not in ("1", "true", "yes", "on"):
+        return
+    try:
+        imp = _job_importer(job_id)
+        if not imp:
+            return
+        from v11.learn import priors
+        priors.build_priors(imp)
+    except Exception:
+        pass
+
+
 def _apply_edit(job_id: str, entity_type: str, entity_index: int,
                 req: FieldEditRequest, current_user: dict, request: Request) -> dict:
     """Apply a field edit (declaration or item). Returns audit dict."""
@@ -174,6 +215,9 @@ def _apply_edit(job_id: str, entity_type: str, entity_index: int,
     # Self-learning: fee field edits update importer baseline
     if entity_type == "declaration" and col in database.FEE_FIELD_KEYS:
         _autosave_fee_baseline(job_id)
+
+    # P5: record this correction against (importer, field) for weakspots accuracy.
+    _track_correction(job_id, req.field)
 
     return {
         "edit_id": edit_id,
@@ -252,6 +296,7 @@ async def bulk_approve(body: BulkApproveRequest, request: Request,
         )
         if fee_edited:
             _autosave_fee_baseline(jid)
+        _auto_build_priors(jid)  # P2
         event_logger.log_event(
             action="JOB_APPROVED",
             user=current_user.get("username"),
@@ -368,6 +413,9 @@ async def approve_job(job_id: str, body: ApproveRequest, request: Request,
     )
     if fee_edited:
         _autosave_fee_baseline(job_id)
+
+    # P2: refresh importer priors from the now-approved ground truth.
+    _auto_build_priors(job_id)
 
     ctx = _request_ctx(request)
     event_logger.log_event(

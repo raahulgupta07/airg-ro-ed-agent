@@ -239,9 +239,22 @@ def _rate_check(decl: Dict, declared, items: List[Dict]) -> Dict:
     else:
         suspect = False                                  # in band, no trustworthy check
 
+    # A directly-extracted rate that sits inside its currency band is a value read
+    # straight off the doc (e.g. the printed "Exchange Rate (1) = 2100"). It must
+    # win over any math-derived rate — the derivation can be thrown off by a
+    # misread basis (e.g. adjustment_value parsed as the field's code "2" instead
+    # of 44,612.82), which would otherwise "correct" a correct printed rate. The
+    # workflow uses this to overwrite ONLY when the extracted rate is missing or
+    # out-of-band (the genuine UAT failures: 500 for USD, 636 for THB).
+    extracted_in_band = bool(
+        extracted_rate is not None
+        and _RATE_LO <= extracted_rate <= _RATE_HI
+        and (band is None or band[0] <= extracted_rate <= band[1])
+    )
     return {"rate_suspect": bool(suspect), "derived_rate": derived_rate,
             "derived_trustworthy": bool(derived_trustworthy),
-            "extracted_rate": extracted_rate}
+            "extracted_rate": extracted_rate,
+            "extracted_in_band": extracted_in_band}
 
 
 def _row_closure(decl: Dict, items: List[Dict]) -> Dict:

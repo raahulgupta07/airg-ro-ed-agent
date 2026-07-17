@@ -42,13 +42,18 @@ _RATE_BANDS = {
     "AUD": (1200.0, 3500.0),
 }
 
-# (declaration field, label as printed on the CUSDEC tax block)
-_TAXES = [
-    ("import_export_customs_duty", "IMPORT/EXPORT CUSTOMS DUTY"),
-    ("commercial_tax_ct",          "COMMERCIAL TAX"),
-    ("advance_income_tax_at",      "ADVANCED INCOME TAX"),
-    ("security_fee_sf",            "SECURITY FEE"),
-    ("maccs_service_fee_mf",       "MACCS SERVICE FEE"),
+# (declaration field, keyword phrases that identify the tax label row).
+# Substring/keyword match — NOT exact — so real-world label variants are caught:
+# "IMPORT DUTY", "COMMERCIAL TAX (5%)", "INCOME TAX (2%)", "SERVICE FEE" used to
+# be silently dropped by exact matching → the UAT "not include 2%&5%/Duty"
+# complaint. Keyword sets are mutually exclusive (duty / commercial / income /
+# security / service), so no tax label matches two fields.
+_TAX_MATCH = [
+    ("import_export_customs_duty", ("customs duty", "import duty", "export duty", "import/export")),
+    ("commercial_tax_ct",          ("commercial tax",)),
+    ("advance_income_tax_at",      ("income tax",)),
+    ("security_fee_sf",            ("security fee",)),
+    ("maccs_service_fee_mf",       ("maccs service fee", "service fee")),
 ]
 
 # Fields the CUSDEC is authoritative for (override licence-derived values).
@@ -67,6 +72,14 @@ def _num(s):
         return float(str(s).replace(",", "").strip())
     except Exception:
         return None
+
+
+def _is_value_slot(s) -> bool:
+    """True if a line occupies a tax value slot — a real number OR a '-'/'—' dash
+    (an explicitly-empty tax). Lets a dash claim the slot as None instead of
+    letting the read fall through and steal the neighbouring tax's value."""
+    t = str(s).strip()
+    return t in ("-", "—", "–") or _num(t) is not None
 
 
 # yyyy/mm/dd | yyyy-mm-dd | dd/mm/yyyy | dd-mm-yyyy
@@ -165,22 +178,39 @@ def _geo_decl_date(page):
         return None
     if not words:
         return None
+    # words that, when they precede "declaration", mark the WRONG (non-actual) date
+    _GUARD = ("expected", "special", "estimated", "est", "exp", "planned",
+              "intended", "provisional", "tentative")
     try:
         for w in words:
             if w[4].lower() != "declaration":
                 continue
             band = _row_band(words, w[1])
             idx = band.index(w)
-            # skip "Expected declaration date" (a word sits to the left in-row)
-            if idx > 0 and band[idx - 1][4].lower() in ("expected", "special"):
+            # skip "Expected/Estimated/... declaration date" (guard word to the left)
+            if idx > 0 and band[idx - 1][4].lower().strip(".:") in _GUARD:
                 continue
             # require the immediately following word to be "date"
             if idx + 1 >= len(band) or band[idx + 1][4].lower() != "date":
                 continue
+            date_w = band[idx + 1]
+            # (a) same-row: value printed inline to the right of "... date"
             for b in band[idx + 2:]:
                 iso = _to_iso(b[4])
                 if iso:
                     return iso
+            # (b) column-below: MACCS often prints the value in the cell BELOW the
+            # "Declaration date" header. Take the nearest date word roughly under
+            # the label column (x overlaps the "declaration…date" span, y below).
+            x0 = min(w[0], date_w[0])
+            x1 = max(w[2], date_w[2])
+            below = [b for b in words
+                     if b[1] > w[3] - 1                       # strictly below the label row
+                     and b[2] > x0 - 6 and b[0] < x1 + 6      # x-overlaps the label column
+                     and _to_iso(b[4])]
+            if below:
+                below.sort(key=lambda b: (b[1], b[0]))        # nearest row first
+                return _to_iso(below[0][4])
     except Exception:
         return None
     return None
@@ -224,13 +254,24 @@ def _parse(text: str, page=None) -> dict:
     """
     lines = [x.strip() for x in text.split("\n")]
     out: dict = {}
-    for field, name in _TAXES:
+    for field, keywords in _TAX_MATCH:
         for i, line in enumerate(lines):
-            if line.upper() == name:
-                prev = _num(lines[i - 1]) if i > 0 else None
-                nxt = _num(lines[i + 1]) if i + 1 < len(lines) else None
-                out[field] = prev if prev is not None else nxt
-                break
+            ll = line.lower()
+            if not any(k in ll for k in keywords):
+                continue
+            # MACCS prints value→label (scrambled), so the value is the line
+            # BEFORE the label. A "-" dash there means this tax is absent → None
+            # (do NOT fall through to the next line, which is another tax's value).
+            # Only reach past the label when the line before isn't a value slot.
+            prev_line = lines[i - 1] if i > 0 else ""
+            nxt_line = lines[i + 1] if i + 1 < len(lines) else ""
+            if _is_value_slot(prev_line):
+                out[field] = _num(prev_line)          # dash → None
+            elif _is_value_slot(nxt_line):
+                out[field] = _num(nxt_line)
+            else:
+                out[field] = None
+            break
 
     # Exchange rate + invoice currency — geometry first (anchored on the
     # "Exchange Rate" label row), then a band-filtered regex fallback.
@@ -254,9 +295,9 @@ def _parse(text: str, page=None) -> dict:
 
     # Declaration / RO-ID (registration) date — geometry-anchored, ISO yyyy-mm-dd.
     ddate = _geo_decl_date(page) if page is not None else None
-    if ddate is None:  # line-stream fallback (value printed before its label)
+    if ddate is None:  # line-stream fallback (value printed before OR after label)
         for lbl in ("Declaration date", "Registration", "RO/ID Date", "Release order"):
-            ddate = _to_iso(_before(lines, lbl))
+            ddate = _label_date(lines, lbl)
             if ddate:
                 break
     out["declaration_date"] = ddate
@@ -282,6 +323,23 @@ def _before(lines, label):
     for i, l in enumerate(lines):
         if l.strip().lower() == label.lower():
             return lines[i - 1].strip() if i > 0 else None
+    return None
+
+
+def _label_date(lines, label):
+    """ISO date adjacent to an EXACT-match label line — value BEFORE preferred
+    (real MACCS order), else the line AFTER. Exact match is deliberate: it stops
+    'Expected declaration date' from satisfying a 'Declaration date' read (the
+    UAT #1 signature — the wrong date was the *expected* one)."""
+    lab = label.strip().lower()
+    for i, l in enumerate(lines):
+        if l.strip().lower() != lab:
+            continue
+        for cand in ((lines[i - 1] if i > 0 else None),
+                     (lines[i + 1] if i + 1 < len(lines) else None)):
+            iso = _to_iso(cand)
+            if iso:
+                return iso
     return None
 
 

@@ -144,6 +144,28 @@ export const api = {
     return request<any>(`/usage/overview${s ? `?${s}` : ''}`);
   },
 
+  // ROVER — Release Order Verification & Extraction Reader
+  roverStats: () => request<any>('/rover/stats'),
+  roverDocuments: () => request<any[]>('/rover/documents'),
+  roverDocument: (docId: string) => request<any>(`/rover/documents/${encodeURIComponent(docId)}`),
+  roverProducts: () => request<any[]>('/rover/products'),
+  roverReview: () => request<any[]>('/rover/review'),
+  roverExtract: (pdfPath: string) =>
+    request<any>('/rover/extract', { method: 'POST', body: JSON.stringify({ pdf_path: pdfPath }) }),
+  roverApply: (docId: string, corrections: Record<string, any>) =>
+    request<any>(`/rover/review/${encodeURIComponent(docId)}/apply`, {
+      method: 'POST', body: JSON.stringify({ corrections }),
+    }),
+  // annotated PNG needs the auth header, so fetch as a blob and return an object URL
+  roverAnnotateUrl: async (docId: string): Promise<string> => {
+    await auth.ensureValidToken();
+    const res = await fetch(`${BASE}/rover/annotate/${encodeURIComponent(docId)}`, {
+      headers: auth.token ? { Authorization: `Bearer ${auth.token}` } : {},
+    });
+    if (!res.ok) throw new Error('annotate failed');
+    return URL.createObjectURL(await res.blob());
+  },
+
   // Health
   health: () => request<any>('/health'),
 };

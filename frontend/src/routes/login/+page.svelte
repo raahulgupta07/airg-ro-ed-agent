@@ -87,7 +87,7 @@
 
   <!-- Logo top-left -->
   <a href="/" class="login-logo no-underline">
-    <img src="/cityagent-logo-web.png" alt="CityAgent · Release Order" />
+    <img src="/cityagent-logo-web.png" alt="City Agent ROVER · Release Order" />
   </a>
 
   <!-- Hero: vertically + horizontally centered, responsive -->
@@ -193,7 +193,7 @@
           </div>
         </div>
 
-        <p class="login-foot">© 2026 City Holdings Myanmar · CityAgent · Release Order</p>
+        <p class="login-foot">© 2026 City Holdings Myanmar · City Agent ROVER · Release Order</p>
       </div>
 
       <!-- RIGHT: animated product preview -->

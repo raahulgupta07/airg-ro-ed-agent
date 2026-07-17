@@ -1514,9 +1514,13 @@ def clean_invoice_no_commercial(value) -> str:
     # If it's a license number (MTGBIL/MWDBIL/etc), leave it alone — caller flags separately
     if _LICENSE_RE.match(upper):
         return s
-    # Try specific known patterns first (anchored)
+    # Try specific known patterns first (anchored). Only strip when the pattern
+    # sits at the END of the string — i.e. all that precedes it is a section-code
+    # prefix ("A - AM-PD-018/2024"). If real content TRAILS the match
+    # ("AM-PD-018/2024-REV2"), keep the value verbatim rather than silently
+    # dropping the suffix (Wrong-Inv-No class).
     m = _COMMERCIAL_INVOICE_RE.search(upper)
-    if m:
+    if m and not upper[m.end():].strip(" \t.-"):
         return m.group(1)
     return s
 

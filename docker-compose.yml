@@ -52,6 +52,7 @@ services:
       PYTHONUNBUFFERED: "1"
       DATABASE_URL: postgresql+psycopg://ro_ed:${PG_PASSWORD:-ro_ed_dev_pass}@postgres:5432/ro_ed
       REDIS_URL: redis://redis:6379/0
+      ROVER_STORE: "pg"          # ROVER persists extractions to Postgres (rover_documents/items/reports)
     volumes:
       - app-data:/app/data
     depends_on:
@@ -84,6 +85,7 @@ services:
       PYTHONUNBUFFERED: "1"
       DATABASE_URL: postgresql+psycopg://ro_ed:${PG_PASSWORD:-ro_ed_dev_pass}@postgres:5432/ro_ed
       REDIS_URL: redis://redis:6379/0
+      ROVER_STORE: "pg"          # ROVER persists extractions to Postgres (rover_documents/items/reports)
     volumes:
       - app-data:/app/data
     depends_on:

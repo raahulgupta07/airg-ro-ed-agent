@@ -92,6 +92,18 @@ async def submit_correction(req: CorrectionRequest, current_user: dict = Depends
     except Exception:
         pass
 
+    # P5 measurement: record correction against (importer, field) for weakspots.
+    try:
+        conn = database._connect()
+        row = conn.execute(
+            "SELECT importer_name FROM declarations WHERE job_id = ?", (req.job_id,)
+        ).fetchone()
+        conn.close()
+        if row and row[0]:
+            database.bump_field_correction(row[0], req.field_key)
+    except Exception:
+        pass
+
     # Log activity
     try:
         database.log_activity(

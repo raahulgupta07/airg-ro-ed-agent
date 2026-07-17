@@ -98,8 +98,19 @@ def _parse_json(raw: str):
     return None
 
 
-def _call_vlm(images: List[str], temperature: float, model: str = None) -> Dict:
-    parts = [{"type": "text", "text": PROMPT}]
+def _primary_hints(importer_name: Optional[str]) -> str:
+    """Flag-gated learned-correction hint block (LEARN_FEWSHOT_PRIMARY). Never
+    raises — an inert/empty learner degrades to no injection."""
+    try:
+        from v11.learn import fewshot
+        return fewshot.primary_hint_block(importer_name) or ""
+    except Exception:
+        return ""
+
+
+def _call_vlm(images: List[str], temperature: float, model: str = None,
+              prompt: str = None) -> Dict:
+    parts = [{"type": "text", "text": prompt or PROMPT}]
     for b64 in images:
         parts.append({"type": "image_url",
                       "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
@@ -225,17 +236,38 @@ def _best_items(reads: List[PrestoResult], declared_total) -> list:
     return best
 
 
-def run(pdf_path: str, pages: Optional[List[int]] = None) -> Dict:
+def run(pdf_path: str, pages: Optional[List[int]] = None,
+        importer_name: Optional[str] = None) -> Dict:
     t0 = time.time()
     images = _render(pdf_path, pages, cfg.SCRIBE_DPI)
     n = max(1, cfg.SCRIBE_VOTES)
+
+    # P3 self-improvement: when historically-weak fields exist, spend MORE votes
+    # (cross-model reads) to raise agreement exactly where the engine errs most.
+    # Flag-gated LEARN_ADAPTIVE_VOTES; importer usually unknown → global weak set.
+    try:
+        import os as _os
+        if str(_os.getenv("LEARN_ADAPTIVE_VOTES", "0")).strip().lower() in ("1", "true", "yes", "on"):
+            from v11.learn import weakspots
+            _cap = int(_os.getenv("SCRIBE_MAX_VOTES", "5"))
+            plan = weakspots.vote_plan(importer_name, base_votes=n, weak_votes=n + 2)
+            if plan:
+                n = min(_cap, max(n, max(plan.values())))
+    except Exception:
+        pass
+
+    # Phase-1 self-improvement: prepend learned-correction hints to the vote
+    # prompt (flag-gated LEARN_FEWSHOT_PRIMARY; "" when off). Computed once so
+    # every vote sees the same guidance.
+    hints = _primary_hints(importer_name)
+    vote_prompt = (hints + "\n" + PROMPT) if hints else PROMPT
 
     reads, ti, to, cost = [], 0, 0, 0.0
     models = cfg.SCRIBE_MODELS or [cfg.SCRIBE_MODEL]
     for i in range(n):
         temp = 0.0 if i == 0 else cfg.SCRIBE_TEMPERATURE
         # Rotate across models → field_confidence = cross-MODEL agreement.
-        res = _call_vlm(images, temp, models[i % len(models)])
+        res = _call_vlm(images, temp, models[i % len(models)], prompt=vote_prompt)
         try:
             reads.append(PrestoResult.model_validate(res["parsed"]))
         except Exception:
@@ -316,6 +348,7 @@ def run(pdf_path: str, pages: Optional[List[int]] = None) -> Dict:
         "scribe": {"votes": n, "field_confidence": conf,
                    "low_confidence_fields": low_conf,
                    "reconcile": verdict, "pages": len(images),
+                   "fewshot_injected": bool(hints),
                    "self_correct": sc_log, "item_recover": recover_log},
     }
 

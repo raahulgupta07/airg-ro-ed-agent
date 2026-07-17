@@ -185,6 +185,50 @@ def test_math_gate_accepts_correct_cif_rate_without_buildup():
 
 
 # =============================================================================
+# 4c. An in-band PRINTED rate must survive a bad (misread-basis) derivation.
+# Regression guard for doc 100313488550: the doc prints Exchange Rate = 2100
+# (in the USD band). adjustment_value was misread as the field's code "2" instead
+# of 44,612.82, so total ÷ (invoice + 2) derives a bogus 3977 that looked
+# "trustworthy" (build_up > 0). The workflow must NOT overwrite the printed 2100
+# with it — reconcile flags extracted_in_band so the overwrite is blocked. Still
+# suspect (derived disagrees) → doc is quarantined, but with the CORRECT rate.
+# =============================================================================
+def test_in_band_printed_rate_survives_bad_derivation():
+    decl = {
+        "currency": "USD",
+        "total_customs_value": 198_450_000.0,
+        "invoice_price": 49_887.18,
+        "adjustment_value": 2.0,      # MISREAD: real value is 44,612.82
+        "freight_value": 0.0,
+        "insurance_value": 0.0,
+        "exchange_rate": 2100.0,      # PRINTED on the doc, in USD band
+        "import_export_customs_duty": 5_953_500.0,
+    }
+    result = reconcile(decl, [])
+    # The printed rate is recognised as in-band → the workflow must keep it.
+    assert result["extracted_in_band"] is True
+    assert result["extracted_rate"] == 2100.0
+    # The derivation is off (bad basis) and disagrees → still flagged for review,
+    # but the overwrite guard (extracted_in_band) protects the printed value.
+    assert result["rate_suspect"] is True
+    assert abs(result["derived_rate"] - 3977.8164) < 1.0
+
+
+def test_out_of_band_rate_not_marked_in_band():
+    # The genuine failure (500 for USD) must NOT be treated as in-band, so the
+    # workflow is still free to adopt a trustworthy derived rate.
+    decl = {
+        "currency": "USD",
+        "total_customs_value": 210_000_000.0,
+        "invoice_price": 100_000.0,
+        "exchange_rate": 500.0,
+        "import_export_customs_duty": 5_000_000.0,
+    }
+    result = reconcile(decl, [])
+    assert result["extracted_in_band"] is False
+
+
+# =============================================================================
 # 5. Tax-completeness core-tax rule (unit test — no PDF).
 # =============================================================================
 def test_taxes_missing_when_only_service_fee():
