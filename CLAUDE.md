@@ -156,6 +156,52 @@ flags are on + how much data has accrued.
 unreviewed data, or raise — every function is advisory + fail-safe by contract. **Don't** point the
 proposer/any learn LLM call at a non-OpenRouter SDK.
 
+## City Agent ROVER — side extraction engine (`backend/rover/`)
+
+A **separate, self-contained** verified-extraction pipeline for the same customs docs,
+independent of Atlas V14. Not on `/api/extract-v11` — it has its own routes
+(`backend/routes/rover.py`, mounted in `main.py`) and its own UI (4 left-nav tabs under
+`/rover/*`: **Process · History · Items · Declarations**). Postgres-backed
+(`ROVER_STORE=pg` → `rover_documents` / `rover_items` / `rover_reports`, header+items+raw
+JSONB, approval columns). Human-approval workflow: uploads stay `approved=false` (pending)
+until a human approves in the Process tab → moves to History.
+
+**Pipeline (`rover/pipeline_fast.py`):** Tier 0 deterministic text → L1 page-route →
+**primary vision read (ONE call)** → deterministic **math supervisor** (the JUDGE — never
+an LLM; cross-field invariants + currency bands + decl-no cross-check) → recovery cell-zoom
+→ challenger (suspect fields only) → single-pass full-doc rescue → mapping → store →
+annotate. Every field is a `Cell{value, source, confidence, model, status, alternates}`.
+Fail-closed: any suspect column → `needs_review` (nothing wrong ships unflagged).
+
+**★ Primary reader = native PDF, not page-JPEGs** (`ROVER_PDF_NATIVE=1`,
+`ROVER_PRIMARY_MODEL=google/gemini-3.5-flash`). `llm.pdf_content()` sends the raw PDF as a
+`{"type":"file","file":{"file_data":"data:application/pdf;base64,…"}}` block — the model
+reads the **text layer** directly (no OCR of a downscaled JPEG), ~8k tokens vs many image
+tokens. Verified on the 16-doc UAT set: 100% on the 4 hand-checked docs, fixes the
+derived-exchange-rate bug, ~4× cheaper. **grok-4.5 is IMAGE-ONLY** — never fed the PDF
+block; it stays the challenger on math-flagged fields (`ROVER_CHALLENGER_MODEL=x-ai/grok-4.5`),
+reading page-images. `single_agent` uses `max_tokens=8000` (full doc + items or JSON truncates).
+
+**Cost discipline:** the full-doc **rescue** is the big spend and is skipped when
+`declaration_no` is the ONLY suspect (an uncorroborated id is a human-confirm, not something
+a re-read can fix); `declaration_no` is also dropped from the grok challenger (poor digit
+reader). It still gets cheap recovery-zoom + stays flagged for review. Clean docs ≈
+$0.015–0.05; scanned/rescue higher.
+
+**Handwriting boost** (`rover/handwriting.py`, `ROVER_HANDWRITING_BOOST=1`) — a mostly-scanned
+doc (`is_image_page` majority) with a weak base read (missing items / empty value block) gets
+ONE hi-res 300-DPI image re-read under a handwriting-focused prompt; FILLS empties + ADDS
+unseen items only, never overwrites. Bounded, flag-gated, fail-safe (MA0259 handwritten docs
+recover items but still need human confirm).
+
+**Excel** (`rover/excel.py`, openpyxl): per-doc (Fields + Products) and bulk (Documents +
+Products) exports, terracotta header. **Add a column → update `excel.py` writers too.**
+
+**Deploy note:** rover code is hot-cp'd into `ro-ed-api` during iteration; an **env change
+needs recreate**, which reverts hot-cp'd files — so bake first: `docker commit ro-ed-api
+ro-ed-lang-app:latest` **then** `docker compose -p ro-ed-lang up -d --no-deps app worker`
+(app + worker share `ro-ed-lang-app:latest`). Frontend rover pages: `frontend/src/routes/rover/`.
+
 ## Active extract endpoints
 
 ```
