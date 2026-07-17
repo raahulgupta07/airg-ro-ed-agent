@@ -23,6 +23,12 @@
       ],
     },
     {
+      title: 'ROVER',
+      items: [
+        { label: 'ROVER Review', href: '/rover', icon: '◆', page: 'rover' },
+      ],
+    },
+    {
       title: 'Insights',
       items: [
         { label: 'Costs', href: '/costs', icon: '⟐', page: 'costs' },

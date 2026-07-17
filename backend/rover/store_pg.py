@@ -49,9 +49,12 @@ def ensure_tables():
                 suspect      JSONB,
                 reviewed     BOOLEAN DEFAULT FALSE,
                 cost         NUMERIC,
+                raw          JSONB,
                 created_at   TIMESTAMPTZ DEFAULT now()
             )
         """)
+        # for tables created before `raw` existed
+        cur.execute("ALTER TABLE rover_documents ADD COLUMN IF NOT EXISTS raw JSONB")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS rover_items (
                 id          BIGSERIAL PRIMARY KEY,
@@ -157,7 +160,13 @@ def _item_get(item, *keys):
 
 
 def _row_to_doc(row):
-    """Reconstruct a result-shaped dict from a rover_documents row (dict-like)."""
+    """Reconstruct a result-shaped dict from a rover_documents row (dict-like).
+    Prefer the full stored `raw` result (record/evidence, notes, …) when present;
+    fall back to the flat columns for rows saved before `raw` existed."""
+    raw = _loads(row.get("raw"))
+    if isinstance(raw, dict) and raw:
+        raw["_stored_id"] = row.get("doc_id")
+        return raw
     return {
         "pdf": row.get("pdf"),
         "values": _loads(row.get("header")) or {},
@@ -188,15 +197,16 @@ def save_document(result: dict) -> str:
         cur.execute(
             """
             INSERT INTO rover_documents
-                (doc_id, pdf, header, items, needs_review, suspect, cost)
-            VALUES (?, ?, ?::jsonb, ?::jsonb, ?, ?::jsonb, ?)
+                (doc_id, pdf, header, items, needs_review, suspect, cost, raw)
+            VALUES (?, ?, ?::jsonb, ?::jsonb, ?, ?::jsonb, ?, ?::jsonb)
             ON CONFLICT (doc_id) DO UPDATE SET
                 pdf          = EXCLUDED.pdf,
                 header       = EXCLUDED.header,
                 items        = EXCLUDED.items,
                 needs_review = EXCLUDED.needs_review,
                 suspect      = EXCLUDED.suspect,
-                cost         = EXCLUDED.cost
+                cost         = EXCLUDED.cost,
+                raw          = EXCLUDED.raw
             """,
             (
                 doc_id,
@@ -206,6 +216,7 @@ def save_document(result: dict) -> str:
                 bool(result.get("needs_review")) if result.get("needs_review") is not None else None,
                 _dumps(result.get("suspect")),
                 _num(result.get("cost")),
+                _dumps(result),          # full raw result — record/evidence, notes, etc.
             ),
         )
         # Replace line-item rows for this doc.

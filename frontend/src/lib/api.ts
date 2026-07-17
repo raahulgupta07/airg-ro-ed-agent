@@ -152,6 +152,11 @@ export const api = {
   roverReview: () => request<any[]>('/rover/review'),
   roverExtract: (pdfPath: string) =>
     request<any>('/rover/extract', { method: 'POST', body: JSON.stringify({ pdf_path: pdfPath }) }),
+  roverUpload: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return request<any>('/rover/upload', { method: 'POST', body: form });
+  },
   roverApply: (docId: string, corrections: Record<string, any>) =>
     request<any>(`/rover/review/${encodeURIComponent(docId)}/apply`, {
       method: 'POST', body: JSON.stringify({ corrections }),

@@ -15,14 +15,18 @@ an authenticated user; every body is wrapped in try/except → HTTPException(500
   GET  /export.csv            review CSV download
   GET  /annotate/{doc_id}     first annotated page PNG
 """
+import os
+import tempfile
 from typing import Dict, Any
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from middleware import get_current_user
 
 router = APIRouter()
+
+_UPLOAD_DIR = "/app/data/rover_uploads"
 
 
 class ExtractReq(BaseModel):
@@ -46,6 +50,34 @@ async def extract(req: ExtractReq, user=Depends(get_current_user)):
             "values": res.get("values"),
             "review": review.review_item(res),
         }
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+def _process_pdf(dest: str):
+    """Run ROVER + persist. Runs in a background threadpool so the request returns
+    immediately and the (30-160s) pipeline never blocks the event loop."""
+    try:
+        from rover import pipeline_fast, store
+        res = pipeline_fast.run(dest)
+        store.save_document(res)
+    except Exception as e:  # pragma: no cover
+        print(f"[rover.upload] processing failed for {dest}: {e}")
+
+
+@router.post("/upload")
+async def upload(background: BackgroundTasks, file: UploadFile = File(...),
+                 user=Depends(get_current_user)):
+    """Accept a PDF, kick off ROVER extraction in the background, return at once.
+    The client polls /documents until the new doc appears."""
+    try:
+        os.makedirs(_UPLOAD_DIR, exist_ok=True)
+        safe = os.path.basename(file.filename or "upload.pdf")
+        dest = os.path.join(_UPLOAD_DIR, safe)
+        with open(dest, "wb") as fh:
+            fh.write(await file.read())
+        background.add_task(_process_pdf, dest)
+        return {"status": "processing", "pdf": safe}
     except Exception as e:
         raise HTTPException(500, str(e))
 
@@ -132,7 +164,13 @@ async def annotate(doc_id: str, user=Depends(get_current_user)):
         doc = store.load_document(doc_id)
         if doc is None:
             raise HTTPException(404, "document not found")
-        paths = annot.annotate_result(doc, "/app/data/_uat_test", "/app/data/rover_annot")
+        # the source PDF may live in the uploads dir or the test corpus — try both
+        paths = []
+        for pdf_dir in (_UPLOAD_DIR, "/app/data/_uat_test"):
+            if os.path.exists(os.path.join(pdf_dir, doc.get("pdf", ""))):
+                paths = annot.annotate_result(doc, pdf_dir, "/app/data/rover_annot")
+                if paths:
+                    break
         if not paths:
             raise HTTPException(404, "no annotation available")
         return FileResponse(paths[0], media_type="image/png")
