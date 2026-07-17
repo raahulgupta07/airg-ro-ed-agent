@@ -52,8 +52,11 @@ def call(model: str, prompt: str, image_content: list, max_tokens: int = 3000):
         return None, "", {}, "timeout"
     if resp.status_code != 200:
         return None, "", {}, f"http {resp.status_code}: {resp.text[:200]}"
-    j = resp.json()
-    raw = j["choices"][0]["message"]["content"].strip()
+    try:
+        j = resp.json()
+        raw = j["choices"][0]["message"]["content"].strip()
+    except (ValueError, KeyError, IndexError, TypeError) as e:
+        return None, "", {}, f"bad response: {type(e).__name__} {str(resp.text)[:160]}"
     cleaned = re.sub(r"```json\n?|```\n?", "", raw).strip()
     parsed = None
     try:

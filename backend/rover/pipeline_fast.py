@@ -11,7 +11,7 @@ import time
 from typing import Dict
 
 from . import context, deterministic, supervisor, router, single_agent, llm
-from . import products, item_text, recovery
+from . import products, item_text, recovery, handwriting
 from . import pipeline as v1pipeline
 from .pipeline import _run_challenger, _agree, _cost
 from .schema import Cell, COLUMNS
@@ -91,6 +91,25 @@ def run(pdf_path: str, use_challenger: bool = True, use_rescue: bool = True,
     rec, suspect, notes, needs_review = supervisor.compile(det, vis)
     log(f"Math-verify · {len(suspect)} field(s) flagged", 'warn' if suspect else 'ok')
 
+    # D — handwriting boost. A mostly-scanned doc with a WEAK base read (missing
+    # items, or an empty value block) gets one hi-res image re-read under a
+    # handwriting-focused prompt. FILLS empty fields + ADDS unseen items only —
+    # never overwrites a value the base read already produced. Flag-gated + fail-safe.
+    if handwriting.HW_BOOST and handwriting.is_handwritten(ctx) and \
+            (items_incomplete or len(items) == 0 or supervisor.value_block_empty(rec)):
+        log("Handwriting boost · hi-res re-read of scanned pages …")
+        hb = handwriting.boost(pdf_path)
+        cost += _cost(hb.get("usage", {}))
+        for k, cell in hb.get("cells", {}).items():
+            if cell.value not in (None, "") and vis.get(k, Cell(column=k)).value in (None, ""):
+                vis[k] = cell
+        if hb.get("items") and len(hb["items"]) > len(items):
+            items = hb["items"]
+            items_incomplete = bool(declared_count and 1 < declared_count <= 50
+                                    and len(items) < declared_count)
+        rec, suspect, notes, needs_review = supervisor.compile(det, vis)
+        log(f"Handwriting boost · {len(items)} item(s), {len(suspect)} flagged", 'ok')
+
     # Fix B — adaptive escalation. If the whole value/tax block came back empty, the
     # router missed the CUSDEC page on this (scanned) doc. Re-read on more pages once
     # and fill the gaps. Bounded: single extra call, only when genuinely empty.
@@ -125,13 +144,18 @@ def run(pdf_path: str, use_challenger: bool = True, use_rescue: bool = True,
         if recovery_report.get("recovered"):
             notes.append(f"recovered by zoom: {recovery_report['recovered']}")
 
-    # Tier 2 — challenger on suspect columns only (still full doc for a second look)
+    # Tier 2 — challenger on suspect columns only (still full doc for a second look).
+    # B (cost) — SKIP declaration_no here: the challenger is grok (image-only), a poor
+    # digit reader (it flipped decl_no digits on the scanned set), so a grok call for it
+    # is pure cost with no accuracy gain. decl_no still gets the cheap recovery-zoom above
+    # and, if uncorroborated, stays flagged for a human — the fail-closed gate is intact.
     challenger_report = {}
-    if use_challenger and suspect:
-        log(f"Second model checking {suspect} …")
-        ch = _run_challenger(ctx, suspect, rec, images=imgs)
+    chal_cols = [c for c in suspect if c != "declaration_no"]
+    if use_challenger and chal_cols:
+        log(f"Second model checking {chal_cols} …")
+        ch = _run_challenger(ctx, chal_cols, rec, images=imgs)
         cost += _cost(ch.pop("_usage", {}))
-        for col in suspect:
+        for col in chal_cols:
             prim, chc = rec.get(col), ch.get(col)
             if not chc or chc.value in (None, ""):
                 challenger_report[col] = "challenger-empty"; continue
@@ -175,10 +199,24 @@ def run(pdf_path: str, use_challenger: bool = True, use_rescue: bool = True,
     # fields with these direct reads and let the deterministic supervisor re-judge; a
     # clean result auto-passes (direct reads, not derivations). Pages capped for the
     # 30MB request limit.
-    if use_rescue and needs_review:
-        log("Full-document rescue (single pass) …")
-        rescue_imgs = router.image_content(ctx.pages[:12])
-        rres = single_agent.run(rescue_imgs)
+    # B (cost) — the full-doc rescue is the big spend. It exists to recover MISSING
+    # value/tax fields on a scan the router under-read. It CANNOT resolve an
+    # uncorroborated declaration_no (that's an identity-confirm, not a re-read), so if
+    # decl_no is the ONLY thing flagged we skip the rescue entirely and leave the doc
+    # for a human glance — the common case on clean docs, and the whole cost saving.
+    rescue_worth = needs_review and (
+        any(s != "declaration_no" for s in suspect) or supervisor.value_block_empty(rec))
+    if use_rescue and rescue_worth:
+        # C — native-PDF rescue when available: re-read the whole doc as the raw PDF
+        # (text layer, cheaper + more accurate) instead of 12 page-JPEGs. Image-only
+        # models fall back to the capped page render.
+        if PDF_NATIVE:
+            log("Full-document rescue (native PDF, single pass) …")
+            rescue_content = llm.pdf_content(pdf_path)
+        else:
+            log("Full-document rescue (single pass) …")
+            rescue_content = router.image_content(ctx.pages[:12])
+        rres = single_agent.run(rescue_content)
         cost += _cost(rres.pop("_usage", {}))
         rres.pop("_err", None)
         ritems = rres.pop("_items", []) or []
