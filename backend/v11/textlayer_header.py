@@ -62,6 +62,20 @@ _SPEC = (
     ("ADVANCED INCOME TAX", "advance_income_tax_at", "num", 260, ()),
     ("SECURITY FEE", "security_fee_sf", "num", 260, ()),
     ("MACCS SERVICE FEE", "maccs_service_fee_mf", "num", 260, ()),
+    # The invoice amount, in the invoice currency, as `fields.py` defines this
+    # column: "'Invoice price' as printed on the foreign-currency line". The row
+    # reads `Invoice price A - CIF - THB - 1,603,800`, so the first number to the
+    # right of the label IS the figure; the currency words in between match no
+    # numeric pattern and are skipped.
+    #
+    # Added because the model returned three different quantities under the three
+    # invoice names on the same document: invoice_price 1,603,800 (right),
+    # invoice_price_fc 1,688,358.864 (the price PLUS the adjustment) and
+    # invoice_price_mmk 109,138,893.66 (the total customs value). The CIF gate
+    # reads `invoice_price_fc` FIRST, so a build-up smuggled into that column
+    # double-counts the adjustment and the identity still closes — the same blind
+    # spot that made the original invoice_price unit regression invisible.
+    ("Invoice price", "invoice_price_fc", "num", 300, ()),
 )
 
 

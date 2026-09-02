@@ -2089,6 +2089,16 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
             if _same(_d38.get("invoice_number"), _d38.get("declaration_no")):
                 _d38["invoice_number"] = None
                 _cleared38.append("invoice_number=declaration_no")
+            # An invoice price equal to the assessed total is the customs value
+            # wearing another column's name. `fields.py` defines invoice_price_mmk
+            # as "'Invoice price' as printed on the (MMK) line"; these forms print
+            # only a foreign-currency line, so the honest answer is blank. The model
+            # filled it with `total_customs_value` on all seven of the team's
+            # documents — a figure that looks entirely plausible in a money column
+            # and is off by the exchange rate.
+            if _same(_d38.get("invoice_price_mmk"), _d38.get("total_customs_value")):
+                _d38["invoice_price_mmk"] = None
+                _cleared38.append("invoice_price_mmk=total_customs_value")
             if _cleared38:
                 out["declaration"] = _d38
                 out.setdefault("sanity_flags", []).append("neighbour_value_rejected")
