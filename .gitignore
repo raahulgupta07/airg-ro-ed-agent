@@ -39,3 +39,7 @@ _pdfpage*.png
 _pdfpages/
 design-*.html
 design-claude-full.html
+
+# Local snapshot backups (never commit — one holds a full DB dump)
+_backup/
+_backups/

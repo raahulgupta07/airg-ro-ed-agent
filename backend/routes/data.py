@@ -180,10 +180,10 @@ async def download_items_excel(current_user: dict = Depends(get_current_user)):
             "Processed": item.get("job_created_at", ""),
         })
 
-    all_cols = ["Job", "Item Name", "Customs Duty Rate", "Quantity (1)", "Invoice Unit Price",
+    all_item_cols = ["Job", "Item Name", "Customs Duty Rate", "Quantity (1)", "Invoice Unit Price",
                 "CIF Unit Price", "Currency", "Commercial Tax %", "Exchange Rate (1)", "HS Code",
                 "Origin Country", "Customs Value (MMK)", "Processed"]
-    df = pd.DataFrame(all_items) if all_items else pd.DataFrame(columns=all_cols)
+    df = pd.DataFrame(all_items) if all_items else pd.DataFrame(columns=all_item_cols)
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -211,11 +211,14 @@ async def download_declarations_excel(current_user: dict = Depends(get_current_u
     all_decls = []
     for decl in decls:
         all_decls.append({
+            # Same 23 columns, same names, same order as the per-job sheet and
+            # the team's workbook. Everything not listed is still extracted and
+            # stored — it is simply not shown in the export.
             "Job": decl.get("job_id", ""),
             "Declaration No": decl.get("declaration_no", ""),
-            "Date": decl.get("declaration_date", ""),
-            "Importer": decl.get("importer_name", ""),
-            "Consignor": decl.get("consignor_name", ""),
+            "Declaration Date": decl.get("declaration_date", ""),
+            "Importer (Name)": decl.get("importer_name", ""),
+            "Consignor (Name)": decl.get("consignor_name", ""),
             "Invoice Number": decl.get("invoice_number", ""),
             "Invoice Number (Customs Declaration)": decl.get("invoice_number_customs_declaration", ""),
             "Invoice Number (Commercial Invoice)": decl.get("invoice_number_commercial_invoice", ""),
@@ -226,23 +229,27 @@ async def download_declarations_excel(current_user: dict = Depends(get_current_u
             "Currency": decl.get("currency", ""),
             "Exchange Rate": decl.get("exchange_rate", ""),
             "Currency 2": decl.get("currency_2", ""),
-            "Customs Value": decl.get("total_customs_value", ""),
-            "Duty": decl.get("import_export_customs_duty", ""),
-            "Tax": decl.get("commercial_tax_ct", ""),
-            "Income Tax": decl.get("advance_income_tax_at", ""),
-            "Security": decl.get("security_fee_sf", ""),
-            "MACCS": decl.get("maccs_service_fee_mf", ""),
+            "Total Customs Value": decl.get("total_customs_value", ""),
+            "Import/Export Customs Duty": decl.get("import_export_customs_duty", ""),
+            "Commercial Tax (CT)": decl.get("commercial_tax_ct", ""),
+            "Advance Income Tax (AT)": decl.get("advance_income_tax_at", ""),
+            "Security Fee (SF)": decl.get("security_fee_sf", ""),
+            "MACCS Service Fee (MF)": decl.get("maccs_service_fee_mf", ""),
             "Exemption/Reduction": decl.get("exemption_reduction", ""),
             "Processed": decl.get("job_created_at", ""),
         })
 
-    all_cols = ["Job", "Declaration No", "Date", "Importer", "Consignor",
-                "Invoice Number", "Invoice Number (Customs Declaration)", "Invoice Number (Commercial Invoice)",
+    all_decl_cols = ["Job", "Declaration No", "Declaration Date",
+                "Importer (Name)", "Consignor (Name)",
+                "Invoice Number", "Invoice Number (Customs Declaration)",
+                "Invoice Number (Commercial Invoice)",
                 "Invoice Price", "Freight", "Insurance", "Adjustment",
                 "Currency", "Exchange Rate", "Currency 2",
-                "Customs Value", "Duty", "Tax", "Income Tax", "Security", "MACCS",
+                "Total Customs Value", "Import/Export Customs Duty",
+                "Commercial Tax (CT)", "Advance Income Tax (AT)",
+                "Security Fee (SF)", "MACCS Service Fee (MF)",
                 "Exemption/Reduction", "Processed"]
-    df = pd.DataFrame(all_decls) if all_decls else pd.DataFrame(columns=all_cols)
+    df = pd.DataFrame(all_decls) if all_decls else pd.DataFrame(columns=all_decl_cols)
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -259,7 +266,7 @@ async def download_declarations_excel(current_user: dict = Depends(get_current_u
 @router.get("/ai-tables")
 async def get_ai_tables(current_user: dict = Depends(get_current_user)):
     """Get all LLM-discovered additional tables across all jobs."""
-    import json
+    from jsonio import loads_maybe
 
     conn = database._connect()
     user_id = _user_scope(current_user)
@@ -284,7 +291,11 @@ async def get_ai_tables(current_user: dict = Depends(get_current_user)):
     for row in rows:
         job_id, pdf_name, cv_json, created_at = row
         try:
-            cv = json.loads(cv_json)
+            # `cross_validation_json` is jsonb since migration 0007, so psycopg3
+            # hands it back already parsed. `json.loads()` on a dict raises
+            # TypeError, which the `except` below absorbs — leaving this endpoint
+            # returning 200 with an empty table list and nothing in the log.
+            cv = loads_maybe(cv_json)
             tables = cv.get("additional_tables", [])
             for t in tables:
                 name = t.get("table_name", "Unknown")
@@ -308,7 +319,11 @@ async def get_ai_tables(current_user: dict = Depends(get_current_user)):
                     all_tables[name]["rows"].append(r)
 
                 all_tables[name]["job_count"] += 1
-        except (json.JSONDecodeError, TypeError):
+        except (AttributeError, TypeError):
+            # `loads_maybe` never raises, so a parse failure can no longer land
+            # here. What is left is genuinely malformed model output on ONE job —
+            # `additional_tables` holding a list where a dict belongs. Skipping
+            # that job is right; it used to skip EVERY job.
             pass
 
     return {

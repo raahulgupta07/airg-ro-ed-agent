@@ -1,0 +1,199 @@
+{
+ "100276747061__RO_1 (2).pdf": {
+  "cusdec": [
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "form": "MACCS",
+  "via": "text",
+  "note": "Release order notification 1/5-5/5; header block on p1. Marker scan missed p1 (threshold >=3)."
+ },
+ "100279686400__Ro 100279686400.pdf": {
+  "cusdec": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   9,
+   10
+  ],
+  "form": "MACCS",
+  "via": "text+title-scan"
+ },
+ "100313488550__100313488550.pdf": {
+  "cusdec": [
+   1,
+   2
+  ],
+  "form": "MACCS",
+  "via": "text+title-scan"
+ },
+ "100311799931__ATS ID NO-100321333561.pdf": {
+  "cusdec": [
+   1,
+   2
+  ],
+  "form": "MACCS",
+  "via": "text+title-scan"
+ },
+ "100313868761__100313868761.pdf": {
+  "cusdec": [
+   10,
+   11
+  ],
+  "form": "MACCS",
+  "via": "text+title-scan"
+ },
+ "100313870641__100313870641.pdf": {
+  "cusdec": [
+   10,
+   11
+  ],
+  "form": "MACCS",
+  "via": "text+title-scan"
+ },
+ "100314743761__100314743761.pdf": {
+  "cusdec": [
+   14,
+   15
+  ],
+  "form": "MACCS",
+  "via": "text+visual",
+  "note": "item block p15; p3/p5 = IMPORT LICENCE decoy"
+ },
+ "YGNBIL12526000565__PD ID NO-100314743761,PO15740 2.pdf": {
+  "cusdec": [
+   14,
+   15
+  ],
+  "form": "MACCS",
+  "via": "text",
+  "note": "distinct file, same declaration as above (md5 differs)"
+ },
+ "100319699762__100319699762.pdf": {
+  "cusdec": [
+   1,
+   2,
+   3
+  ],
+  "form": "MACCS",
+  "via": "text+title-scan"
+ },
+ "100308480420__100308480420.pdf": {
+  "cusdec": [
+   2
+  ],
+  "form": "MACCS",
+  "via": "text"
+ },
+ "100306920561__100306920561.pdf": {
+  "cusdec": [
+   1,
+   2
+  ],
+  "form": "MACCS",
+  "via": "visual",
+  "note": "item block p2"
+ },
+ "100306920821__100306920821.pdf": {
+  "cusdec": [
+   1,
+   2
+  ],
+  "form": "MACCS",
+  "via": "visual",
+  "note": "item block p2; twin of 920561"
+ },
+ "100306922661__100306922661.pdf": {
+  "cusdec": [
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "amended": [
+   8,
+   9,
+   10,
+   11,
+   12
+  ],
+  "form": "MACCS",
+  "via": "visual (AUTHORITATIVE - do not let a text scan overwrite this)",
+  "note": "\u2605\u2605\u2605ORIGINAL 'Release order notification 1/5-5/5' on p1-5 (SCANNED, no text layer) AND 'Completion of amended declaration notification 1/5-5/5' on p8-12 (amended decl 120001647100, reg 2025/06/26, HAS a text layer). A title scan finds only the amended pages and silently points truth at the wrong version."
+ },
+ "0259100560__MA0259100560.pdf": {
+  "cusdec": [
+   3,
+   4
+  ],
+  "form": "CUSDEC-1 handwritten",
+  "via": "visual",
+  "note": "old purple form + continuation sheet; NOT a MACCS release order"
+ },
+ "100306351722__100306351722.pdf": {
+  "cusdec": [
+   1,
+   2,
+   3
+  ],
+  "form": "MACCS 1/3-3/3",
+  "via": "visual",
+  "note": "form decl date 2025/06/16 vs ledger 2025-06-23 - DATE DISAGREEMENT"
+ },
+ "100305819941__100305819941.pdf": {
+  "cusdec": [
+   1,
+   2
+  ],
+  "form": "MACCS 1/2-2/2",
+  "via": "visual",
+  "note": "form date 2025/06/13 = ledger OK"
+ },
+ "00304950542+100304950542__100304950542.pdf": {
+  "cusdec": [
+   1,
+   2,
+   3
+  ],
+  "form": "MACCS 1/3-3/3",
+  "via": "visual",
+  "note": "form date 2025/06/01 = ledger OK; p9-11 Appendix 4b decoy"
+ },
+ "100306920231__100306920231.pdf": {
+  "cusdec": [
+   1,
+   2
+  ],
+  "form": "MACCS 1/2-2/2",
+  "via": "visual",
+  "note": "form decl date 2025/06/25 vs ledger 2025-06-29 - DATE DISAGREEMENT"
+ },
+ "0259+100405+12425001951__MA0259100405.pdf": {
+  "cusdec": [
+   1,
+   3,
+   4
+  ],
+  "form": "CUSDEC-1 handwritten",
+  "via": "visual",
+  "note": "purple form + 2 continuation sheets; stamped 8 APR 2025 = ledger OK"
+ },
+ "100305869051__100305869051.pdf": {
+  "cusdec": [
+   1,
+   2
+  ],
+  "form": "MACCS 1/2-2/2",
+  "via": "INFERRED from twin 100305819941",
+  "note": "NOT visually confirmed - verify at its phase"
+ }
+}

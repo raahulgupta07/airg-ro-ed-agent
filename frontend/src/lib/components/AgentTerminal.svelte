@@ -46,6 +46,8 @@
     presto: 'ATLAS SWIFT', PRESTO: 'ATLAS SWIFT', Swift: 'ATLAS SWIFT',
     scribe: 'ATLAS VISION', SCRIBE: 'ATLAS VISION', Vision: 'ATLAS VISION',
     atlas: 'ATLAS V14', ATLAS: 'ATLAS V14',
+    rover: 'ROVER PRO', ROVER: 'ROVER PRO', ROVER_PRO: 'ROVER PRO',
+    rosetta: 'ROSETTA', ROSETTA: 'ROSETTA',
   };
   const VERDICT_LABEL: Record<string, string> = {
     typed: 'PRINTED', handwritten: 'INKED', attachment: 'EXTRA',
@@ -82,9 +84,17 @@
     running = false,
     summary = null as any,
     jobId = null as string | null,
+    defaultHeight = 520,
+    light = false,
   } = $props();
 
   let terminal: HTMLDivElement | null = $state(null);
+
+  // Resizable body: default → tall/compact → mini, cycled by the ▤ button in the title bar.
+  const TERM_HEIGHTS = defaultHeight === 520 ? [520, 220, 40] : [defaultHeight, 520, 40];
+  let heightIdx = $state(0);
+  const termHeight = $derived(TERM_HEIGHTS[heightIdx]);
+  function cycleHeight() { heightIdx = (heightIdx + 1) % TERM_HEIGHTS.length; }
 
   // ─── Legacy spinner ───────────────────────────────────────────────────────
   let frame = $state(0);
@@ -108,6 +118,9 @@
   let costV7 = $state(0);
   let costV10P = $state(0);
   let totalCost = $state(0);
+  // ROVER PRO runs read the whole native PDF in one pass — no CLASSIFY/ROUTE
+  // events and no SWIFT/VISION split, so the page strip + cost badge adapt.
+  let isRover = $state(false);
   let totalDuration = $state(0);
   let pendingBuffer = $state<SseLine[]>([]);
 
@@ -167,7 +180,8 @@
           const pages = d.pages ?? d.page_count ?? '?';
           const sizeMb = d.size_mb ?? d.size ?? null;
           const sizeStr = sizeMb !== null && sizeMb !== undefined ? ` size=${fmt(sizeMb, 2)}MB` : '';
-          return `[ATLAS V14] start file=${file} pages=${pages}${sizeStr}`;
+          const startLbl = pipeLabel(d.label ?? d.pipeline) || 'ATLAS V14';
+          return `[${startLbl}] start file=${file} pages=${pages}${sizeStr}`;
         }
         case 'CLASSIFY': {
           const p = d.page ?? d.p ?? '?';
@@ -217,7 +231,8 @@
           const inT = d.tokens_in ?? d.in ?? 0;
           const outT = d.tokens_out ?? d.out ?? 0;
           const tokStr = (inT || outT) ? `  tokens ${fmtTok(inT)}/${fmtTok(outT)}` : '';
-          return `[ATLAS V14] DONE  total ${fmt(dur, 1)}s  $${fmt(cost, 3)}${tokStr}`;
+          const doneLbl = pipeLabel(d.label ?? d.pipeline) || 'ATLAS V14';
+          return `[${doneLbl}] DONE  total ${fmt(dur, 1)}s  $${fmt(cost, 3)}${tokStr}`;
         }
         case 'FAIL':
           return `[FAIL] stage=${pipeLabel(d.label ?? d.pipeline ?? d.stage)} error=${d.error ?? d.message ?? '?'}`;
@@ -319,6 +334,10 @@
         let payload: any = {};
         try { payload = JSON.parse(e.data); } catch { payload = { raw: e.data }; }
         pushLine(ev, payload);
+        if (ev === 'JOB_START') {
+          const p = String(payload?.pipeline ?? payload?.label ?? '').toUpperCase();
+          if (p.includes('ROVER') || p.includes('ROSETTA')) isRover = true;
+        }
         if (ev === 'CLASSIFY') applyClassify(payload);
         else if (ev === 'ROUTE') applyRoute(payload);
         else if (ev === 'STAGE_START') {
@@ -462,7 +481,9 @@
         >{sty.label}</div>
       {/each}
       {#if pageBoxes.length === 0}
-        <span class="text-[10px] font-mono" style="color: var(--outline);">awaiting CLASSIFY…</span>
+        <span class="text-[10px] font-mono" style="color: var(--outline);">
+          {isRover ? 'native-PDF · whole document in one pass' : 'awaiting CLASSIFY…'}
+        </span>
       {/if}
     </div>
 
@@ -477,14 +498,20 @@
         white-space: nowrap;
       "
     >
-      SWIFT ${costV7.toFixed(2)} + VISION ${costV10P.toFixed(2)} = ${totalCost.toFixed(2)}
+      {#if isRover}
+        ROVER PRO ${totalCost.toFixed(3)}
+      {:else}
+        SWIFT ${costV7.toFixed(2)} + VISION ${costV10P.toFixed(2)} = ${totalCost.toFixed(2)}
+      {/if}
     </div>
   </div>
 {/if}
 
-<div style="border: 2px solid #383832; box-shadow: 4px 4px 0px 0px #383832;">
+<div style="{light
+    ? 'border: 1px solid #e2dccc; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(60,50,30,0.06);'
+    : 'border: 2px solid #383832; box-shadow: 4px 4px 0px 0px #383832;'}">
   <!-- Title bar -->
-  <div style="background: #111118; border-bottom: 1px solid #1a1a2e; padding: 6px 12px; display: flex; align-items: center; justify-content: space-between;">
+  <div class={light ? 'atl-flip' : ''} style="background: #111118; border-bottom: 1px solid #1a1a2e; padding: 6px 12px; display: flex; align-items: center; justify-content: space-between;">
     <div style="display: flex; align-items: center; gap: 8px;">
       <div style="display: flex; gap: 4px;">
         <span style="width: 8px; height: 8px; border-radius: 50%; background: #ef4444; display: inline-block;"></span>
@@ -519,15 +546,22 @@
       {:else if summary}
         <span style="color: #22c55e;">● DONE</span>
       {/if}
+      <button
+        type="button"
+        onclick={cycleHeight}
+        title="Resize terminal"
+        style="background: #1f2937; color: #d1d5db; border: 1px solid #374151; padding: 2px 8px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 9px; cursor: pointer; text-transform: uppercase; font-weight: bold;"
+      >{termHeight <= 40 ? '▤ EXPAND' : termHeight >= 520 ? '▥ SHRINK' : '▤ SIZE'}</button>
     </div>
   </div>
 
   <!-- Terminal body -->
   <div
     bind:this={terminal}
+    class={light ? 'atl-flip' : ''}
     style="
       background: #0a0a0f;
-      height: 520px;
+      height: {termHeight}px;
       overflow-y: auto;
       font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
       font-size: 11px;
@@ -609,3 +643,9 @@
     <div style="height: 1px;"></div>
   </div>
 </div>
+
+<style>
+  /* Light "paper terminal": invert the dark console so every hardcoded dark
+     hex maps to a light equivalent (hue-rotate keeps blues blue, greens green). */
+  .atl-flip { filter: invert(0.93) hue-rotate(180deg); }
+</style>

@@ -1,12 +1,15 @@
 """V11 — Master Router workflow.
 Per-page classifier → split PDF → V7 (typed) + V10 (HW) parallel → merge."""
 import json
+import os
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
+
+import numeric
 
 from v11.agents.page_classifier import classify_pages
 from v11.tools.pdf_split import split_pdf_by_labels
@@ -15,8 +18,17 @@ from v11.tools import reconcile as _reconcile
 try:
     from v11.tools.field_bbox import compute_field_bboxes as _compute_field_bboxes
 except Exception:
-    def _compute_field_bboxes(_pdf, _decl, _items):
+    # Signature must match the real one, `pages` included — the caller passes it
+    # by keyword, and a stub that omits it turns a missing optional dependency
+    # into a TypeError inside the extraction path.
+    def _compute_field_bboxes(_pdf, _decl, _items, pages=None):
         return {}
+
+try:
+    from v11.triage import declaration_pages as _declaration_pages
+except Exception:
+    def _declaration_pages(_pdf, _cusdec_page, _decl_no=None):
+        return []
 
 try:
     import event_logger
@@ -125,6 +137,7 @@ def _call_typed(typed_pdf: str, use_presto: bool = False,
             v = _rc.reconcile(res.get("declaration") or {}, res.get("items") or [])
             if v.get("checked") and v.get("balanced"):
                 res["_engine"] = "presto"
+                res["_field_engine"] = {k: "presto" for k in (res.get("declaration") or {})}
                 return res
             # Gate failed → try targeted self-correction (fix only the broken
             # header field) BEFORE any slow fallback.
@@ -136,11 +149,49 @@ def _call_typed(typed_pdf: str, use_presto: bool = False,
                 res.setdefault("trace", []).append({"phase": "self_correct", "log": cor["log"]})
                 return res
             print(f"[Presto] gap {v.get('gap_pct')}% — falling back to V7 Veritas")
+            _presto_fallback = res          # keep it; V7 may be worse, field by field
         except Exception as e:
             print(f"[Presto] fast-path error, falling back to V7: {e}")
     res = _call_v7(typed_pdf)
     if isinstance(res, dict):
         res.setdefault("_engine", "v7")
+    # A failed gate is a reason to REVIEW the document, not to throw away a header
+    # that read correctly.
+    #
+    # PRESTO WINS ON HEADER FIELDS IT READ. Presto parses the PDF's own text layer —
+    # exact characters, no OCR step, so it cannot mis-see a digit. V7 re-reads
+    # rendered images and guesses. Backfilling only V7's BLANKS was not enough,
+    # because V7's failure mode is confidently writing the WRONG value, and a wrong
+    # value beat a right one. Measured on one Ex-bond release, all from the same run:
+    #
+    #     field                    Presto (text layer)   V7 (image re-read)
+    #     declaration_no           100319576711 correct  100313488550 wrong number
+    #     total_customs_value      198,450,000 correct   204,403,500 (tax base)
+    #     adjustment_value         null correct          2.0 (the CODE, not money)
+    #     invoice_price_fc         481,406.664 correct   not produced at all
+    #
+    # Items are NOT taken from Presto here — the gate failed on the item/CIF maths,
+    # which is exactly what V7's slower per-page read exists to improve.
+    _p = locals().get("_presto_fallback")
+    if isinstance(res, dict) and isinstance(_p, dict):
+        p_decl = _p.get("declaration") or {}
+        r_decl = res.get("declaration") or {}
+        taken = [k for k, val in p_decl.items()
+                 if val not in (None, "", "None") and r_decl.get(k) != val]
+        for k in taken:
+            r_decl[k] = p_decl[k]
+        # Provenance, recorded rather than inferred. Four rebuild-and-rerun cycles
+        # were spent guessing which layer replaced Presto's header; a per-field tag
+        # answers it in one run and keeps answering it for every document after.
+        fe = {k: ("presto" if k in taken else "v7") for k in r_decl}
+        res["_field_engine"] = fe
+        if taken:
+            res["declaration"] = r_decl
+            res["_engine"] = f"{res.get('_engine', 'v7')}+presto_header"
+            res.setdefault("trace", []).append(
+                {"phase": "presto_header_preferred", "fields": taken})
+            print(f"[Presto] header preferred over V7 for {len(taken)} field(s): "
+                  f"{', '.join(sorted(taken)[:8])}")
     return res
 
 
@@ -157,6 +208,71 @@ def _call_v10(pdf_path: str) -> Dict:
     """Use V10 PRO (shape-validated, memory-aware, cost-tracked)."""
     from v10_pro.workflow import run as run_v10_pro
     return run_v10_pro(pdf_path)
+
+
+def invoice_price_fields(vals: Dict, coerce=lambda x: x) -> Dict:
+    """The three invoice-amount columns, from an engine's raw values.
+
+    `invoice_price` means the INVOICE-CURRENCY amount and always has — the
+    team's ledger column, both Excel writers and the Beta v3 requirement form
+    ("Values are read in the invoice currency (not MMK)") all read it that way.
+
+    The ROVER bridge used to map it from `invoice_price_mmk`, which silently
+    redefined an existing column. Nothing crashed — a float column got a valid
+    float — but scored against the manual ledger the field fell from 12/13
+    correct to 1/13, and the CIF gate could not see it because that gate reads
+    `invoice_price_fc` first. The kyat figure keeps its own column instead of
+    displacing this one.
+
+    Lives here, out of the inline dict, so a test can pin the unit against the
+    real mapping rather than a copy of it.
+    """
+    fc = vals.get("invoice_price_fc")
+    mmk = vals.get("invoice_price_mmk")
+    return {
+        # Explicit None test, not `or`: a printed 0 is a reading.
+        "invoice_price": coerce(fc if fc is not None else mmk),
+        "invoice_price_fc": coerce(fc),
+        "invoice_price_mmk": coerce(mmk),
+    }
+
+
+def _pick(decl: Dict, *keys):
+    """First key that is actually set, keeping an explicit 0.
+
+    The whitelist below used `decl.get(a) or decl.get(b)` on every row, which
+    reads a real zero as "absent" and falls through to the alias. Two ways that
+    bites on a live form:
+
+      * Commercial Tax is genuinely 0 on plenty of declarations. The `or` sends
+        it to the alias, the alias is None, and the column stores NULL — which
+        the tax-completeness gate then reports as a dropped tax block.
+      * On the release order "Adjustment" is the small CODE integer (2) sitting
+        next to "Adjustment value" (326,139.8592). A null adjustment therefore
+        fell through and stored the code as an amount — a wrong figure in a
+        money column, and one that also tightens the CIF tolerance as though a
+        build-up had been supplied.
+
+    Missing and zero are different claims; only the first may fall through.
+
+    The fallback is decided on key PRESENCE, not on the value. An alias exists
+    because two engines name the same field differently — so it answers "this
+    engine didn't produce this field", never "this engine produced it and said
+    blank". If the primary key is in the dict at all, its reading stands, null
+    included; that is what stops a blank adjustment from picking up the code.
+    """
+    for i, k in enumerate(keys):
+        if k not in decl:
+            continue
+        v = decl.get(k)
+        if v is not None and v != "":
+            return v
+        # Present but blank. For the primary name that is an authoritative
+        # reading — the engine looked and the row was empty — so stop here
+        # rather than letting an alias speak for it.
+        if i == 0:
+            return None
+    return None
 
 
 def _save_to_db(out: Dict, pdf_path: str) -> str:
@@ -183,9 +299,36 @@ def _save_to_db(out: Dict, pdf_path: str) -> str:
     decl = out.get("declaration", {}) or {}
     if decl:
         # Map snake_case → DB column names matching V7 schema
+        _fe = (decl or {}).get("_field_engine") or {}
+        if _fe:
+            _watch = ("declaration_no", "declaration_date", "total_customs_value",
+                      "adjustment_value", "invoice_price_fc", "exchange_rate",
+                      "arrival_date", "release_order_date", "completion_date")
+            print("[provenance] " + "  ".join(
+                f"{k}={_fe.get(k, '?')}" for k in _watch if k in _fe))
+        # `invoice_price` and `invoice_price_fc` are the SAME quantity — the amount in
+        # the invoice currency. The second name was added so the kyat figure could
+        # have its own column; the first is what the typed lane still emits.
+        #
+        # It cannot be expressed as a `_pick` alias. `_pick` stops at the primary key
+        # when that key is present but blank, treating it as "the engine looked and
+        # the row was empty" — the rule that stops a blank `adjustment_value` picking
+        # up the adjustment CODE printed beside it. The engines emit
+        # `invoice_price_fc: None` explicitly, so the fallback never got a turn and
+        # two documents stored null beside a perfectly good `invoice_price`.
+        #
+        # A rename is not an alias, so it is resolved here instead of weakening a rule
+        # that is doing useful work elsewhere.
+        _ip_fc = _pick(decl, "invoice_price_fc", "Invoice Price (FC)")
+        if _ip_fc is None:
+            _ip_fc = _pick(decl, "invoice_price", "Invoice Price")
+
         db_decl = {
             "declaration_no": decl.get("declaration_no") or decl.get("Declaration No"),
             "declaration_date": decl.get("declaration_date") or decl.get("Declaration Date"),
+            "arrival_date": decl.get("arrival_date") or decl.get("Arrival Date"),
+            "release_order_date": decl.get("release_order_date") or decl.get("Release Order Date"),
+            "completion_date": decl.get("completion_date") or decl.get("Completion Date"),
             "importer_name": decl.get("importer_name") or decl.get("Importer (Name)"),
             "consignor_name": decl.get("consignor_name") or decl.get("Consignor (Name)"),
             "invoice_number": decl.get("invoice_number") or decl.get("Invoice Number"),
@@ -193,15 +336,53 @@ def _save_to_db(out: Dict, pdf_path: str) -> str:
             "invoice_number_commercial_invoice": decl.get("invoice_number_commercial"),
             "currency": decl.get("currency") or decl.get("Currency"),
             "currency_2": decl.get("currency_2") or decl.get("Currency 2"),
-            "exchange_rate": decl.get("exchange_rate") or decl.get("Exchange Rate"),
-            "invoice_price": decl.get("invoice_price") or decl.get("Invoice Price"),
-            "total_customs_value": decl.get("total_customs_value") or decl.get("Total Customs Value"),
-            "import_export_customs_duty": decl.get("customs_duty") or decl.get("Import/Export Customs Duty"),
-            "commercial_tax_ct": decl.get("commercial_tax") or decl.get("Commercial Tax (CT)"),
-            "advance_income_tax_at": decl.get("advance_income_tax") or decl.get("Advance Income Tax (AT)"),
-            "security_fee_sf": decl.get("security_fee") or decl.get("Security Fee (SF)"),
-            "maccs_service_fee_mf": decl.get("maccs_service_fee") or decl.get("MACCS Service Fee (MF)"),
-            "exemption_reduction": decl.get("exemption") or decl.get("Exemption/Reduction"),
+            # Money rows go through _pick, not `or`: a declared 0 is a reading,
+            # not a blank, and must not fall through to the alias.
+            "exchange_rate": _pick(decl, "exchange_rate", "Exchange Rate"),
+            "invoice_price": _pick(decl, "invoice_price", "Invoice Price"),
+            "invoice_price_fc": _ip_fc,
+            "invoice_price_mmk": _pick(decl, "invoice_price_mmk", "Invoice Price (MMK)"),
+            "total_customs_value": _pick(decl, "total_customs_value", "Total Customs Value"),
+            # CIF build-up — was silently dropped at this whitelist, leaving the DB
+            # columns permanently NULL even when an engine supplied them.
+            "freight_value": _pick(decl, "freight_value", "Freight"),
+            "insurance_value": _pick(decl, "insurance_value", "Insurance"),
+            # "Adjustment" is V7's name for the build-up AMOUNT. On the release
+            # order the same word labels the small code integer beside
+            # "Adjustment value", so it is only consulted when the real field is
+            # absent — never when it is present-and-null.
+            "adjustment_value": _pick(decl, "adjustment_value", "Adjustment"),
+            # Currency each build-up line is printed in. Not decoration: the CIF
+            # gate has to convert them, and they are NOT always the invoice currency
+            # (Insurance is frequently already MMK on a form whose Adjustment is not).
+            "freight_currency": _pick(decl, "freight_currency"),
+            "insurance_currency": _pick(decl, "insurance_currency"),
+            "adjustment_currency": _pick(decl, "adjustment_currency"),
+            # DB name FIRST, engine name second — and the order is the whole point.
+            #
+            # These six rows listed only the RAW engine spellings. Every deterministic
+            # rescue writes the DB spellings: `cusdec_rescue` sets
+            # `security_fee_sf`, `vision_rescue` sets `exemption_reduction`, and both
+            # are documented as authoritative because they read the legal source page.
+            # None of it ever reached the database — the whitelist looked for keys
+            # those stages do not produce, found the engine's raw key instead, and
+            # stored that. A coordinate read of the tax table was computed, verified
+            # against the corpus at 48 correct / 0 wrong, and then dropped right here.
+            #
+            # `_pick` takes the first key PRESENT, so putting the DB name first means
+            # a rescue value wins and the engine's reading remains the fallback.
+            "import_export_customs_duty": _pick(decl, "import_export_customs_duty",
+                                                "customs_duty", "Import/Export Customs Duty"),
+            "commercial_tax_ct": _pick(decl, "commercial_tax_ct",
+                                       "commercial_tax", "Commercial Tax (CT)"),
+            "advance_income_tax_at": _pick(decl, "advance_income_tax_at",
+                                           "advance_income_tax", "Advance Income Tax (AT)"),
+            "security_fee_sf": _pick(decl, "security_fee_sf",
+                                     "security_fee", "Security Fee (SF)"),
+            "maccs_service_fee_mf": _pick(decl, "maccs_service_fee_mf",
+                                          "maccs_service_fee", "MACCS Service Fee (MF)"),
+            "exemption_reduction": _pick(decl, "exemption_reduction",
+                                         "exemption", "Exemption/Reduction"),
             "document_format": out.get("document_format"),
             # Reconciliation verdict (items_sum vs declared total) — the gate.
             # save_declarations reads the underscore-prefixed metadata key.
@@ -213,6 +394,32 @@ def _save_to_db(out: Dict, pdf_path: str) -> str:
             import json as _json
             db_decl["_sanity_flags_json"] = _json.dumps(_sflags)
             db_decl["_document_format"] = out.get("document_format")
+        # Per-field evidence (ROVER Cell record). Computed on every rover run and,
+        # until now, dropped right here at the whitelist — `out["rover_record"]` was
+        # set by _run_rover and never mapped, so the DB never saw it.
+        _ev = out.get("rover_record") or out.get("evidence")
+        if not _ev and _fe:
+            # ATLAS records per-field provenance too, and it used to end at the
+            # `print` above. `evidence_json` was populated only from a ROVER
+            # record, so once ROVER was retired the review screen had no way to
+            # distinguish a value read off the declaration's text layer from one
+            # a vision model read off a photograph, or from one the CIF identity
+            # worked out. Those need very different amounts of trust.
+            try:
+                from v11.tools.provenance import build_evidence
+                # Boxes are already computed — Phase 4.5 runs before this save —
+                # so a cell can carry the page it was read from and the Checks
+                # screen can crop that patch of paper instead of the whole page.
+                _ev = build_evidence(db_decl, _fe, out.get("sanity_flags") or [],
+                                     out.get("field_bboxes") or {})
+            except Exception as e:
+                print(f"[V11 DB] provenance skipped: {e}")
+        if _ev:
+            import json as _json2
+            try:
+                db_decl["_evidence_json"] = _json2.dumps(_ev, default=str)
+            except Exception as e:
+                print(f"[V11 DB] evidence serialise skipped: {e}")
         try:
             database.save_declarations(job_id, [db_decl])
         except Exception as e:
@@ -295,6 +502,18 @@ def _save_to_db(out: Dict, pdf_path: str) -> str:
     except Exception as e:
         print(f"[V11 DB] update_job_field_bboxes error: {e}")
 
+    # Persist the engine's verbatim output (jobs.raw_extraction), so a mapping
+    # bug can be re-projected from stored JSON instead of re-extracting every
+    # document. Deliberately outside the db_decl whitelist — this is the job's
+    # own artifact, not a declaration field. Never fatal: a database without the
+    # column, or a payload that would not serialise, leaves it NULL.
+    try:
+        _raw = out.get("raw_extraction")
+        if _raw:
+            database.update_job_raw_extraction(job_id, _raw)
+    except Exception as e:
+        print(f"[V11 DB] update_job_raw_extraction error: {e}")
+
     # Compute document_type from page_classification summary
     cls = out.get("page_classification", {}) or {}
     summary = cls.get("summary", {}) or {}
@@ -341,6 +560,574 @@ def _save_to_db(out: Dict, pdf_path: str) -> str:
     return job_id
 
 
+# ROSETTA's reader, named here rather than read from the shared env var so the
+# engine cannot drift when someone changes ROVER_PRIMARY_MODEL. Overridable for
+# a bake-off, but the default is the engine's definition.
+ROSETTA_MODEL = os.environ.get("ROSETTA_MODEL", "google/gemini-3.6-flash")
+
+
+def _looks_incomplete(result: Dict) -> str:
+    """Is this run obviously short of what the document holds? Returns a reason.
+
+    Measured on the hardest bundle in the corpus (100306922661 — 28 pages, 8
+    scanned, two declarations). Three runs of the SAME file through the SAME
+    model gave: header wrong + 0 items; header right + 7 items; header right +
+    0 items. Same input, three different answers. Nothing in the pipeline
+    noticed, because a missing item list is not an arithmetic error — there is
+    no sum to fail when there are no rows.
+
+    This is deliberately narrow. It fires only on outcomes that cannot be right
+    for a customs declaration, never on a merely surprising value:
+      * a declared total with no product rows at all;
+      * no total when the reader did find products.
+    A document that genuinely has no items also has no total, and is left alone.
+    """
+    vals = result.get("values", {}) or {}
+
+    def _v(col):
+        c = vals.get(col)
+        return getattr(c, "value", c)
+
+    total = _v("total_customs_value")
+    items = result.get("items") or []
+    if total not in (None, "", 0) and not items:
+        return "a declared total but no product rows"
+    if total in (None, "") and items:
+        return "product rows but no declared total"
+    return ""
+
+
+def _run_with_retry(pipeline_fast, pdf_path: str, on_log, retry: bool = False) -> Dict:
+    """Run the reader; on an obviously-incomplete result, run it once more.
+
+    One retry, not a loop: the failure is a coin-flip, not a systematic gap, so
+    a second attempt is worth ~$0.2 and a minute. If the retry is no better the
+    first result stands and the job still goes to review — a retry must never be
+    able to make the outcome worse.
+    """
+    r = pipeline_fast.run(pdf_path, on_log=on_log)
+    if not retry:
+        return r
+    why = _looks_incomplete(r)
+    if not why:
+        return r
+    on_log("Incomplete read (%s) — reading once more" % why, "warn")
+    try:
+        r2 = pipeline_fast.run(pdf_path, on_log=on_log)
+    except Exception as e:            # a failed retry must not lose the first read
+        on_log("Retry failed (%s) — keeping the first read" % e, "warn")
+        return r
+    if _looks_incomplete(r2):
+        on_log("Second read no better — keeping the first, flagged for review", "warn")
+        r.setdefault("notes", []).append("retried once; still %s" % why)
+        r["needs_review"] = True
+        return r
+    on_log("Second read is complete — using it", "ok")
+    r2.setdefault("notes", []).append("first read was incomplete (%s); re-read" % why)
+    return r2
+
+
+# Ceiling on the serialised engine output stored in `jobs.raw_extraction`.
+# A 28-page bundle serialises to a few hundred KB, so this leaves headroom on
+# the worst document in the corpus; past it the extra is bulk rather than
+# evidence, and the payload is rebuilt from the parts a re-projection actually
+# reads (the declaration values and the item rows).
+RAW_EXTRACTION_MAX_BYTES = 1_000_000
+
+# Keys that can carry a page render or a base64 blob. Dropped at every depth,
+# always — image data is never stored: it is enormous, it cannot help re-derive
+# a typed column, and the source PDF is already kept on the job. `content` is
+# named because that is the LLM message-block key the base64 PDF rides in.
+_RAW_BLOB_KEYS = {
+    "image", "images", "img", "imgs", "image_b64", "page_image", "page_images",
+    "b64", "base64", "file_data", "data_uri", "thumbnail", "thumbnails",
+    "png", "jpeg", "jpg", "content",
+    "page_text", "pages_text", "raw_text", "full_text", "text_layer",
+}
+
+# A single string longer than this is a blob under a key we did not predict.
+# No customs field — including a Cell's `source` proof text — runs this long.
+_RAW_MAX_STR = 20_000
+
+
+def _strip_blobs(v):
+    """Recursive copy of `v` with image/base64/page-text blobs removed."""
+    if isinstance(v, dict):
+        return {k: _strip_blobs(x) for k, x in v.items()
+                if str(k).lower() not in _RAW_BLOB_KEYS}
+    if isinstance(v, (list, tuple)):
+        return [_strip_blobs(x) for x in v]
+    if isinstance(v, str) and (len(v) > _RAW_MAX_STR or v.startswith("data:")):
+        return "<%d chars elided>" % len(v)
+    return v
+
+
+def _raw_snapshot(result: Dict) -> Optional[str]:
+    """Serialise the engine's verbatim output for `jobs.raw_extraction`.
+
+    Why it is kept: the engine→DB bridge below is hand-written field by field.
+    When it was wrong about item values — ROVER's invoice-currency 'Item value'
+    was being written into `customs_value_mmk`, ~58x off on a THB document — the
+    only remedy was to re-run every document through the model and pay for
+    extraction a second time, because nothing had kept what the model actually
+    said. Everything stored had already been through the lossy mapping.
+
+    With the raw read stored, that class of bug is a re-projection: fix the
+    mapping, rebuild the typed columns from this JSON, no model calls, and the
+    documents processed before the fix get corrected too.
+
+    Kept: the engine's own `values`, the per-field evidence `record` (proof
+    text, confidence, model, page geometry) and the raw `items` rows as emitted,
+    plus the run's verdicts (suspect columns, notes, cost, token counts). Never
+    kept: page renders or any base64 blob.
+
+    Never raises. A job must not fail because a debug artifact could not be
+    written — on any error the column simply stays NULL.
+    """
+    if not isinstance(result, dict):
+        return None
+    try:
+        lean = _strip_blobs(result)
+        payload = json.dumps(lean, default=str, ensure_ascii=False)
+        if len(payload.encode("utf-8")) <= RAW_EXTRACTION_MAX_BYTES:
+            return payload
+        # Over the cap. Keep what a re-projection reads and say so inside the
+        # payload, so a later reader cannot mistake a trimmed record for the
+        # engine's whole answer.
+        _keep = ("values", "items", "record", "suspect", "notes", "cost",
+                 "n_items", "declared_count", "items_incomplete", "needs_review",
+                 "rescued_by", "pages_total", "pdf")
+        trimmed = {k: lean[k] for k in _keep if k in lean}
+        trimmed["_truncated"] = ("over %d bytes — bulk keys dropped"
+                                 % RAW_EXTRACTION_MAX_BYTES)
+        payload = json.dumps(trimmed, default=str, ensure_ascii=False)
+        if len(payload.encode("utf-8")) > RAW_EXTRACTION_MAX_BYTES:
+            # Still over. The evidence record is the bulky half (one entry per
+            # column, each carrying its proof text); the declaration values and
+            # the item rows are the entire point of the column, so they stay
+            # even if that leaves the row above the cap. An oversize row still
+            # re-projects; an empty one does not.
+            trimmed.pop("record", None)
+            trimmed["_truncated"] = (
+                "over %d bytes — evidence record and bulk keys dropped"
+                % RAW_EXTRACTION_MAX_BYTES)
+            payload = json.dumps(trimmed, default=str, ensure_ascii=False)
+        return payload
+    except Exception as e:
+        print(f"[V11] raw_extraction capture skipped: {e}")
+        return None
+
+
+def complete_field_bboxes(pdf_path: str, decl: Dict, items: List[Dict],
+                          measured: Optional[Dict] = None) -> Dict:
+    """Fill in every value the engine did not already locate on the page.
+
+    The marked PDF is drawn from `jobs.field_bboxes_json`, and only the Atlas
+    path ever filled that in completely: Phase 4.5 runs the text-layer locator
+    over the whole declaration + every item row. The ROVER / ROSETTA bridge
+    supplied only what its own Cells happened to carry — header columns read by
+    the deterministic reader, and **no item rows at all**, because
+    `_bboxes_from_record` walks the header record and nothing else. So on those
+    engines a run finished with a handful of marks and no product lines, and the
+    marked PDF looked like the feature was half-built rather than like a
+    different engine having been used.
+
+    Measured boxes WIN. A coordinate the reader recorded while it was reading
+    the cell is better evidence than a later search for the same string, which
+    can land on another occurrence of it elsewhere in the bundle. This only ever
+    ADDS entries.
+
+    Never raises: a missing coordinate must not fail an extraction that
+    otherwise succeeded.
+    """
+    out = {"declaration": dict((measured or {}).get("declaration") or {}),
+           "items": {k: dict(v or {}) for k, v in
+                     ((measured or {}).get("items") or {}).items()}}
+    try:
+        # `declaration_pages` needs the 0-based CUSDEC anchor; passing None makes
+        # it return [], and an EMPTY page list means "search nothing" (None means
+        # "search everything"). Getting that backwards produces zero boxes and
+        # looks exactly like a scanned document.
+        from v11.triage import _locate_cusdec_page
+        anchor, _digital = _locate_cusdec_page(pdf_path)
+        pages = _declaration_pages(pdf_path, anchor, (decl or {}).get("declaration_no"))
+        found = _compute_field_bboxes(pdf_path, decl or {}, items or [], pages=pages)
+    except Exception as e:
+        print(f"[V11 bbox] complete_field_bboxes skipped: {e}")
+        return out
+
+    for field, bb in (found.get("declaration") or {}).items():
+        out["declaration"].setdefault(field, bb)
+    for idx, row in (found.get("items") or {}).items():
+        tgt = out["items"].setdefault(str(idx), {})
+        for field, bb in (row or {}).items():
+            tgt.setdefault(field, bb)
+    # An item entry that ended up empty is noise in the payload and renders as a
+    # row with nothing under it.
+    out["items"] = {k: v for k, v in out["items"].items() if v}
+    return out
+
+
+def _run_rover(pdf_path: str, job_id: str, retry_on_empty: bool = False,
+               label: str = "ROVER PRO", model: str = None) -> Dict:
+    """ATLAS V15 — native-PDF ROVER engine bridged into the V11 job contract.
+
+    Runs the ROVER fast pipeline (native-PDF gemini primary + math-supervisor
+    JUDGE + fail-closed review), maps its Cell record to the V11 declaration/items
+    schema, persists via the same `_save_to_db` path, and emits the same live
+    events the Atlas terminal consumes. The rich ROVER surface (/rover) stays the
+    deep-review workbench — this is the quick single-upload lane on the Agent page.
+    """
+    import sys as _sys
+    if "/app" not in _sys.path:
+        _sys.path.insert(0, "/app")
+    t0 = time.time()
+    filename = Path(pdf_path).name
+    model_used = "%s · Native-PDF" % label.title() if label != "ROVER PRO" \
+        else "Rover Pro · Native-PDF"
+
+    # ROSETTA pins its reader in the engine definition rather than inheriting the
+    # shared env var. A model swap moved results silently this morning; an engine
+    # that names its own model cannot drift underneath you.
+    #
+    # `llm.PRIMARY` is module state shared by every job this worker runs, so it
+    # is restored below — otherwise one ROSETTA job would silently re-point every
+    # later ROVER job on the same worker.
+    from rover import llm as _llm
+    _prev_model = _llm.PRIMARY
+    if model:
+        _llm.PRIMARY = model
+
+    n_pages = None
+    try:
+        import fitz
+        _d = fitz.open(str(pdf_path)); n_pages = len(_d); _d.close()
+    except Exception:
+        n_pages = None
+
+    _emit(job_id, "JOB_START", {
+        "file": filename, "pages": n_pages, "pipeline": "ROVER_PRO",
+        "label": label,
+    })
+
+    def _on_log(ev, level=None):
+        """Accept BOTH call shapes.
+
+        `pipeline_fast.run` wraps its own `log(msg, level)` and calls this with a
+        single dict. `_run_with_retry` calls it directly as `on_log(msg, level)` —
+        two positionals, message first. The dict-only signature meant that the
+        moment ROSETTA decided to retry, the callback raised
+        `TypeError: _on_log() takes 1 positional argument but 2 were given`
+        and the whole job FAILED instead of re-reading. The retry guard is the
+        reason ROSETTA exists as a separate engine, and it had never once run.
+        """
+        try:
+            if isinstance(ev, dict):
+                msg, lvl = str(ev.get("msg", "")), ev.get("level", "info")
+            else:
+                msg, lvl = str(ev), (level or "info")
+            _emit(job_id, "STAGE_DETAIL", {
+                "label": label, "step": "rover", "msg": msg, "level": lvl,
+            })
+        except Exception:
+            pass
+
+    from rover import pipeline_fast
+    from rover.mapping import _core_invoice  # strip 'A-'/'INV-' → bare number (team: store bare)
+    from rover.deterministic import ma_decl_no_from_name
+    try:
+        r = _run_with_retry(pipeline_fast, pdf_path, _on_log, retry=retry_on_empty)
+    finally:
+        _llm.PRIMARY = _prev_model      # never leak the pin into the next job
+
+    # Freeze the engine's verbatim answer HERE, before the hand-written mapping
+    # below flattens it into the V11 schema. Serialising now rather than holding
+    # a reference also means what lands in the DB is exactly what the engine
+    # returned, whatever the mapping does to `r` afterwards.
+    raw_extraction = _raw_snapshot(r)
+
+    vals = r.get("values", {}) or {}
+
+    # ROVER returns numeric strings as the form prints them ("1,394,615",
+    # "111,488.4288", "THB 652,279.7184"). Postgres numeric columns reject all of
+    # those, and one bad item value aborts the whole save_items batch — items
+    # vanish silently. Non-numerics (dates, names, the MA-series slash id) come
+    # back untouched, which is what the whole-record mapping below needs.
+    _num = numeric.keep_if_unparseable
+
+    # ROVER column → V11 declaration snake_case (the names _save_to_db + UI read).
+    decl = {
+        "declaration_no": vals.get("declaration_no"),
+        "declaration_no_official": vals.get("declaration_no_official"),
+        "declaration_date": vals.get("declaration_date"),
+        "arrival_date": vals.get("arrival_date"),
+        "release_order_date": vals.get("release_order_date"),
+        "completion_date": vals.get("completion_date"),
+        "importer_name": vals.get("importer_name"),
+        "consignor_name": vals.get("consignor_name"),
+        "invoice_number": _core_invoice(vals.get("invoice_number")) or None,
+        "currency": vals.get("currency"),
+        "exchange_rate": _num(vals.get("exchange_rate")),
+        **invoice_price_fields(vals, _num),
+        "freight_value": _num(vals.get("freight_value")),
+        "insurance_value": _num(vals.get("insurance_value")),
+        "adjustment_value": _num(vals.get("adjustment_value")),
+        "total_customs_value": _num(vals.get("total_customs_value")),
+        "customs_duty": _num(vals.get("import_export_customs_duty")),
+        "commercial_tax": _num(vals.get("commercial_tax_ct")),
+        "advance_income_tax": _num(vals.get("advance_income_tax_at")),
+        "security_fee": _num(vals.get("security_fee_sf")),
+        "maccs_service_fee": _num(vals.get("maccs_service_fee_mf")),
+        "exemption": _num(vals.get("exemption_reduction")),
+    }
+    # Old-format 'MA' declarations: file under the Registration No 'MA0259/100405'
+    # (team-confirmed). Filename is authoritative here — the printed stamp is OCR-hostile.
+    _ma = ma_decl_no_from_name(filename)
+    if _ma:
+        decl["declaration_no"] = _ma
+
+    # UI-facing alias keys (mirror the merge-phase aliasing so both name styles resolve).
+    decl["import_export_customs_duty"] = decl["customs_duty"]
+    decl["commercial_tax_ct"] = decl["commercial_tax"]
+    decl["advance_income_tax_at"] = decl["advance_income_tax"]
+    decl["security_fee_sf"] = decl["security_fee"]
+    decl["maccs_service_fee_mf"] = decl["maccs_service_fee"]
+    decl["exemption_reduction"] = decl["exemption"]
+
+    items = []
+    for it in (r.get("items") or []):
+        qty = _num(it.get("quantity"))
+        val = _num(it.get("value"))            # 'Item value' — INVOICE currency
+        unit = _num(it.get("unit_price"))      # 'Invoice unit price' — INVOICE currency
+        cust = _num(it.get("customs_value"))   # 'Customs value' — assessed MMK
+        # ROVER items carry row value + quantity but no unit price — derive it.
+        if unit in (None, "") and isinstance(qty, (int, float)) and qty \
+                and isinstance(val, (int, float)):
+            unit = round(val / qty, 4)
+        # `customs_value_mmk` is MMK. `value` is the invoice-currency line total, which on a
+        # THB document is ~60x smaller. Storing one as the other silently corrupts the column,
+        # every export that reads it, and the item-sum gate — it was doing exactly that.
+        # Leave it NULL when the row prints no assessed value: deriving it as value*rate is
+        # wrong wherever the assessed value carries an uplift.
+        items.append({
+            "item_name": it.get("description") or it.get("item_name"),
+            "hs_code": it.get("hs_code"),
+            "quantity": qty,
+            "invoice_unit_price": unit,
+            "customs_value_mmk": cust,
+            "currency": vals.get("currency"),
+            "customs_duty_rate": _num(it.get("customs_duty_rate")),
+            "origin": it.get("origin"),
+            # Items share the declaration's rate — fill so the item row is complete.
+            "exchange_rate": decl.get("exchange_rate"),
+        })
+
+    needs_review = bool(r.get("needs_review"))
+    out = {
+        "pdf": pdf_path,
+        "job_id_live": job_id,
+        "declaration": decl,
+        "items": items,
+        "document_format": "CUSDEC",
+        "cost": float(r.get("cost") or 0),
+        "duration_seconds": round(time.time() - t0, 2),
+        "needs_review": needs_review,
+        "suspect": r.get("suspect") or [],
+        "sanity_flags": r.get("suspect") or [],
+        "cross_val_passed": not needs_review,
+        "trace": [{"phase": "rover", "engine": "native-pdf",
+                   "items": len(items), "suspect": r.get("suspect"),
+                   "rescued_by": r.get("rescued_by"), "notes": r.get("notes")}],
+        "pipeline_version": "rover_pro",
+        "model_used": model_used,
+        "rover_record": r.get("record"),
+        # The engine's verbatim output, already serialised. `_save_to_db`
+        # persists it to jobs.raw_extraction; it is NOT part of the declaration
+        # whitelist and is never read back into the mapping.
+        "raw_extraction": raw_extraction,
+        # Measured page coordinates for geometry-bound fields. _save_to_db already
+        # persists this key (jobs.field_bboxes_json) for the Atlas path and the
+        # review UI already reads it — ROVER simply never supplied it, so the
+        # highlight worked on one engine and silently did nothing on the other.
+        # The record's own coordinates cover part of the header and none of the
+        # items, so the text-layer locator fills the rest in — same call Atlas
+        # makes in Phase 4.5, no model, no cost.
+        "field_bboxes": complete_field_bboxes(
+            pdf_path, decl, items, r.get("field_bboxes") or {}),
+        "tokens_in": int(r.get("tokens_in") or 0),
+        "tokens_out": int(r.get("tokens_out") or 0),
+        "total_pages": n_pages or r.get("pages_total") or 0,
+    }
+    # Page classification summary — _save_to_db reads this for jobs.total_pages /
+    # text_pages / image_pages + doc_type; without it the review UI shows "0 pg".
+    _np = int(out["total_pages"] or 0)
+    _scanned = min(int(r.get("pages_scanned") or 0), _np)
+    out["page_classification"] = {
+        "n_pages": _np,
+        "summary": {"TYPED": _np - _scanned, "HANDWRITTEN": _scanned},
+    }
+
+    db_job_id = None
+    try:
+        db_job_id = _save_to_db(out, pdf_path)
+        out["job_id"] = db_job_id
+        _emit(job_id, "DB_SAVE", {"job_id": db_job_id, "decls": 1 if decl else 0,
+                                  "items": len(items)})
+    except Exception as e:
+        out["trace"].append({"phase": "db_save", "error": str(e)})
+        _emit(job_id, "DB_SAVE", {"job_id": None, "decls": 0,
+                                  "items": len(items), "error": str(e)})
+
+    out["processed_at"] = datetime.utcnow().isoformat() + "Z"
+    _emit(job_id, "DONE", {
+        "total_s": out["duration_seconds"], "total_cost": out["cost"],
+        "total_tokens_in": out["tokens_in"], "total_tokens_out": out["tokens_out"],
+        "tokens_in": out["tokens_in"], "tokens_out": out["tokens_out"],
+        "label": label, "pipeline": "ROVER_PRO",
+    })
+    _close(job_id)
+    return out
+
+
+#: Header fields whose value is printed on more than one form in a bundle, with
+#: DIFFERENT figures on each. The importer's name is the same on the licence and
+#: the declaration, so blanking it buys nothing; the total, the invoice and the
+#: prices are the ones that ship a licence's numbers as a declaration's.
+_OFF_DECLARATION_HEADER = (
+    "invoice_number", "invoice_number_customs", "invoice_number_commercial",
+    "invoice_price", "invoice_price_fc", "invoice_price_mmk",
+    "total_customs_value", "arrival_date",
+)
+
+#: Documents that are POSITIVE evidence a lane was reading something else.
+#: UNKNOWN and OTHER are deliberately absent: "could not tell" is not proof, and
+#: dropping items on an absence of evidence deletes real rows from every bundle
+#: the classifier finds hard.
+_FOREIGN_DOCUMENTS = frozenset({"LICENCE", "INVOICE", "PACKING_LIST"})
+
+
+def _scope_items(cls_pages, v7_res, v10_res, v7_pages, v10p_pages, out) -> None:
+    """Drop items from a lane that demonstrably read a different document.
+
+    Phase 3.9 keeps the typed lane's items on purpose — misrouted item pages are
+    why attachment pages are read at all — and that is right when the stray pages
+    are continuation sheets. It is wrong when they are an IMPORT LICENCE, which
+    carries its OWN goods table: same HS codes, same product names, licence
+    quantities rather than shipped ones, and its own CIF total.
+
+    On `0259100560` the typed lane read pages 6-8 (licence) while the vision lane
+    read 3-4 (CUSDEC); both were merged and a four-item declaration stored
+    nineteen rows. The duplication was the visible part, not the dangerous one:
+    the licence's eleven lines sum EXACTLY to the licence's own total, which the
+    header had taken from the same page, so removing the duplicates alone would
+    have left a self-consistent wrong answer with no gate able to fail it.
+
+    `label` cannot separate them — a licence is machine-printed, so TYPED is an
+    honest answer. Only `document` can.
+
+    Mutates `v7_res` / `v10_res` / `out` in place. Never raises: a scoping
+    failure must not cost a job its extraction.
+    """
+    try:
+        docmap = {}
+        for p in (cls_pages or []):
+            if not isinstance(p, dict):
+                continue
+            pg = p.get("page")
+            if pg:
+                docmap[int(pg)] = (p.get("document") or "UNKNOWN").upper()
+
+        # Scoping needs an anchor. With no page identified as the declaration
+        # there is nothing to scope TO, so keep every lane and let the gates
+        # decide — which is where this codebase stood before today.
+        decl_pages = {p for p, d in docmap.items() if d == "DECLARATION"}
+        lanes = [("typed", v7_res, set(v7_pages or [])),
+                 ("vision", v10_res, set(v10p_pages or []))]
+
+        # Stamp every row with the document its lane read, BEFORE deciding what to
+        # drop and BEFORE the no-anchor bail-out below. `reconcile._document_check`
+        # needs this on the rows that SURVIVE, and the three cases this function
+        # deliberately does not drop — no page identified as the declaration, the
+        # foreign lane being the only source of items, a lane with no page list —
+        # are precisely the ones a downstream gate still has to see. Stamping only
+        # on the drop path would leave the gate blind exactly where it is needed.
+        for _n, res, pgs in lanes:
+            if not res:
+                continue
+            if not pgs or (pgs & decl_pages):
+                src = "DECLARATION" if (pgs & decl_pages) else "UNKNOWN"
+            else:
+                named = sorted({docmap.get(p, "UNKNOWN") for p in pgs} & _FOREIGN_DOCUMENTS)
+                src = named[0] if named else "UNKNOWN"
+            for it in (res.get("items") or []):
+                if isinstance(it, dict):
+                    it.setdefault("_src_doc", src)
+
+        if not decl_pages:
+            out["trace"].append({"phase": "item_scope",
+                                 "skipped": "no page identified as DECLARATION"})
+            return
+
+        # A lane with no page list is the whole-document fallback: it read
+        # everything, so it read the declaration.
+        survivors = sum(1 for _, r, pg in lanes
+                        if r and (r.get("items") or []) and (not pg or pg & decl_pages))
+
+        for name, res, pgs in lanes:
+            if not res:
+                continue
+            items = res.get("items") or []
+            if not items or not pgs or (pgs & decl_pages):
+                continue
+            foreign = sorted({docmap.get(p, "UNKNOWN") for p in pgs} & _FOREIGN_DOCUMENTS)
+            if not foreign:
+                continue
+
+            # Never leave the job with no items at all. An empty list is a
+            # known-bad outcome — the ROSETTA retry guard exists because a
+            # declaration with no rows has no sum to fail — and a reviewer can
+            # delete a wrong row but cannot recover a dropped one.
+            if survivors == 0:
+                out.setdefault("sanity_flags", []).append(
+                    "items_only_from_" + foreign[0].lower())
+                out["needs_review"] = True
+                out["trace"].append({"phase": "item_scope", "lane": name,
+                                     "kept_because": "only source of items",
+                                     "documents": foreign, "pages": sorted(pgs),
+                                     "n_items": len(items)})
+                print(f"[scope] {name} lane read {'/'.join(foreign)}, not the declaration"
+                      f" — KEPT {len(items)} items (only source), review forced")
+                continue
+
+            res["items"] = []
+            out.setdefault("sanity_flags", []).append("items_off_declaration")
+            out["trace"].append({"phase": "item_scope", "lane": name,
+                                 "dropped_items": len(items), "documents": foreign,
+                                 "pages": sorted(pgs),
+                                 "declaration_pages": sorted(decl_pages)})
+            print(f"[scope] {name} lane read {'/'.join(foreign)} pages {sorted(pgs)}, "
+                  f"not the declaration {sorted(decl_pages)} — dropped {len(items)} items")
+
+            # A lane that owns no items owns no header either. Phase 3.9 fires on
+            # `cusdec_page_digital is False`, which needs triage to have LOCATED
+            # the CUSDEC by text — impossible on a bundle whose every page is a
+            # photograph, which is this exact document.
+            if name == "typed" and res.get("declaration"):
+                hdr = res["declaration"]
+                cleared = [k for k in _OFF_DECLARATION_HEADER
+                           if hdr.get(k) not in (None, "")]
+                for k in cleared:
+                    hdr[k] = None
+                if cleared:
+                    out.setdefault("sanity_flags", []).append("typed_header_off_declaration")
+                    out["trace"].append({"phase": "typed_header_scoped",
+                                         "reason": f"typed lane read {'/'.join(foreign)}",
+                                         "cleared": cleared})
+                    print(f"[scope] and dropped its header fields: {', '.join(cleared)}")
+    except Exception as e:
+        out.setdefault("trace", []).append({"phase": "item_scope", "error": str(e)})
+
+
 def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Dict:
     """End-to-end V11 dispatch. Returns merged result + trace.
 
@@ -351,6 +1138,42 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
     """
     if not job_id:
         job_id = f"v11-{uuid.uuid4().hex[:12]}"
+
+    # ATLAS V15 — native-PDF ROVER engine. Fully separate reader; bridged to the
+    # V11 job/DB/event contract so the Agent page (upload → terminal → results →
+    # review/approve) works unchanged. Never falls through to the V7/V10 body.
+    # ROSETTA — the same native-PDF reader, with a determinism guard and its
+    # model pinned. Named for the Release Order it reads and for deciphering a
+    # scanned page. ROVER PRO stays unchanged alongside it so the two can be
+    # compared on the same document.
+    # ROSETTA and ROVER PRO were retired as extraction engines on 2 Aug 2026.
+    #
+    # Both used to return right here, above every ATLAS stage — so neither saw the
+    # declaration-page scoping, the scanned-CUSDEC vision rescue, the item-sum
+    # corroboration or the derived CIF adjustment. Their native-PDF reader takes the
+    # text layer, and in a bundled release order whose declaration is a photograph
+    # that text layer belongs to the Import Licence and the waybill: a real
+    # consignment, wrong document, no stage downstream able to notice.
+    #
+    # A stored job, a saved queue entry or an old client can still ask for them by
+    # name. Those requests run ATLAS instead of failing — the user wants their
+    # document read — but the substitution is emitted and recorded rather than done
+    # quietly, so a run is never mistaken for the engine that was requested.
+    # ATLAS V14 is now the only engine. `presto` and `classic` are retired with
+    # them: both were sub-lanes of ATLAS dressed up as choices, and selecting one
+    # ran part of the pipeline with the rest disabled. ATLAS already routes each
+    # page to the right lane, so there is nothing a hand-picked lane can do better.
+    _req_engine = (engine or "").lower()
+    if _req_engine and _req_engine != "atlas":
+        print(f"[engine] '{_req_engine}' is retired — running ATLAS V14 instead")
+        try:
+            _emit(job_id, "STAGE_DETAIL", {
+                "label": "ATLAS V14", "step": "engine",
+                "msg": f"{_req_engine.upper()} has been retired; running ATLAS V14",
+                "level": "warn"})
+        except Exception:
+            pass
+    engine = "atlas"
 
     t0 = time.time()
     filename = Path(pdf_path).name
@@ -576,6 +1399,28 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
         # Presto reads typed + attachment pages of the ORIGINAL pdf so misrouted
         # item pages (classifier put them in ATTACHMENT) are still captured.
         _presto_pages = sorted(set((buckets.get("TYPED") or []) + (buckets.get("ATTACHMENT") or [])))
+        # Hand Presto ONLY the pages that actually have a text layer. It parses
+        # embedded characters, so a scanned page contributes nothing but tokens and
+        # invites the model to guess at an image it cannot see. The fast path is now
+        # available whenever SOME typed page is digital (see triage.py), so this
+        # filter is what keeps the promise that Presto reads text and nothing else.
+        try:
+            import fitz as _fitz
+            _doc = _fitz.open(pdf_path)
+            _digital = {i + 1 for i in range(_doc.page_count)
+                        if len((_doc[i].get_text() or "").strip()) >= 30}
+            _doc.close()
+            _kept = [p for p in _presto_pages if p in _digital]
+            if _kept and _kept != _presto_pages:
+                out["trace"].append({"phase": "presto_pages_filtered",
+                                     "kept": _kept,
+                                     "dropped_no_text_layer":
+                                         [p for p in _presto_pages if p not in _digital]})
+                _presto_pages = _kept
+            elif not _kept:
+                _use_presto = False      # nothing readable — don't call it at all
+        except Exception as _pe:
+            out["trace"].append({"phase": "presto_pages_filtered", "error": str(_pe)})
         if _use_presto:
             out["trace"].append({"phase": "route_typed", "engine": "presto",
                                   "pages": _presto_pages})
@@ -631,10 +1476,119 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
                         "error": str(e),
                     })
 
+        # ─── Phase 3.9: drop a header read off the wrong document ───
+        # The typed lane is pointed at whichever pages carry characters. In a
+        # bundled release order where the declaration itself is a SCAN, that set is
+        # the Import Licence (Appendix 4b), the waybill and the permit — real papers
+        # for the same shipment, carrying a different invoice number, a different
+        # invoice price, and a licence quantity larger than what actually moved.
+        # Nothing downstream can tell those values from the declaration's own, and
+        # on 100306920231 they shipped as the answer: invoice PDG25009 (a bill of
+        # lading on page 11) and a price 2.46x the declared one (page 9).
+        #
+        # So when triage says the CUSDEC has no text layer, the typed lane keeps its
+        # ITEMS — misrouted item pages are why attachments are in the set at all —
+        # and loses its HEADER. The scanned-CUSDEC vision rescue below reads those
+        # fields off the declaration page. Where it cannot, the field stays blank:
+        # a reviewer can fill a blank, but has no way to know a plausible number
+        # came from another document.
+        try:
+            # `is False` on purpose: when triage itself failed, its fallback dict
+            # carries no verdict, and an unknown must not be treated as a scan —
+            # that would strip a header nothing is going to replace.
+            if v7_res and triage.get("cusdec_page_digital") is False:
+                _hdr = v7_res.get("declaration") or {}
+                _off_page = ("invoice_number", "invoice_number_customs",
+                             "invoice_number_commercial", "invoice_price",
+                             "invoice_price_fc", "invoice_price_mmk",
+                             "total_customs_value", "arrival_date")
+                _cleared = [k for k in _off_page if _hdr.get(k) not in (None, "")]
+                for _k in _cleared:
+                    _hdr[_k] = None
+                v7_res["declaration"] = _hdr
+                if _cleared:
+                    out.setdefault("sanity_flags", []).append("typed_header_off_cusdec")
+                    out["trace"].append({"phase": "typed_header_scoped",
+                                         "reason": "cusdec page has no text layer",
+                                         "cleared": _cleared,
+                                         "pages_read": _presto_pages})
+                    print(f"[scope] cusdec is a scan — dropped typed-lane header "
+                          f"fields read from pages {_presto_pages}: {', '.join(_cleared)}")
+        except Exception as _se:
+            out["trace"].append({"phase": "typed_header_scoped", "error": str(_se)})
+
+        # ─── Phase 3.95: a lane that never read the declaration owns no items ───
+        # Phase 3.9 above keeps the typed lane's ITEMS on purpose — misrouted item
+        # pages are the reason attachment pages are read at all. That is right when
+        # the stray pages are continuation sheets. It is wrong when they are an
+        # IMPORT LICENCE, because a licence carries its own goods table: same HS
+        # codes, same product names, licence quantities, and its own CIF total.
+        #
+        # On 0259100560 the typed lane read pages 6-8 (the licence) and the vision
+        # lane read pages 3-4 (the CUSDEC). The merge kept both, so a 4-item
+        # declaration stored 19 rows — 7 of them Belgian chocolate that is not in
+        # the shipment. Worse than the duplication: the licence's 11 lines sum
+        # EXACTLY to the licence's own total, which the header had also taken, so
+        # stripping the duplicates alone would have produced a self-consistent
+        # wrong answer with nothing left to fail. `label` could not catch this —
+        # the licence is machine-printed, so it is legitimately TYPED. Only
+        # `document` separates them.
+        _scope_items(cls.get("pages"), v7_res, v10_res, v7_pages, v10p_pages, out)
+
         # ─── Phase 4: Merge ───
         current_stage = "merge"
         try:
             merged = merge_results(v7_res, v10_res)
+
+            # ── Text layer wins on header fields it can read ──────────────────
+            # Where a page carries embedded characters, those characters ARE the
+            # answer; asking a model which label a number belongs to adds a guess
+            # to something unambiguous. Two fields resisted every prompt wording:
+            # `declaration_no` kept returning the "First approval declaration No."
+            # (a different, earlier declaration lower on the page) and
+            # `adjustment_value` kept returning `2`, the classification code printed
+            # 33pt above the row holding the money. Both read correctly by position.
+            # Scanned pages yield nothing here, so the model's reading stands.
+            try:
+                from v11.textlayer_header import read as _tl_read
+                # Same scoping rule as Phase 3.9: when the declaration is a scan,
+                # `_presto_pages` are attachments, and a label-anchored read of an
+                # attachment is still a read of the wrong document.
+                # Scope: the DECLARATION page, not every page with characters on it.
+                # `_presto_pages` is typed ∪ attachment, which on these bundles means
+                # the Import Licence and the waybill — and the licence has its own
+                # value rows that would answer a label search just as readily. When
+                # triage located the CUSDEC in the text layer, read only that page.
+                if triage.get("cusdec_page_digital") is False:
+                    _tl_pages = []
+                elif triage.get("cusdec_page") is not None:
+                    # The form is printed 1/2-2/2 or 1/3-3/3 and the tax block sits on
+                    # either sheet, so take the located page and the one after it.
+                    # `read()` stops at the first page where a field is found, so an
+                    # extra page costs nothing and a missing one costs the tax table.
+                    _p0 = int(triage["cusdec_page"]) + 1
+                    _tl_pages = [_p0, _p0 + 1]
+                else:
+                    _tl_pages = _presto_pages
+                _tl = _tl_read(pdf_path, _tl_pages or None) if _tl_pages else {}
+                if _tl:
+                    _md = merged.get("declaration") or {}
+                    _fe = _md.get("_field_engine") or {}
+                    _over = []
+                    for _k, _v in _tl.items():
+                        if str(_md.get(_k) or "") != str(_v):
+                            _md[_k] = _v
+                            _fe[_k] = "textlayer"
+                            _over.append(_k)
+                    _md["_field_engine"] = _fe
+                    merged["declaration"] = _md
+                    if _over:
+                        out["trace"].append({"phase": "textlayer_header",
+                                             "fields": _over, "values": _tl})
+                        print(f"[textlayer] header from text layer for {len(_over)} "
+                              f"field(s): {', '.join(sorted(_over))}")
+            except Exception as _tle:
+                out["trace"].append({"phase": "textlayer_header", "error": str(_tle)})
             out["declaration"] = merged.get("declaration", {})
             # Alias keys for UI compatibility (UI expects V7 schema names)
             _d = out["declaration"]
@@ -892,6 +1846,27 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
             if triage.get("needs_vision_rescue"):
                 from v11.tools.vision_rescue import vision_cusdec_fields
                 _vf = vision_cusdec_fields(pdf_path, triage.get("cusdec_page"))
+                # An empty rescue used to leave no trace at all. On one document in
+                # the 20-document run it returned nothing, six fields were lost, and
+                # the identical call succeeded on re-run in 44 seconds — so the cause
+                # was transient and completely undiagnosable after the fact. Retry
+                # once, and record the failure either way.
+                if not _vf:
+                    out["trace"].append({"phase": "vision_rescue", "result": "empty",
+                                         "cusdec_page": triage.get("cusdec_page"),
+                                         "action": "retrying once"})
+                    print("[vision] rescue returned nothing — retrying once")
+                    _vf = vision_cusdec_fields(pdf_path, triage.get("cusdec_page"))
+                    if _vf:
+                        out.setdefault("sanity_flags", []).append("vision_rescue_retried")
+                    else:
+                        out.setdefault("sanity_flags", []).append("vision_rescue_empty")
+                        out["trace"].append({"phase": "vision_rescue",
+                                             "result": "empty after retry"})
+                        _emit(job_id, "STAGE_DETAIL", {
+                            "label": "ATLAS V14", "step": "vision_rescue",
+                            "msg": "scanned CUSDEC could not be read — header fields "
+                                   "will be blank", "level": "warn"})
                 if _vf:
                     # On a scanned CUSDEC the page-focused vision read is more
                     # authoritative than V7's whole-doc vision guess, so for the
@@ -905,21 +1880,187 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
                         "import_export_customs_duty", "commercial_tax_ct",
                         "advance_income_tax_at", "security_fee_sf", "maccs_service_fee_mf",
                         "freight_value", "insurance_value", "adjustment_value",
+                        # The typed lane reads these off whichever page carries
+                        # characters, which on a scanned-CUSDEC bundle is an Import
+                        # Licence or a waybill — a real consignment with different
+                        # figures. The declaration page wins.
+                        "invoice_number", "invoice_price_fc", "invoice_price_mmk",
+                        "arrival_date",
                     }
                     _filled = []
+                    _fev = _decl.get("_field_engine") or {}
                     for _k, _v in _vf.items():
                         if _k.startswith("_") or _v is None:
                             continue
                         if _k in _authoritative or not _decl.get(_k):
                             _decl[_k] = _v
                             _filled.append(_k)
+                            # Tagged by the writer. A scanned page has no text to
+                            # check a reading against, and the review screen has to
+                            # be able to say so rather than presenting it like a
+                            # text-layer read.
+                            _fev[_k] = "vision_cusdec"
+                    _decl["_field_engine"] = _fev
                     out["declaration"] = _decl
+                    # Where on the page the model read each value. A scanned
+                    # declaration has no text layer, so Phase 4.5's search finds
+                    # nothing and the reviewer is told "location not known" for
+                    # every field on roughly half the corpus — while the model
+                    # that read the page was looking straight at them.
+                    #
+                    # Only for fields this rescue actually WROTE. A box belongs
+                    # to the reading it came from: if a deterministic value won
+                    # the field, the stored number came off a different page and
+                    # the vision coordinate would be pointing at a figure that
+                    # is not the one on screen.
+                    _vbox = (_vf.get("_boxes") or {}) if isinstance(_vf, dict) else {}
+                    if _vbox and _filled:
+                        out["vision_boxes"] = {k: v for k, v in _vbox.items()
+                                               if k in set(_filled)}
                     if _filled:
                         out.setdefault("sanity_flags", []).append("vision_cusdec_rescue")
                         _emit(job_id, "STAGE_DETAIL", {"label": "ATLAS V14", "step": "vision_rescue",
                             "msg": f"scanned CUSDEC vision rescue: {', '.join(_filled[:6])}"})
         except Exception as _ve:
             out.setdefault("trace", []).append({"phase": "vision_rescue", "error": str(_ve)})
+
+        # ─── Phase 4.365: let the item block correct a stamped total ───
+        # The assessed total sits under the customs PASS stamp on these forms, and
+        # vision misreads a digit inside it — 64,691,681.2 for a printed
+        # 64,691,431.29, twice, in agreement, at two resolutions. Two votes cannot
+        # catch that: they misread the same pixels the same way, so agreement means
+        # consistency, not accuracy.
+        #
+        # The same figure is printed a second time in the item block, which carries
+        # no stamp, and the reconcile gate already computes that sum. A SMALL
+        # disagreement between the two means the digits differ; a LARGE one means
+        # items are missing, which is a different problem and must still fail the
+        # gate. So only a sub-1% gap is treated as a misread and corrected — the
+        # item block is the corroborating reading, not an override.
+        try:
+            _d365 = out.get("declaration") or {}
+            _items365 = out.get("items") or []
+            def _fv(v):
+                try:
+                    return float(str(v).replace(",", "").strip())
+                except (TypeError, ValueError, AttributeError):
+                    return None
+            _decl_tot = _fv(_d365.get("total_customs_value"))
+            _sums = [_fv(i.get("customs_value_mmk")) for i in _items365]
+            _sums = [s for s in _sums if s is not None]
+            if _sums and len(_sums) == len(_items365) and sum(_sums) > 0:
+                _isum = sum(_sums)
+                # A stamped cell does not fail the same way twice. One run of this
+                # document returned a misread total, the next returned none at all
+                # and the field defaulted to 0.0 — which reads as "the declaration
+                # says zero" rather than "nobody could see it". Both cases resolve
+                # to the same corroborating source, so handle them together:
+                # missing/zero adopts the item sum outright, present-but-close is a
+                # digit correction. A wide gap still means missing items and is left
+                # for the gate to fail.
+                _gap365 = abs(_isum - _decl_tot) if _decl_tot else None
+                if (not _decl_tot) or (0 < _gap365 <= _decl_tot * 0.01):
+                    _d365["total_customs_value"] = round(_isum, 2)
+                    _fe365 = _d365.get("_field_engine") or {}
+                    _fe365["total_customs_value"] = "item_sum_corroborated"
+                    _d365["_field_engine"] = _fe365
+                    out["declaration"] = _d365
+                    out.setdefault("sanity_flags", []).append("total_from_item_sum")
+                    out["trace"].append({"phase": "total_item_corroboration",
+                                         "was": _decl_tot, "now": round(_isum, 2),
+                                         "gap": round(_gap365, 2) if _gap365 else None})
+                    print(f"[total] stamped read {_decl_tot} -> item sum "
+                          f"{round(_isum, 2)}"
+                          + (f" (gap {round(_gap365, 2)})" if _gap365 else " (was blank)"))
+        except Exception as _te365:
+            out.setdefault("trace", []).append({"phase": "total_item_corroboration",
+                                                "error": str(_te365)})
+
+        # ─── Phase 4.37: derive the adjustment the page will not give up ───
+        # On these forms the round customs PASS stamp is printed straight across the
+        # "Adjustment value" cell. Four vision reads of one such page returned null,
+        # 2156382.176, 24882.176 and 339882.176 — the model invents digits it cannot
+        # see, and a wrong build-up quietly tightens the CIF tolerance as though a
+        # real one existed. The value is recoverable by arithmetic instead: the CIF
+        # identity the reconcile gate already enforces is
+        #     (invoice + freight + insurance + adjustment) x rate = total
+        # so the adjustment is whatever the declared total does not otherwise
+        # explain. On 100306920231 that yields 334,852.25 against a printed
+        # 334,852.176. Only filled when blank, only from values that are all present,
+        # and always marked derived so no one mistakes it for something read.
+        try:
+            def _f(v):
+                """Strict float or None. `_num` in this module is
+                `keep_if_unparseable`, which hands back the ORIGINAL string when it
+                is not an amount — fine for the DB bridge it was written for, fatal
+                for arithmetic."""
+                if v is None or v == "":
+                    return None
+                try:
+                    return float(str(v).replace(",", "").strip())
+                except (TypeError, ValueError):
+                    return None
+
+            _d4 = out.get("declaration") or {}
+            if _d4.get("adjustment_value") in (None, ""):
+                _tot = _f(_d4.get("total_customs_value"))
+                _rate = _f(_d4.get("exchange_rate"))
+                _inv = _f(_d4.get("invoice_price_fc")) or _f(_d4.get("invoice_price"))
+                if _tot and _rate and _inv and _rate > 0:
+                    _gap = (_tot / _rate) - _inv - (_f(_d4.get("freight_value")) or 0) \
+                           - (_f(_d4.get("insurance_value")) or 0)
+                    # A rounding remainder is not an adjustment, and a gap wider than
+                    # the invoice itself means one of the inputs is wrong — in either
+                    # case leave it blank rather than manufacture a build-up.
+                    if abs(_gap) > max(1.0, _inv * 0.001) and abs(_gap) <= _inv * 2:
+                        _d4["adjustment_value"] = round(_gap, 4)
+                        _fe4 = _d4.get("_field_engine") or {}
+                        _fe4["adjustment_value"] = "derived_cif"
+                        _d4["_field_engine"] = _fe4
+                        out["declaration"] = _d4
+                        out.setdefault("sanity_flags", []).append("adjustment_derived")
+                        out["trace"].append({"phase": "adjustment_derived",
+                                             "value": round(_gap, 4)})
+        except Exception as _ade:
+            out.setdefault("trace", []).append({"phase": "adjustment_derived",
+                                                "error": str(_ade)})
+
+        # ─── Phase 4.38: refuse a value that is really its neighbour's ───
+        # Two fields came back holding, verbatim, another field of the same
+        # declaration: Commercial Tax carrying the Exemption/Reduction figure, and the
+        # invoice number carrying the declaration number. Both are the same old
+        # failure — a label was matched and the nearest value taken without checking
+        # the value belonged to that label — and both are impossible on a real form.
+        # Blank beats a confident wrong number: a reviewer fills a blank, and nobody
+        # questions a plausible figure sitting in the right-looking column.
+        try:
+            _d38 = out.get("declaration") or {}
+
+            def _same(a, b):
+                if a in (None, "") or b in (None, ""):
+                    return False
+                try:
+                    return abs(float(a) - float(b)) <= 0.01
+                except (TypeError, ValueError):
+                    return str(a).strip().upper() == str(b).strip().upper()
+
+            _cleared38 = []
+            for _tax in ("commercial_tax_ct", "import_export_customs_duty",
+                         "advance_income_tax_at"):
+                if _same(_d38.get(_tax), _d38.get("exemption_reduction")):
+                    _d38[_tax] = None
+                    _cleared38.append(f"{_tax}=exemption_reduction")
+            if _same(_d38.get("invoice_number"), _d38.get("declaration_no")):
+                _d38["invoice_number"] = None
+                _cleared38.append("invoice_number=declaration_no")
+            if _cleared38:
+                out["declaration"] = _d38
+                out.setdefault("sanity_flags", []).append("neighbour_value_rejected")
+                out["trace"].append({"phase": "neighbour_guard", "cleared": _cleared38})
+                print(f"[guard] blanked field(s) holding a neighbour's value: "
+                      f"{', '.join(_cleared38)}")
+        except Exception as _ge:
+            out.setdefault("trace", []).append({"phase": "neighbour_guard", "error": str(_ge)})
 
         # ─── Phase 4.4: Reconciliation gate (the common invariant) ───
         # One guard, one chokepoint: the declared customs total must equal the
@@ -1086,13 +2227,46 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
         out["cost_breakdown"] = breakdown
 
         # ─── Phase 4.5: Compute field bboxes (best-effort, fitz text search) ───
+        # Scoped to the declaration's own pages. These bundles print the importer
+        # name, the invoice number and the declaration number on the invoice and
+        # the packing list too, so a first-hit search over the whole PDF sent the
+        # reviewer to the wrong document to confirm a customs figure — measured
+        # at 31 of 54 boxes across the UAT corpus, every one a real occurrence of
+        # the right text on the wrong page.
         try:
-            out["field_bboxes"] = _compute_field_bboxes(
-                pdf_path, out.get("declaration") or {}, out.get("items") or []
+            _decl = out.get("declaration") or {}
+            _bb_pages = _declaration_pages(
+                pdf_path,
+                (triage or {}).get("cusdec_page"),
+                _decl.get("declaration_no"),
             )
+            out["bbox_pages"] = _bb_pages
+            out["field_bboxes"] = _compute_field_bboxes(
+                pdf_path, _decl, out.get("items") or [], pages=_bb_pages
+            )
+            # A photographed declaration has nothing for the search above to
+            # match, so on those documents it returns an empty set and every
+            # field reports "location not known". Phase 4.36 already asked the
+            # model that read the page where it read each value; fold those in.
+            #
+            # ADDITIVE only. The text-layer hit is a measurement of the printed
+            # string; the model's box is a report of where it looked. When both
+            # exist the measurement wins, and in practice they never both exist
+            # — a page with a text layer never reaches the vision rescue.
         except Exception as _bbe:
             out["field_bboxes"] = {}
             out["trace"].append({"phase": "bbox", "error": str(_bbe)})
+        try:
+            _vb = out.get("vision_boxes") or {}
+            if _vb:
+                _dst = out.setdefault("field_bboxes", {}).setdefault("declaration", {})
+                _added = [f for f in _vb if f not in _dst]
+                for _f in _added:
+                    _dst[_f] = _vb[_f]
+                if _added:
+                    out["trace"].append({"phase": "bbox", "vision_boxes": len(_added)})
+        except Exception as _vbe:
+            out["trace"].append({"phase": "bbox", "vision_boxes_error": str(_vbe)})
 
         # Derive model_used label BEFORE save (DB stores it; History reads it).
         _v7_used = bool(out.get("v7_used"))

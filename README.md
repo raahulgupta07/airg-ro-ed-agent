@@ -346,6 +346,45 @@ when unset = only ATLAS (legacy engines off). Tuning env vars: `SCRIBE_MODEL`,
 > Note: Scribe must use a non-reasoning vision model (e.g. `gemini-3-flash`) —
 > reasoning models truncate JSON output on dense forms.
 
+## ROVER PRO — native-PDF verified extraction
+
+A separate, self-contained engine (`backend/rover/`) selectable on the Agent page
+alongside ATLAS V14 (engine id `rover`), plus its own deep-review workbench at
+`/rover/*` (Process · History · Items · Declarations). Instead of OCR-ing page
+images, the primary reader sends the **raw PDF** to Gemini so it reads the text
+layer directly (`ROVER_PDF_NATIVE=1`, `ROVER_PRIMARY_MODEL`); a **deterministic math
+supervisor** (never an LLM) checks cross-field invariants and fails closed — any
+suspect column routes the doc to human review, so nothing wrong ships unflagged.
+Postgres-backed with an approval workflow; per-doc and bulk Excel export.
+
+### 16-doc UAT (native-PDF, `google/gemini-3-flash-preview`)
+
+Ran the full team test set one-by-one against the manual truth ledger (the **PD**
+sheet of `Testing Results(15.7.25).xlsx`). Result: **$0.2421** total, avg
+**$0.015**/doc, median **38s**, **10/16 money-clean**. Report:
+`RO_ROVER_Phased_Report.xlsx` (Summary + P1–P16, each with the app-format
+Declaration/Items tables, an 8-field ledger comparison, and a narrative).
+
+**Proven:** invoice de-prefixing, freight/insurance/adjustment capture, and the
+`MA0259/…` slash declaration-number format all extract correctly on real docs; on
+several docs native even reconciles the exchange rate better than the ledger
+(FC × rate = total closes where the ledger value doesn't).
+
+**Known gaps (in fix priority):**
+1. The math supervisor can be gamed by a self-consistent hallucination (a fabricated
+   adjustment that makes the CIF identity close) — a build-up / silent-ship guard is
+   the top follow-up.
+2. Page-trim can under-select on large multi-invoice PDFs, dropping money/invoice
+   pages; needs a retain-key-page pass plus header/AT/rate fallbacks.
+3. CIF check over-flags uplift-heavy docs (correct values, needless escalation cost).
+4. On some docs the model returns the customs-form reference instead of the exporter's
+   commercial invoice number (a bridge is needed).
+5. `AT = 2% × total` when the Advance Income Tax line is blank (deterministic recovery).
+6. Text-less scans fall back to slow whole-doc vision and can miss the item table.
+
+The ledger "date" is a shared batch/registration date (several different docs share one
+date), not the per-doc form date — confirm the intended semantics with the team.
+
 ---
 
 ## Features

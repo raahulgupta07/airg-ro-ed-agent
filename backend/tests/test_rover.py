@@ -17,21 +17,30 @@ from rover.mapping import to_accountant_row
 # --------------------------------------------------------------------------- #
 # deterministic.py
 # --------------------------------------------------------------------------- #
-def test_declaration_no_first_approval_wins():
-    # Real CUSDEC layout: the top 'Declaration No.' sits in the header far from the
-    # 'First approval declaration No.' whose value is adjacent to its own label.
+def test_declaration_no_uses_top_of_form_not_first_approval():
+    """The top-of-form 'Declaration No.' identifies THIS document.
+
+    Both numbers here are real declarations from one Ex-bond release: the form's own
+    100319576711 and the earlier entry it clears, 100313488550. They appear as
+    separate rows in the team's ledger. Until 2026-08-01 the first-approval number
+    won, which labelled the document with a different declaration's number — the
+    team's decision is that only the top-of-form number is used.
+    """
     lines = ["Declaration No.", "100319576711", "Section 00", "Importer PREMIUM",
              "B/L 13BDONEY", "100313488550", "First approval declaration No.",
              "Date 2025/10/09"]
     c = det.declaration_no(lines)
-    assert c.value == "100313488550"       # first-approval, NOT the top decl no
-    assert c.confidence >= 0.95
+    assert c.value == "100319576711"       # the form's own number, NOT first-approval
+    assert c.confidence >= 0.90
+    # and the reader should say the other number was seen and deliberately not used
+    assert "100313488550" in (c.note or "")
 
 
-def test_declaration_no_fallback_when_no_first_approval():
+def test_declaration_no_when_no_first_approval_present():
     lines = ["Declaration No.", "100319576711", "Importer ..."]
     c = det.declaration_no(lines)
     assert c.value == "100319576711"
+    assert not (c.note or "")              # nothing to warn about
 
 
 def test_declaration_date_iso():

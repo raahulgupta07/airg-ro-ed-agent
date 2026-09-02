@@ -54,7 +54,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       ROVER_STORE: "pg"          # ROVER persists extractions to Postgres (rover_documents/items/reports)
       ROVER_PDF_NATIVE: "1"                          # primary reader gets the raw PDF (text layer), not JPEGs
-      ROVER_PRIMARY_MODEL: "google/gemini-3.5-flash" # PDF-capable primary; grok stays image-only challenger
+      ROVER_PRIMARY_MODEL: "google/gemini-3.6-flash" # PDF-capable primary; grok stays image-only challenger
       ROVER_CHALLENGER_MODEL: "x-ai/grok-4.5"        # second opinion on math-flagged fields (images)
       ROVER_HANDWRITING_BOOST: "1"                   # scanned/handwritten docs: hi-res image re-read to recover items
     volumes:
@@ -91,7 +91,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       ROVER_STORE: "pg"          # ROVER persists extractions to Postgres (rover_documents/items/reports)
       ROVER_PDF_NATIVE: "1"                          # primary reader gets the raw PDF (text layer), not JPEGs
-      ROVER_PRIMARY_MODEL: "google/gemini-3.5-flash" # PDF-capable primary; grok stays image-only challenger
+      ROVER_PRIMARY_MODEL: "google/gemini-3.6-flash" # PDF-capable primary; grok stays image-only challenger
       ROVER_CHALLENGER_MODEL: "x-ai/grok-4.5"        # second opinion on math-flagged fields (images)
       ROVER_HANDWRITING_BOOST: "1"                   # scanned/handwritten docs: hi-res image re-read to recover items
     volumes:

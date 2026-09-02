@@ -12,6 +12,8 @@ Handles the format quirks proven during testing:
 import re
 from typing import Dict
 
+import numeric
+
 # Order matches the 'AI results' sheet header (plus derived + audit columns).
 SCHEMA = [
     "DECLARATION NO", "DATE", "IMPORTER",
@@ -24,10 +26,7 @@ SCHEMA = [
 
 
 def _num(v):
-    try:
-        return float(str(v).replace(",", "").strip())
-    except Exception:
-        return None
+    return numeric.to_float(v)
 
 
 def _core_invoice(v):

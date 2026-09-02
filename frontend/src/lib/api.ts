@@ -98,6 +98,34 @@ export const api = {
   saveKeycloakSettings: (data: any) => request<any>('/settings/keycloak', { method: 'PUT', body: JSON.stringify(data) }),
   testKeycloakConnection: (data: any) => request<any>('/settings/keycloak/test', { method: 'POST', body: JSON.stringify(data) }),
 
+  // Marked PDF — the original with every extracted value highlighted on it.
+  // `markedPdfStatus` is the cheap question ("is there anything to mark, and if
+  // not why not"); the URL below is the two-megabyte answer. Asking first is the
+  // only way to avoid offering a link that hands back a 404 body inside the PDF
+  // viewer — which is what a scanned declaration does, permanently and correctly.
+  markedPdfStatus: (jobId: string) =>
+    request<{ available: boolean; marks: number; declaration_marks: number;
+              item_marks: number; reason: string | null }>(`/jobs/${jobId}/marks`),
+  // An <iframe>/<a download> cannot set an Authorization header, so this route
+  // takes the token in the query string — same as /pdf and /page-image.
+  markedPdfUrl: (jobId: string) =>
+    `${BASE}/jobs/${jobId}/annotated-pdf?token=${encodeURIComponent(auth.token || '')}`,
+  // The per-job workbook. NOT a URL helper: unlike /pdf and /annotated-pdf, the
+  // route is `/download` and it authenticates with a bearer header, so an
+  // `<a href>` would arrive unauthenticated. Fetch it and hand the browser a
+  // blob — the same thing the history page already does.
+  downloadJobExcel: async (jobId: string, filename: string) => {
+    const res = await fetch(`${BASE}/jobs/${jobId}/download`,
+                            { headers: { Authorization: `Bearer ${auth.token}` } });
+    if (!res.ok) throw new Error(`Excel download failed (${res.status})`);
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${filename.replace(/\.pdf$/i, '')}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+
   // v2 page extractions + confidence
   getJobPages: (jobId: string) => request<any[]>(`/jobs/${jobId}/pages`),
   getJobConfidence: (jobId: string) => request<any>(`/jobs/${jobId}/confidence`),
@@ -124,6 +152,25 @@ export const api = {
     request<any>('/review/bulk/approve', { method: 'POST', body: JSON.stringify({ job_ids, notes }) }),
   reviewBulkReject: (job_ids: string[], notes: string) =>
     request<any>('/review/bulk/reject', { method: 'POST', body: JSON.stringify({ job_ids, notes }) }),
+
+  // Checks — per-field evidence awaiting a human decision
+  evidenceQueue: (params: Record<string, string | number | undefined> = {}) => {
+    const qs = Object.entries(params)
+      .filter(([, v]) => v !== undefined && v !== null && v !== '')
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+      .join('&');
+    return request<any>(`/evidence/queue${qs ? `?${qs}` : ''}`);
+  },
+  evidenceCount: () => request<{ count: number }>('/evidence/count'),
+  evidenceForJob: (jobId: string) => request<any>(`/evidence/${jobId}`),
+  evidenceResolve: (jobId: string, field: string, value: any,
+                    choice: 'kept' | 'alternate' | 'manual', reason?: string) =>
+    request<any>(`/evidence/${jobId}/${encodeURIComponent(field)}/resolve`,
+                 { method: 'POST', body: JSON.stringify({ value, choice, reason }) }),
+  // <img src> cannot send an Authorization header, so the crop takes ?token=
+  // (same reason the PDF and page-image routes do).
+  evidenceCropUrl: (jobId: string, field: string) =>
+    `${BASE}/evidence/${jobId}/${encodeURIComponent(field)}.png?token=${encodeURIComponent(auth.token || '')}`,
 
   // Engine availability (super-admin enable/disable; all users read)
   getEngines: () => request<any>('/settings/engines'),
@@ -203,7 +250,7 @@ export async function extractPDF(
   pipeline: PipelineKey = 'v11',
   token?: string,
   jobId?: string,
-  engine: 'auto' | 'presto' | 'classic' | 'atlas' = 'auto'
+  engine: 'auto' | 'presto' | 'classic' | 'atlas' | 'rover' = 'auto'
 ): Promise<any> {
   const config = PIPELINES[pipeline];
   if (!config) throw new Error(`Unknown pipeline: ${pipeline}`);

@@ -40,6 +40,9 @@
     // ── New: add row ──
     enableAddRow = false,
     onAddRow = () => {},
+    // Which cell the cursor is over. The review screen uses it to light up the
+    // matching box on the page image; nothing happens if it is not supplied.
+    onCellHover = undefined as undefined | ((rowIdx: number, colId: string | null) => void),
   }: {
     columns: Col[]; data: any[];
     enableSort?: boolean; enableResize?: boolean;
@@ -59,6 +62,7 @@
     onRowDelete?: (idx: number) => void;
     enableAddRow?: boolean;
     onAddRow?: () => void;
+    onCellHover?: (rowIdx: number, colId: string | null) => void;
   } = $props();
 
   let sortKey = $state<string | null>(null);
@@ -289,6 +293,8 @@
               {@const isLast = ci === columns.length - 1 && !enableRowActions}
               {@const pageRef = isLast ? pageRefAccessor(row) : null}
               <td
+                onmouseenter={() => onCellHover?.(ri, c.id)}
+                onmouseleave={() => onCellHover?.(ri, null)}
                 class="px-2 py-1
                        {c.align === 'right' ? 'text-right' : c.align === 'center' ? 'text-center' : 'text-left'}
                        {editable ? 'cursor-text' : 'cursor-pointer'}"

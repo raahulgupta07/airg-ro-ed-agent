@@ -19,6 +19,8 @@ import json
 
 # Reuse the exact id logic + filter/sort helpers from the file store so the two
 # backends stay behaviourally identical. These are pure-Python, no DB.
+import numeric
+
 from .store import _doc_id, _passes, _sort_key
 
 
@@ -134,14 +136,9 @@ def _loads(value):
 
 def _num(value):
     """Best-effort numeric coercion for the flat rover_items columns."""
-    if value is None or value == "":
-        return None
     if isinstance(value, (int, float)):
         return value
-    try:
-        return float(str(value).replace(",", "").strip())
-    except Exception:
-        return None
+    return numeric.to_float(value)
 
 
 def _int(value):

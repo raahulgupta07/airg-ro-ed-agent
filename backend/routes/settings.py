@@ -56,13 +56,29 @@ async def set_auto_approve(body: AutoApproveSettings, admin: dict = Depends(requ
 
 import json as _json
 
+# ROSETTA and ROVER PRO were removed from the selectable set on 2 Aug 2026.
+#
+# Both are intercepted at the top of `v11/workflow.run()` and return before any of
+# the ATLAS stages, so neither reaches the page scoping, the scanned-CUSDEC vision
+# rescue, the item-sum corroboration or the derived CIF adjustment. On a bundled
+# release order whose declaration page is a photograph, their native-PDF reader
+# takes the text layer — which is the Import Licence and the waybill, a different
+# consignment's figures — and there is no stage downstream to catch it. ROSETTA was
+# also the DEFAULT, so that was what an ordinary upload used.
+#
+# The engines themselves are untouched on disk and the /rover deep-review surface
+# still works by URL; this only stops them being chosen for an extraction run.
 ALL_ENGINES = [
-    {"id": "atlas",   "label": "ATLAS V14",         "desc": "V14 · flagship — V14-1 Swift (typed) + V14-2 Vision (handwriting) + gates"},
-    {"id": "presto",  "label": "ATLAS V14-1 SWIFT", "desc": "V14-1 · fast typed-digital"},
-    {"id": "classic", "label": "ATLAS CLASSIC",     "desc": "Gen 1 · legacy typed ensemble"},
-    {"id": "auto",    "label": "AUTO",          "desc": "follows the admin default"},
+    {"id": "atlas", "label": "ATLAS V14",
+     "desc": "V14-1 Swift (typed) + V14-2 Vision (handwriting), page scoping, "
+             "scanned-CUSDEC vision rescue and the arithmetic gates"},
 ]
-# By default ONLY the latest engine is enabled; legacy ones are off.
+# Everything else is retired. `presto` and `classic` were sub-lanes exposed as if
+# they were engines: picking them ran part of ATLAS with the rest of it switched
+# off, and `auto` only ever resolved to whatever the default already was. ATLAS
+# already routes typed pages to Swift and handwritten pages to Vision per page, so
+# choosing a lane by hand could only make a document worse.
+_RETIRED_ENGINES = {"rosetta", "rover", "presto", "classic", "auto"}
 _DEFAULT_ENABLED = ["atlas"]
 _DEFAULT_ENGINE = "atlas"
 
@@ -73,10 +89,14 @@ def _engine_config() -> dict:
         enabled = _json.loads(raw) if raw else list(_DEFAULT_ENABLED)
     except Exception:
         enabled = list(_DEFAULT_ENABLED)
+    # A stored row outlives a code change — this one held ["rosetta","rover","atlas"]
+    # with rosetta as the default, and the DB value overrides the code default. Strip
+    # retired ids on the way out so an old row cannot keep offering a removed engine.
+    enabled = [e for e in enabled if e not in _RETIRED_ENGINES]
     if not enabled:
         enabled = list(_DEFAULT_ENABLED)
     default = database.get_app_setting("engine_default", None) or _DEFAULT_ENGINE
-    if default not in enabled:
+    if default in _RETIRED_ENGINES or default not in enabled:
         default = enabled[0]
     return {"all": ALL_ENGINES, "enabled": enabled, "default": default}
 

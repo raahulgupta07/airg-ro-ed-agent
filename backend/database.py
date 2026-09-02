@@ -8,8 +8,14 @@ Tracks all processing jobs with full history.
 """
 
 import json
+from jsonio import loads_maybe
 import logging
+import re
+from numeric import to_float as _to_float
 from pathlib import Path
+
+import numeric
+import dates
 from datetime import datetime
 from typing import Dict, List, Optional
 import hashlib
@@ -155,7 +161,7 @@ def init_database():
             exchange_rate TEXT,
             hs_code TEXT,
             origin_country TEXT,
-            customs_value_mmk REAL,
+            customs_value_mmk DOUBLE PRECISION,
             is_valid INTEGER DEFAULT 1,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (job_id) REFERENCES jobs(job_id)
@@ -169,25 +175,29 @@ def init_database():
             job_id TEXT NOT NULL,
             declaration_no TEXT,
             declaration_date TEXT,
+            arrival_date TEXT,
+            release_order_date TEXT,
+            completion_date TEXT,
             importer_name TEXT,
             consignor_name TEXT,
             invoice_number TEXT,
             invoice_number_customs_declaration TEXT,
             invoice_number_commercial_invoice TEXT,
-            invoice_price REAL,
+            invoice_price DOUBLE PRECISION,
+            invoice_price_fc DOUBLE PRECISION,
             currency TEXT,
-            exchange_rate REAL,
+            exchange_rate DOUBLE PRECISION,
             currency_2 TEXT,
-            freight_value REAL,
-            insurance_value REAL,
-            adjustment_value REAL,
-            total_customs_value REAL,
-            import_export_customs_duty REAL,
-            commercial_tax_ct REAL,
-            advance_income_tax_at REAL,
-            security_fee_sf REAL,
-            maccs_service_fee_mf REAL,
-            exemption_reduction REAL,
+            freight_value DOUBLE PRECISION,
+            insurance_value DOUBLE PRECISION,
+            adjustment_value DOUBLE PRECISION,
+            total_customs_value DOUBLE PRECISION,
+            import_export_customs_duty DOUBLE PRECISION,
+            commercial_tax_ct DOUBLE PRECISION,
+            advance_income_tax_at DOUBLE PRECISION,
+            security_fee_sf DOUBLE PRECISION,
+            maccs_service_fee_mf DOUBLE PRECISION,
+            exemption_reduction DOUBLE PRECISION,
             is_valid INTEGER DEFAULT 1,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (job_id) REFERENCES jobs(job_id)
@@ -433,9 +443,24 @@ def init_database():
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS doc_class TEXT",
         # CIF build-up fields (migration 0003); self-heal on boot so an existing
         # DB picks them up without a manual ALTER on update.
-        "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS freight_value REAL",
-        "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS insurance_value REAL",
-        "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS adjustment_value REAL",
+        "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS invoice_price_fc DOUBLE PRECISION",
+        # The kyat rendering of the invoice, kept alongside the invoice-currency
+        # amount. `invoice_price` means the invoice currency (ledger, both Excel
+        # writers and the Beta v3 requirement form all read it that way), so the
+        # MMK figure needs a column of its own rather than displacing it.
+        "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS invoice_price_mmk DOUBLE PRECISION",
+        "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS freight_value DOUBLE PRECISION",
+        "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS insurance_value DOUBLE PRECISION",
+        "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS adjustment_value DOUBLE PRECISION",
+        "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS freight_currency TEXT",
+        "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS insurance_currency TEXT",
+        "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS adjustment_currency TEXT",
+        # Lifecycle dates (team feedback 2026-07-18): the doc carries several dates —
+        # registration (declaration_date), ship arrival, customs release, completion.
+        # Team ledger keys on the RELEASE ORDER date. Self-heal on boot.
+        "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS arrival_date TEXT",
+        "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS release_order_date TEXT",
+        "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS completion_date TEXT",
     ):
         cursor.execute(stmt)
     conn.commit()
@@ -447,9 +472,9 @@ def init_database():
             importer_name TEXT NOT NULL,
             importer_name_normalized TEXT NOT NULL,
             currency TEXT,
-            exchange_rate_min REAL,
-            exchange_rate_max REAL,
-            exchange_rate_avg REAL,
+            exchange_rate_min DOUBLE PRECISION,
+            exchange_rate_max DOUBLE PRECISION,
+            exchange_rate_avg DOUBLE PRECISION,
             common_consignor TEXT,
             common_items TEXT,
             total_jobs INTEGER DEFAULT 0,
@@ -529,7 +554,7 @@ def init_database():
     for stmt in (
         "ALTER TABLE items ADD COLUMN IF NOT EXISTS hs_code TEXT",
         "ALTER TABLE items ADD COLUMN IF NOT EXISTS origin_country TEXT",
-        "ALTER TABLE items ADD COLUMN IF NOT EXISTS customs_value_mmk REAL",
+        "ALTER TABLE items ADD COLUMN IF NOT EXISTS customs_value_mmk DOUBLE PRECISION",
         "ALTER TABLE items ADD COLUMN IF NOT EXISTS cif_unit_price TEXT",
         # V11 Review UI: soft-delete + display order for items table
         "ALTER TABLE items ADD COLUMN IF NOT EXISTS is_deleted INTEGER DEFAULT 0",
@@ -543,8 +568,31 @@ def init_database():
         "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS cross_val_passed INTEGER",
         "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS verified INTEGER",
         "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS invoice_number_commercial_invoice TEXT",
+        # Per-field extraction evidence (ROVER Cell record: value/source/confidence/
+        # model/status/alternates/note). Powers the review CHECKS surface — without it
+        # the engine's own uncertainty is computed on every run and then thrown away.
+        "ALTER TABLE declarations ADD COLUMN IF NOT EXISTS evidence_json TEXT",
     ):
         cursor.execute(stmt)
+    conn.commit()
+
+    # Money columns must be double precision. `real` holds ~7 significant digits;
+    # a customs value of 46,487,178.29 needs 10 and was being stored as
+    # 46,487,180.0 on every write — which also meant a reviewer's correction was
+    # rounded straight back off after being written and audited. Widening cast,
+    # so this is safe to run repeatedly; it cannot recover digits already lost on
+    # existing rows (re-run those documents). Mirrors alembic 0006.
+    for _c in ("invoice_price", "invoice_price_fc", "invoice_price_mmk",
+               "exchange_rate",
+               "freight_value", "insurance_value", "adjustment_value",
+               "total_customs_value", "import_export_customs_duty",
+               "commercial_tax_ct", "advance_income_tax_at",
+               "security_fee_sf", "maccs_service_fee_mf", "exemption_reduction"):
+        try:
+            cursor.execute(
+                f"ALTER TABLE declarations ALTER COLUMN {_c} TYPE double precision")
+        except Exception:
+            conn.rollback()
     conn.commit()
 
     # Corrections table — stores user corrections for self-learning
@@ -804,32 +852,63 @@ def count_activity_log_v2(**filters):
 
 
 def activity_log_stats(date_from=None, date_to=None):
-    """Aggregate stats: total, today, failed_logins, unique_users, top_action."""
+    """Aggregate stats: total, today, failed_logins, unique_users, top_action.
+
+    `created_at` is a `timestamp`, and this used `LIKE 'YYYY-MM-DD%'` against it —
+    fine on SQLite, where a timestamp is text, and a hard error on Postgres:
+    `no operator matches ... timestamp LIKE unknown`. So the whole endpoint
+    answered 500 and the Activity page lost its summary strip.
+
+    `date_from` / `date_to` were accepted and then ignored — the range picker
+    above the page moved and every number stayed the same. They now scope every
+    count, so the strip agrees with the table beneath it.
+    """
     conn = _connect()
     cur = conn.cursor()
-    today = datetime.now().strftime("%Y-%m-%d")
 
-    cur.execute("SELECT COUNT(*) FROM activity_logs")
-    total = cur.fetchone()[0]
+    where, params = [], []
+    if date_from:
+        where.append("created_at >= ?")
+        params.append(date_from)
+    if date_to:
+        # Inclusive of the whole end day: a bare date parses as 00:00, so `<=`
+        # would silently drop everything logged during it.
+        where.append("created_at < (?::date + INTERVAL '1 day')")
+        params.append(date_to)
+    scope = (" WHERE " + " AND ".join(where)) if where else ""
 
-    cur.execute("SELECT COUNT(*) FROM activity_logs WHERE created_at LIKE ?", (f"{today}%",))
+    def one(sql, extra=()):
+        cur.execute(sql, tuple(params) + tuple(extra))
+        row = cur.fetchone()
+        return row
+
+    total = one(f"SELECT COUNT(*) FROM activity_logs{scope}")[0]
+
+    cur.execute("SELECT COUNT(*) FROM activity_logs "
+                "WHERE created_at >= CURRENT_DATE AND created_at < CURRENT_DATE + 1")
     today_count = cur.fetchone()[0]
 
-    cur.execute("SELECT COUNT(*) FROM activity_logs WHERE action = 'LOGIN_FAILED'")
-    failed_logins = cur.fetchone()[0]
+    failed_logins = one(
+        f"SELECT COUNT(*) FROM activity_logs{scope}"
+        f"{' AND' if scope else ' WHERE'} action = 'LOGIN_FAILED'")[0]
 
-    cur.execute("SELECT COUNT(DISTINCT username) FROM activity_logs WHERE username IS NOT NULL")
-    unique_users = cur.fetchone()[0]
+    unique_users = one(
+        f"SELECT COUNT(DISTINCT username) FROM activity_logs{scope}"
+        f"{' AND' if scope else ' WHERE'} username IS NOT NULL")[0]
 
-    cur.execute("SELECT action, COUNT(*) c FROM activity_logs GROUP BY action ORDER BY c DESC LIMIT 1")
-    top = cur.fetchone()
+    top = one(f"SELECT action, COUNT(*) c FROM activity_logs{scope} "
+              f"GROUP BY action ORDER BY c DESC LIMIT 1")
     top_action = top[0] if top else "N/A"
 
-    cur.execute("""SELECT
-                    SUM(CASE WHEN action LIKE 'JOB_%' THEN 1 ELSE 0 END) AS jobs_total,
+    # `LIKE 'JOB_%'` cannot stay: psycopg parses `%` as a placeholder marker the
+    # moment a query is given parameters, and adding the date scope gave this one
+    # parameters for the first time — `only '%s', '%b', '%t' are allowed as
+    # placeholders, got '%''`. Escaping to `%%` would work and would be a trap for
+    # whoever next copies the line; a prefix test has no wildcard to escape.
+    j = one(f"""SELECT
+                    SUM(CASE WHEN left(action, 4) = 'JOB_' THEN 1 ELSE 0 END) AS jobs_total,
                     SUM(CASE WHEN action = 'JOB_FAIL' THEN 1 ELSE 0 END) AS jobs_fail
-                  FROM activity_logs""")
-    j = cur.fetchone()
+                FROM activity_logs{scope}""")
     conn.close()
 
     return {
@@ -964,17 +1043,48 @@ def save_items(job_id: str, items: List[Dict]):
             if v not in (None, ''):
                 return v
         return default
+
+    # Migration 0007 changed quantity / unit prices / exchange_rate / customs value on
+    # `items` from text|real to numeric. Postgres rejects '' for a numeric column, and
+    # ONE bad row aborts the whole executemany — the batch is lost and the job still
+    # reports success, so the items simply vanish from the export. That is exactly what
+    # happened on the first run after 0007. Coerce here, through the shared parser.
+    def _n(v):
+        """Numeric for a numeric column, else NULL. Never a string, never ''."""
+        if v is None or v == '':
+            return None
+        if isinstance(v, (int, float)):
+            return v
+        return _to_float(v)
+
+    def _qty(v):
+        """Quantity, which the form may print with its unit glued on ('383000 U').
+
+        `to_float` deliberately refuses that — it will not strip arbitrary trailing
+        characters, because doing so turns 'MA0259/100405' into a number. Here the
+        column is known to be a quantity, so a trailing unit token is safe to drop.
+        The unit itself has nowhere to go yet: `items` has no unit column.
+        """
+        n = _n(v)
+        if n is not None or v in (None, ''):
+            return n
+        m = re.match(r'^\s*([\d,]+(?:\.\d+)?)\s*[A-Za-z]{1,6}\s*$', str(v))
+        return _to_float(m.group(1)) if m else None
+
     for idx, item in enumerate(items):
         v_name      = _g(item, 'item_name', 'Item name')
-        v_duty_rate = _g(item, 'customs_duty_rate', 'Customs duty rate', default=0.0)
-        v_qty       = _g(item, 'quantity', 'Quantity (1)')
-        v_inv_price = _g(item, 'invoice_unit_price', 'Invoice unit price')
-        v_cif_price = _g(item, 'cif_unit_price', 'CIF unit price')
-        v_tax_pct   = _g(item, 'commercial_tax_percent', 'commercial_tax_pct', 'Commercial tax %', default=0.0)
-        v_fx        = _g(item, 'exchange_rate', 'Exchange Rate (1)')
+        v_duty_rate = _n(_g(item, 'customs_duty_rate', 'Customs duty rate', default=None))
+        v_qty       = _qty(_g(item, 'quantity', 'Quantity (1)', default=None))
+        v_inv_price = _n(_g(item, 'invoice_unit_price', 'Invoice unit price', default=None))
+        v_cif_price = _n(_g(item, 'cif_unit_price', 'CIF unit price', default=None))
+        v_tax_pct   = _n(_g(item, 'commercial_tax_percent', 'commercial_tax_pct', 'Commercial tax %', default=None))
+        v_fx        = _n(_g(item, 'exchange_rate', 'Exchange Rate (1)', default=None))
         v_hs        = _g(item, 'hs_code', 'HS Code')
         v_origin    = _g(item, 'origin_country', 'origin', 'Origin Country')
-        v_mmk       = _g(item, 'customs_value_mmk', 'Customs Value (MMK)', default=0.0)
+        # No default: an unread assessed value must stay NULL. Defaulting to 0.0 makes
+        # "we could not read this" indistinguishable from "the form says zero", and the
+        # item-sum gate then reports a 100% shortfall instead of a missing reading.
+        v_mmk       = _n(_g(item, 'customs_value_mmk', 'Customs Value (MMK)', default=None))
         if has_display_order:
             cursor.execute("""
                 INSERT INTO items (job_id, item_name, customs_duty_rate, quantity,
@@ -1012,41 +1122,70 @@ def save_declarations(job_id: str, declarations: List[Dict]):
         return default
     for decl in declarations:
         v_no       = _g(decl, 'declaration_no', 'Declaration No')
-        v_date     = _g(decl, 'declaration_date', 'Declaration Date')
+        # Normalise here, at the one write every engine funnels through. The
+        # engines echo the form's own spelling — MACCS pages print 2025/10/27,
+        # licence pages print 27/09/2029 — and storing both raw left the column
+        # unsortable and uncomparable to the ledger. `normalise` keeps anything
+        # it cannot read, so a value is never lost at this step.
+        v_date     = dates.normalise(_g(decl, 'declaration_date', 'Declaration Date'))
+        v_arrival  = dates.normalise(_g(decl, 'arrival_date', 'Arrival Date', default=None))
+        v_release  = dates.normalise(_g(decl, 'release_order_date', 'Release Order Date', default=None))
+        v_complete = dates.normalise(_g(decl, 'completion_date', 'Completion Date', default=None))
         v_importer = _g(decl, 'importer_name', 'Importer (Name)')
         v_consign  = _g(decl, 'consignor_name', 'Consignor (Name)')
         v_inv_cd   = _g(decl, 'invoice_number_customs_declaration', 'invoice_number_customs', 'Invoice Number (Customs Declaration)')
         v_inv_ci   = _g(decl, 'invoice_number_commercial_invoice', 'invoice_number_commercial', 'Invoice Number (Commercial Invoice)')
         v_inv_no   = _g(decl, 'invoice_number', 'Invoice Number') or v_inv_ci or v_inv_cd
         v_price    = _g(decl, 'invoice_price', 'Invoice Price', default=0.0)
+        v_price_fc = _g(decl, 'invoice_price_fc', 'Invoice Price (FC)', default=None)
+        v_price_mmk = _g(decl, 'invoice_price_mmk', 'Invoice Price (MMK)', default=None)
         v_curr     = _g(decl, 'currency', 'Currency')
         v_rate     = _g(decl, 'exchange_rate', 'Exchange Rate', default=0.0)
         v_curr2    = _g(decl, 'currency_2', 'Currency 2', default=v_curr)
         v_freight  = _g(decl, 'freight_value', 'Freight', default=None)
         v_insure   = _g(decl, 'insurance_value', 'Insurance', default=None)
         v_adjust   = _g(decl, 'adjustment_value', 'Adjustment', default=None)
-        v_cust_val = _g(decl, 'total_customs_value', 'Total Customs Value', default=0.0)
-        v_duty     = _g(decl, 'import_export_customs_duty', 'customs_duty', 'Import/Export Customs Duty', default=0.0)
-        v_ct       = _g(decl, 'commercial_tax_ct', 'commercial_tax', 'Commercial Tax (CT)', default=0.0)
-        v_at       = _g(decl, 'advance_income_tax_at', 'advance_income_tax', 'Advance Income Tax (AT)', default=0.0)
-        v_sf       = _g(decl, 'security_fee_sf', 'security_fee', 'Security Fee (SF)', default=0.0)
-        v_mf       = _g(decl, 'maccs_service_fee_mf', 'maccs_service_fee', 'MACCS Service Fee (MF)', default=0.0)
-        v_exempt   = _g(decl, 'exemption_reduction', 'exemption', 'Exemption/Reduction', default=0.0)
+        # Each build-up line prints its own currency code; the CIF gate must convert
+        # from THAT unit, not from an assumed invoice currency.
+        v_frt_cur  = _g(decl, 'freight_currency', default=None)
+        v_ins_cur  = _g(decl, 'insurance_currency', default=None)
+        v_adj_cur  = _g(decl, 'adjustment_currency', default=None)
+        # `default=None`, not 0.0. A figure the engine could not read was being stored
+        # as a real zero, which is indistinguishable from a form that genuinely
+        # declares nothing — and on a customs declaration a zero in a duty column is
+        # not a harmless placeholder, it is a number somebody may act on. Seven of the
+        # twenty-six remaining errors in the last run were exactly this: a printed
+        # figure, clearly legible, stored as 0.
+        #
+        # A genuine zero is unaffected: `_g` returns the value when the key is present,
+        # so an engine that read `0` still stores `0`. Only "nothing was read" changes,
+        # from 0.0 to NULL, which is what the tax-completeness gate and the reviewer's
+        # empty cell both need in order to mean anything.
+        v_cust_val = _g(decl, 'total_customs_value', 'Total Customs Value', default=None)
+        v_duty     = _g(decl, 'import_export_customs_duty', 'customs_duty', 'Import/Export Customs Duty', default=None)
+        v_ct       = _g(decl, 'commercial_tax_ct', 'commercial_tax', 'Commercial Tax (CT)', default=None)
+        v_at       = _g(decl, 'advance_income_tax_at', 'advance_income_tax', 'Advance Income Tax (AT)', default=None)
+        v_sf       = _g(decl, 'security_fee_sf', 'security_fee', 'Security Fee (SF)', default=None)
+        v_mf       = _g(decl, 'maccs_service_fee_mf', 'maccs_service_fee', 'MACCS Service Fee (MF)', default=None)
+        v_exempt   = _g(decl, 'exemption_reduction', 'exemption', 'Exemption/Reduction', default=None)
         cursor.execute("""
             INSERT INTO declarations (
-                job_id, declaration_no, declaration_date, importer_name, consignor_name,
+                job_id, declaration_no, declaration_date, arrival_date, release_order_date,
+                completion_date, importer_name, consignor_name,
                 invoice_number, invoice_number_customs_declaration, invoice_number_commercial_invoice,
-                invoice_price, currency, exchange_rate, currency_2,
+                invoice_price, invoice_price_fc, invoice_price_mmk, currency, exchange_rate, currency_2,
                 freight_value, insurance_value, adjustment_value,
+                freight_currency, insurance_currency, adjustment_currency,
                 total_customs_value, import_export_customs_duty, commercial_tax_ct,
                 advance_income_tax_at, security_fee_sf, maccs_service_fee_mf, exemption_reduction
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            job_id, v_no, v_date, v_importer, v_consign,
+            job_id, v_no, v_date, v_arrival, v_release, v_complete, v_importer, v_consign,
             v_inv_no, v_inv_cd, v_inv_ci,
-            v_price, v_curr, v_rate, v_curr2,
+            v_price, v_price_fc, v_price_mmk, v_curr, v_rate, v_curr2,
             v_freight, v_insure, v_adjust,
+            v_frt_cur, v_ins_cur, v_adj_cur,
             v_cust_val, v_duty, v_ct, v_at, v_sf, v_mf, v_exempt
         ))
         new_decl_id = cursor.lastrowid
@@ -1064,6 +1203,17 @@ def save_declarations(job_id: str, declarations: List[Dict]):
             """, (doc_fmt, sanity_flags_json, cv_int, ver_int, new_decl_id))
         except Exception:
             pass
+        # Evidence goes in its OWN try — the block above swallows every exception,
+        # so folding evidence into that UPDATE would let one bad payload silently
+        # take document_format + sanity_flags + cross_val_passed down with it.
+        try:
+            ev = decl.get('_evidence_json')
+            if ev:
+                cursor.execute(
+                    "UPDATE declarations SET evidence_json = ? WHERE id = ?",
+                    (ev, new_decl_id))
+        except Exception as e:
+            print(f"[save_declarations] evidence_json skipped: {e}")
 
     conn.commit()
     conn.close()
@@ -1112,7 +1262,7 @@ def get_all_jobs(limit: int = 50) -> List[Dict]:
         LIMIT ?
     """, (limit,))
 
-    jobs = [dict(row) for row in cursor.fetchall()]
+    jobs = _without_raw_extraction([dict(row) for row in cursor.fetchall()])
     conn.close()
 
     return jobs
@@ -1193,6 +1343,10 @@ def get_job_details(job_id: str) -> Optional[Dict]:
         return None
 
     job_dict = dict(job)
+    # The verbatim engine output is fetched on demand (get_job_raw_extraction),
+    # never carried in the job payload — nothing on screen reads it and it is
+    # the one column that can run to a megabyte.
+    job_dict.pop('raw_extraction', None)
     # Postgres returns datetime objects; serialize to strings for Pydantic compat
     import datetime as _dt
     for _k, _v in list(job_dict.items()):
@@ -1219,12 +1373,12 @@ def get_job_details(job_id: str) -> Optional[Dict]:
     cursor.execute("SELECT metadata_json FROM pdf_metadata WHERE job_id = ?", (job_id,))
     metadata_row = cursor.fetchone()
     if metadata_row:
-        job_dict['pdf_metadata'] = json.loads(metadata_row['metadata_json'])
+        job_dict['pdf_metadata'] = loads_maybe(metadata_row['metadata_json'])
 
     # Parse cross_validation JSON if present
     if job_dict.get('cross_validation_json'):
         try:
-            job_dict['cross_validation'] = json.loads(job_dict['cross_validation_json'])
+            job_dict['cross_validation'] = loads_maybe(job_dict['cross_validation_json'])
         except (json.JSONDecodeError, TypeError):
             job_dict['cross_validation'] = None
     else:
@@ -1233,7 +1387,7 @@ def get_job_details(job_id: str) -> Optional[Dict]:
     # Parse field_bboxes JSON if present (V11 PDF↔form linking)
     if job_dict.get('field_bboxes_json'):
         try:
-            job_dict['field_bboxes'] = json.loads(job_dict['field_bboxes_json'])
+            job_dict['field_bboxes'] = loads_maybe(job_dict['field_bboxes_json'])
         except (json.JSONDecodeError, TypeError):
             job_dict['field_bboxes'] = {}
     else:
@@ -1263,6 +1417,188 @@ def update_job_field_bboxes(job_id: str, bboxes: Dict) -> bool:
         return False
     finally:
         conn.close()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# jobs.raw_extraction — the engine's verbatim output
+# ─────────────────────────────────────────────────────────────────────────────
+# Added by migration 0007. Optional on purpose: a database that has not been
+# upgraded must keep processing documents, so the column is probed ONCE per
+# process and every write is skipped while it is absent.
+#
+# The probe reads information_schema, NOT `PRAGMA table_info` (the pattern
+# `save_items` uses for display_order): db_engine turns a PRAGMA into a no-op
+# SELECT on Postgres, so that probe can only ever answer "column missing" here.
+#
+# None = not probed yet · "" = column absent · otherwise the column's data_type,
+# which decides whether the payload needs an explicit ::jsonb cast.
+_RAW_EXTRACTION_COL = None
+
+
+def _raw_extraction_type(cursor) -> str:
+    """Data type of jobs.raw_extraction, or '' when the column does not exist."""
+    global _RAW_EXTRACTION_COL
+    if _RAW_EXTRACTION_COL is None:
+        try:
+            cursor.execute(
+                "SELECT data_type FROM information_schema.columns "
+                "WHERE table_name = 'jobs' AND column_name = 'raw_extraction' LIMIT 1"
+            )
+            row = cursor.fetchone()
+            _RAW_EXTRACTION_COL = (row[0] if row else "") or ""
+        except Exception as e:
+            logger.warning(f"raw_extraction column probe failed: {e}")
+            _RAW_EXTRACTION_COL = ""
+    return _RAW_EXTRACTION_COL
+
+
+def update_job_raw_extraction(job_id: str, raw) -> bool:
+    """Store the engine's verbatim output on the job row.
+
+    Kept so that a bug in the hand-written engine→DB field mapping can be fixed
+    by re-projecting the stored JSON into the typed columns, instead of paying
+    to re-run every document through the model — the only remedy available the
+    last time that mapping was wrong.
+
+    `raw` is either JSON text the caller already serialised (the ROVER bridge
+    serialises at capture time so the payload cannot drift) or a plain object to
+    serialise here. Failure is never fatal — this is a debug/re-projection
+    artifact, so an un-upgraded database or an unserialisable payload leaves the
+    column NULL and the job completes exactly as before.
+    """
+    if not job_id or raw in (None, "", {}, []):
+        return False
+    if isinstance(raw, str):
+        payload = raw
+    else:
+        try:
+            payload = json.dumps(raw, default=str, ensure_ascii=False)
+        except Exception as e:
+            logger.warning(f"update_job_raw_extraction serialise failed: {e}")
+            return False
+
+    conn = _connect()
+    try:
+        cur = conn.cursor()
+        coltype = _raw_extraction_type(cur)
+        if not coltype:
+            return False
+        # A str parameter arrives as text; a jsonb column needs it cast, and a
+        # text column would reject the cast. Bind to whatever 0007 actually made.
+        _val = "CAST(? AS jsonb)" if coltype == "jsonb" else "?"
+        cur.execute(f"UPDATE jobs SET raw_extraction = {_val} WHERE job_id = ?",
+                    (payload, job_id))
+        conn.commit()
+        return cur.rowcount > 0
+    except Exception as e:
+        logger.warning(f"update_job_raw_extraction failed: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def get_job_raw_extraction(job_id: str) -> Optional[Dict]:
+    """Read back the stored engine output for one job, or None.
+
+    The supported way in for a re-projection pass. The read helpers below strip
+    this column from their payloads (it is up to ~1 MB per row and nothing in
+    the UI reads it), so it is fetched deliberately, one job at a time.
+    """
+    if not job_id:
+        return None
+    conn = _connect()
+    try:
+        cur = conn.cursor()
+        if not _raw_extraction_type(cur):
+            return None
+        cur.execute("SELECT raw_extraction FROM jobs WHERE job_id = ?", (job_id,))
+        row = cur.fetchone()
+        if not row or row[0] in (None, ""):
+            return None
+        val = row[0]
+        # jsonb comes back already decoded; a text column comes back as a string.
+        return json.loads(val) if isinstance(val, str) else val
+    except Exception as e:
+        logger.warning(f"get_job_raw_extraction failed: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def _without_raw_extraction(rows):
+    """Drop the raw-extraction blob from job row dicts.
+
+    Every job list here is `SELECT *`, so a new up-to-1MB column would otherwise
+    ride along on the history page, the review payload and duplicate detection —
+    none of which read it. Use `get_job_raw_extraction` when you actually want it.
+    """
+    for r in rows:
+        r.pop('raw_extraction', None)
+    return rows
+
+
+def update_declaration_evidence(job_id: str, evidence: Dict) -> bool:
+    """Replace the stored per-field evidence for a job's declaration.
+
+    Used when a reviewer settles a field: the cell is stamped resolved so it
+    leaves the checks queue even when they chose to KEEP the original value —
+    "I looked at this and it's fine" is a decision, and re-showing it would make
+    the queue impossible to ever clear.
+    """
+    if not job_id:
+        return False
+    try:
+        payload = json.dumps(evidence or {}, default=str)[:400000]
+    except Exception:
+        return False
+    conn = _connect()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE declarations SET evidence_json = ? WHERE job_id = ?",
+            (payload, job_id))
+        conn.commit()
+        return cur.rowcount > 0
+    except Exception as e:
+        print(f"[update_declaration_evidence] {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def list_jobs_with_evidence(user_id: Optional[int] = None, limit: int = 300) -> List[Dict]:
+    """Jobs carrying per-field evidence, newest first, for the checks queue.
+
+    `user_id=None` means the caller's data_scope is 'all'; anything else scopes
+    to that user's own jobs. Returns the raw evidence JSON — the caller decides
+    what counts as needing a human, so that rule lives in ONE place
+    (routes/evidence._flagged) rather than being duplicated in SQL.
+    """
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    try:
+        sql = ("SELECT j.job_id, j.pdf_name, j.created_at, j.review_status, "
+               "       j.user_id, d.declaration_no, d.importer_name, d.evidence_json "
+               "FROM jobs j JOIN declarations d ON d.job_id = j.job_id "
+               # `<> ''` was valid while this column was text. Migration 0007 made it
+               # jsonb, and Postgres then has to cast '' to json — which is a hard
+               # error ("The input string ended unexpectedly"), not an empty result.
+               # Compare against an empty JSON object instead.
+               "WHERE d.evidence_json IS NOT NULL AND d.evidence_json <> '{}'::jsonb ")
+        params: list = []
+        if user_id is not None:
+            sql += "AND j.user_id = ? "
+            params.append(user_id)
+        sql += "ORDER BY j.created_at DESC LIMIT ?"
+        params.append(int(limit))
+        cur = conn.cursor()
+        cur.execute(sql, tuple(params))
+        return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        print(f"[list_jobs_with_evidence] {e}")
+        return []
+    finally:
+        conn.close()
+
 
 def get_stats() -> Dict:
     """Get database statistics"""
@@ -1330,7 +1666,7 @@ def find_job_by_hash(pdf_hash: str) -> Optional[Dict]:
     conn.close()
 
     if row:
-        return dict(row)
+        return _without_raw_extraction([dict(row)])[0]
     return None
 
 
@@ -1692,7 +2028,7 @@ def get_user_jobs(user_id: int, limit: int = 100) -> List[Dict]:
         ORDER BY created_at DESC LIMIT ?
     """, (user_id, limit))
 
-    jobs = [dict(row) for row in cursor.fetchall()]
+    jobs = _without_raw_extraction([dict(row) for row in cursor.fetchall()])
     conn.close()
     return jobs
 
@@ -2329,16 +2665,20 @@ def get_page_extractions(job_id: str) -> List[Dict]:
     conn.close()
     for row in rows:
         for jf in ('fields_json', 'items_json', 'amounts_json', 'entities_json'):
-            if row.get(jf):
-                try:
-                    row[jf.replace('_json', '')] = json.loads(row.pop(jf))
-                except (json.JSONDecodeError, TypeError, ValueError):
-                    row[jf.replace('_json', '')] = {}
-                    del row[jf]
-            else:
-                row[jf.replace('_json', '')] = {} if 'fields' in jf or 'entities' in jf else []
-                if jf in row:
-                    del row[jf]
+            # Empty defaults differ by field: two of these hold an object, two a
+            # list, and a caller iterating a `{}` where it expected rows sees no
+            # error and no rows.
+            empty = {} if 'fields' in jf or 'entities' in jf else []
+            # These are jsonb since migration 0007, so psycopg3 returns them
+            # already parsed. The previous form was `json.loads(row.pop(jf))`
+            # inside a `try` — and the pop ran BEFORE the parse, so a TypeError
+            # left the key already gone and the handler's own `del row[jf]`
+            # raised KeyError, which that except tuple did not catch. It did not
+            # degrade to empty payloads as intended; it propagated out of this
+            # function. `loads_maybe` accepts either storage type and never
+            # raises, so the try and the ordering hazard both go away.
+            raw = row.pop(jf, None)
+            row[jf.replace('_json', '')] = loads_maybe(raw, default=empty)
     return rows
 
 
@@ -2788,6 +3128,18 @@ def activate_storage_config(cfg_id: int) -> bool:
 DECLARATION_FIELD_MAP = {
     "declaration_no": "declaration_no",
     "declaration_date": "declaration_date",
+    # The three other lifecycle dates. They became real columns with the
+    # release-order work but never reached this map, so PATCH /declaration
+    # rejected them with "Unknown declaration field" — a reviewer could see a
+    # wrong arrival date and had no way to correct it.
+    "arrival_date": "arrival_date",
+    "release_order_date": "release_order_date",
+    "completion_date": "completion_date",
+    "invoice_price_fc": "invoice_price_fc",
+    # The kyat rendering, alongside the invoice-currency amount. Editable
+    # for the same reason the others are: a reviewer who can see a wrong
+    # value must be able to correct it.
+    "invoice_price_mmk": "invoice_price_mmk",
     "importer_name": "importer_name",
     "consignor_name": "consignor_name",
     "invoice_number": "invoice_number",
@@ -2814,6 +3166,8 @@ DECLARATION_FIELD_MAP = {
     "Consignor (Name)": "consignor_name",
     "Invoice Number": "invoice_number",
     "Invoice Price": "invoice_price",
+    "Invoice Price (MMK)": "invoice_price_mmk",
+    "Invoice Price (FC)": "invoice_price_fc",
     "Currency": "currency",
     "Exchange Rate": "exchange_rate",
     "Total Customs Value": "total_customs_value",
@@ -2848,6 +3202,67 @@ ITEM_FIELD_MAP = {
     "Origin Country": "origin_country",
     "Customs Value (MMK)": "customs_value_mmk",
 }
+
+# Columns Postgres holds as `double precision`. Anything written to one of these
+# has to arrive as a number — and the values flowing into an edit almost never do.
+# ROVER reads money straight off the form ("1,394,615", "THB 652,279.7184") and the
+# review UI shows a reviewer that same formatted string, so both the CHECKS resolve
+# action and a hand-typed inline edit hand Postgres a value it rejects outright:
+#     invalid input syntax for type double precision: "3,362,921"
+# Coercing here rather than at each call site means every writer is covered — the
+# same class of bug already cost us silently-vanishing items in the ROVER bridge.
+NUMERIC_DECLARATION_COLUMNS = {
+    "invoice_price", "invoice_price_fc", "invoice_price_mmk", "exchange_rate",
+    "freight_value", "insurance_value", "adjustment_value",
+    "total_customs_value", "import_export_customs_duty",
+    "commercial_tax_ct", "advance_income_tax_at",
+    "security_fee_sf", "maccs_service_fee_mf", "exemption_reduction",
+}
+
+NUMERIC_ITEM_COLUMNS = {
+    "customs_duty_rate", "quantity", "invoice_unit_price", "cif_unit_price",
+    "commercial_tax_percent", "exchange_rate", "customs_value_mmk",
+}
+
+# The four date columns are TEXT and nothing normalised them, so the same column
+# ended up holding "2025-06-25", "2024/04/01" and "12/10/2025" at once —
+# unsortable, and impossible to compare against the team's ledger without a
+# bespoke parser per call site.
+DATE_DECLARATION_COLUMNS = {
+    "declaration_date", "arrival_date", "release_order_date", "completion_date",
+}
+
+
+def coerce_date(value):
+    """Normalise a printed date to ISO for a date column.
+
+    Raises on text that is not a date, so a bad edit surfaces as a 400 instead
+    of parking a declaration number in a date column.
+    """
+    return dates.to_iso(value)
+
+
+def coerce_numeric(value):
+    """Parse a form-formatted amount into a float for a numeric column.
+
+    Thin alias for the shared parser in `numeric.py` — thousands separators, a
+    currency token at either end, parenthesised negatives, and None for the blank
+    markers customs forms print.
+
+    It raises on text holding no unambiguous number, which is what lets a bad
+    edit surface as a 400 rather than becoming 0 in a money column.
+    """
+    return numeric.parse_amount(value)
+
+
+def coerce_for_column(col: str, value, numeric_columns: set):
+    """Coerce `value` for its column type; pass other text columns through."""
+    if col in numeric_columns:
+        return coerce_numeric(value)
+    if col in DATE_DECLARATION_COLUMNS:
+        return coerce_date(value)
+    return value
+
 
 FEE_FIELD_KEYS = {
     "commercial_tax_ct", "advance_income_tax_at", "security_fee_sf",
@@ -2989,6 +3404,7 @@ def update_declaration_field(job_id: str, field_name: str, value) -> bool:
     col = DECLARATION_FIELD_MAP.get(field_name)
     if not col:
         return False
+    value = coerce_for_column(col, value, NUMERIC_DECLARATION_COLUMNS)
     conn = _connect()
     cur = conn.cursor()
     cur.execute(f"""
@@ -3030,6 +3446,7 @@ def update_item_field(job_id: str, item_index: int, field_name: str, value) -> b
     col = ITEM_FIELD_MAP.get(field_name)
     if not col:
         return False
+    value = coerce_for_column(col, value, NUMERIC_ITEM_COLUMNS)
     conn = _connect()
     cur = conn.cursor()
     cur.execute(

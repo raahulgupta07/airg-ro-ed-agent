@@ -1,7 +1,9 @@
 <script lang="ts">
   import { auth } from '$lib/stores/auth.svelte';
+  import { api } from '$lib/api';
   import Toast from './Toast.svelte';
   import ExcelTable from './ExcelTable.svelte';
+  import EvidenceCard from './EvidenceCard.svelte';
 
   type Col = {
     id: string;
@@ -35,13 +37,55 @@
     onApprove,
     onReject,
     onClose,
+    slim = false,
   }: {
     jobId: string;
     job: any;
     onApprove?: () => void;
     onReject?: () => void;
     onClose?: () => void;
+    slim?: boolean;
   } = $props();
+
+  // ── Issues — machine-readable "what's wrong + why + fix" from the backend ──
+  type Issue = { code: string; title?: string; severity: 'error' | 'warn' | 'info'; field?: string; detail: string; cause: string; fix: string };
+  let issues = $state<Issue[]>([]);
+  let issuesOpen = $state(true);
+  $effect(() => {
+    const id = jobId;
+    if (!id) { issues = []; return; }
+    (async () => {
+      try {
+        const r = await fetch(`/api/review/${id}`, { headers: { 'Authorization': `Bearer ${auth.token}` } });
+        if (!r.ok) return;
+        const d = JSON.parse(await r.text());
+        issues = d.issues ?? [];
+      } catch { /* panel is optional — never block review */ }
+    })();
+  });
+  const sevColor = (s: string) => s === 'error' ? 'var(--error)' : s === 'warn' ? 'var(--warning)' : 'var(--info)';
+
+  // ── Values the reader was unsure about (same cards as the Checks tab) ──
+  // Loaded separately from issues: issues describe the DOCUMENT ("products do
+  // not add up"), these describe ONE FIELD and can be settled in place.
+  let evidenceChecks = $state<any[]>([]);
+  let evidenceOpen = $state(true);
+  $effect(() => {
+    const id = jobId;
+    if (!id) { evidenceChecks = []; return; }
+    (async () => {
+      try {
+        const r = await api.evidenceForJob(id);
+        evidenceChecks = r.checks ?? [];
+      } catch { /* optional panel — a missing count must never block review */ }
+    })();
+  });
+  function onEvidenceResolved(field: string, value: any) {
+    evidenceChecks = evidenceChecks.filter(c => c.field !== field);
+    // Mirror the settled value into the working copy so the declaration table
+    // below does not keep showing the number the reviewer just replaced.
+    if (field in workingDecl) workingDecl = { ...workingDecl, [field]: value };
+  }
 
   // ── Local working copy (optimistic edits) ──
   // Accept both shapes: V11 response has `declaration` (singular).
@@ -146,16 +190,18 @@
       pdfError = '';
       pdfFallback = false;
       try {
-        const r = await fetch(`/api/jobs/${jobId}/pdf`, {
+        // NOTE: the route requires `token` as a QUERY param (native EventSource-era
+        // signature) — a header-only fetch 422s and forced the fallback banner on
+        // every job. Send both.
+        const r = await fetch(`/api/jobs/${jobId}/pdf?token=${encodeURIComponent(auth.token ?? '')}`, {
           headers: { 'Authorization': `Bearer ${auth.token}` },
           credentials: 'include',
         });
         if (!r.ok) throw new Error(`pdf ${r.status}`);
-        const blob = await r.blob();
         if (cancelled) return;
-        const url = URL.createObjectURL(blob);
-        revokeUrl = url;
-        pdfBlobUrl = url;
+        // Use the direct URL (not a blob) so the browser PDF viewer's download
+        // button keeps the server's filename: <decl_no>_<job_id>.pdf.
+        pdfBlobUrl = `/api/jobs/${jobId}/pdf?token=${encodeURIComponent(auth.token ?? '')}`;
       } catch (e: any) {
         // Fallback: token-querystring URL — surface it so a blank viewer
         // isn't mistaken for a successful load.
@@ -209,21 +255,36 @@
     job?.field_pages?.declaration ||
     {}
   );
+  // 0 means "we do not know", and the caller must not turn that into a page.
+  //
+  // This returned 1 as a last resort, so every field without a measured box
+  // claimed to be on page 1. On a bundled release order whose declaration sits
+  // on page 10 that is not a harmless default: it sends a reviewer to the wrong
+  // document to confirm a customs figure, and it looks deliberate because it is
+  // rendered identically to a real one. Neither `declFieldPages` nor
+  // `decl_page_no` is served by the API either, so page 1 was the ONLY answer
+  // this ever gave.
   function declPageRef(field: string): number {
     const p = declFieldPages?.[field];
     if (typeof p === 'number' && p > 0) return p;
     if (typeof job?.decl_page_no === 'number') return job.decl_page_no;
-    return 1;
+    return 0;
   }
   function itemPageRef(idx: number, field?: string): number {
+    // A measured box first — it is the only source here that actually looked at
+    // the page.
+    const bb = itemBbox(idx, field || 'item_name')
+            || itemBbox(idx, 'item_name') || itemBbox(idx, 'hs_code');
+    if (bb?.page) return bb.page;
     const it = workingItems[idx] || {};
     if (typeof it.page_ref === 'number' && it.page_ref > 0) return it.page_ref;
     if (it.field_pages && field && typeof it.field_pages[field] === 'number') return it.field_pages[field];
-    // Heuristic: each item often on its own page; declaration may be on page 1.
-    // Best guess: page = idx + 1, capped to totalPages.
-    const guess = idx + 1;
-    if (totalPages && guess > totalPages) return totalPages;
-    return guess || 1;
+    // The old fallback was `page = idx + 1`, i.e. item 3 is on page 3. That is
+    // true of nothing: on these bundles every item sits in one block on the
+    // declaration's second sheet, so a 7-item document sent the reviewer to
+    // seven different pages, none of them right. 0 means "not located" and the
+    // caller renders no chip rather than a confident wrong number.
+    return 0;
   }
 
   // Debounced PDF jump (200ms) to avoid rapid iframe reloads on hover.
@@ -250,6 +311,43 @@
 
   // Field bboxes from backend: { declaration: {field: {page,x,y,w,h}}, items: {idx: {field: {...}}} }
   const fieldBboxes = $derived.by(() => (job as any)?.field_bboxes || {});
+
+  // ── Marked PDF ─────────────────────────────────────────────────────────
+  // The original file with every located value highlighted on it. It has been
+  // buildable since the coordinates existed, but nothing in the UI linked to
+  // it — the only way to see one was to type the URL by hand, so in practice a
+  // run never produced one.
+  //
+  // The count is the SERVER's, not a count of the boxes in this payload. Those
+  // two are not the same number: a stored box whose value is gone is not a
+  // mark, and this job carries several — the engines emit `customs_duty` and
+  // `security_fee`, the declarations table stores `import_export_customs_duty`
+  // and `security_fee_sf`, and both spellings get located. Counting boxes here
+  // said 28 where the file contains 21. A button that promises 28 highlights
+  // and delivers 21 is worse than one that says nothing.
+  let markCount = $state(0);
+  let noMarksReason = $state('');
+  $effect(() => {
+    if (!jobId) return;
+    let cancelled = false;
+    api.markedPdfStatus(jobId)
+      .then((s) => {
+        if (cancelled) return;
+        markCount = s?.marks ?? 0;
+        noMarksReason = s?.reason || '';
+      })
+      .catch(() => { if (!cancelled) { markCount = 0; noMarksReason = ''; } });
+    return () => { cancelled = true; };
+  });
+  // Never offer a download that cannot exist. A photographed declaration has no
+  // text layer, so no position was ever measured — the button stays visible and
+  // disabled with the reason, because hiding it entirely reads as the feature
+  // being missing on this job for no stated cause.
+  const markedPdfHref = $derived(markCount > 0 ? api.markedPdfUrl(jobId) : '');
+  const markedPdfTitle = $derived(
+    markCount > 0
+      ? `Open the PDF with all ${markCount} extracted values highlighted on it`
+      : (noMarksReason || 'No positions could be measured on this document, so nothing can be marked'));
   function declBbox(field: string) {
     return fieldBboxes?.declaration?.[field] || null;
   }
@@ -257,10 +355,104 @@
     return fieldBboxes?.items?.[String(idx)]?.[field] || null;
   }
 
+  // Zoom is REMEMBERED, not re-asserted.
+  //
+  // The viewer URL used to hardcode `zoom=page-fit`, and every declaration cell
+  // re-writes that URL on mouseenter to jump the page. So zooming in and then
+  // moving the mouse snapped the document straight back to fit — it looked like
+  // zoom was disabled when it was actually being reset several times a second.
+  // Holding the level in state means a jump preserves whatever the reviewer set.
+  const PDF_ZOOM_STEPS = ['page-fit', 'page-width', '100', '150', '200', '300', '400'];
+  let pdfZoom = $state<string>('page-fit');
+  function zoomIn() {
+    const i = PDF_ZOOM_STEPS.indexOf(pdfZoom);
+    pdfZoom = PDF_ZOOM_STEPS[Math.min(i + 1, PDF_ZOOM_STEPS.length - 1)];
+  }
+  function zoomOut() {
+    const i = PDF_ZOOM_STEPS.indexOf(pdfZoom);
+    pdfZoom = PDF_ZOOM_STEPS[Math.max(i - 1, 0)];
+  }
+  const zoomLabel = $derived(
+    pdfZoom === 'page-fit' ? 'FIT' : pdfZoom === 'page-width' ? 'WIDTH' : `${pdfZoom}%`);
+
+  // ── Page view (default) vs the full PDF ────────────────────────────────
+  // `page` renders one page as an image and is what page jumps and field hovers
+  // drive. `pdf` is the browser's own viewer, kept for reading, text selection,
+  // printing and download — the things it is genuinely better at.
+  let viewer = $state<'page' | 'pdf'>('page');
+
+  // Server picks the format: JPEG for a photographed page, PNG where there is a
+  // text layer. 150 DPI is readable and keeps a scanned page around 300 KB —
+  // the old fixed render was ~7 MB, which is not something to fetch on hover.
+  const pageImgSrc = $derived.by(() => {
+    if (!jobId || !currentPage) return '';
+    const t = encodeURIComponent(auth.token || '');
+    return `/api/jobs/${jobId}/page-image/${currentPage}?token=${t}&dpi=150`;
+  });
+
+  // ── Highlight boxes ────────────────────────────────────────────────────
+  // The coordinates have been computed, stored and served for a long time and
+  // nothing ever drew them — `declBbox()` was used only to read `.page`. They
+  // could not be drawn while the viewer was an iframe: you cannot position an
+  // element over a browser PDF plugin. The page image can.
+  //
+  // Stored boxes are in PDF points (72 per inch). The image is rendered at
+  // PAGE_IMG_DPI, so one point is dpi/72 image pixels, and dividing by the
+  // image's natural width turns that into a percentage — which survives zoom,
+  // window resizing and the browser's own scaling without any further work.
+  const PAGE_IMG_DPI = 150;
+  let imgNatural = $state<{ w: number; h: number }>({ w: 0, h: 0 });
+  let activeField = $state<string>('');
+
+  function pctBox(bb: any) {
+    if (!bb || !imgNatural.w || !imgNatural.h) return null;
+    const k = PAGE_IMG_DPI / 72;
+    return {
+      left: (bb.x * k) / imgNatural.w * 100,
+      top: (bb.y * k) / imgNatural.h * 100,
+      width: (bb.w * k) / imgNatural.w * 100,
+      height: (bb.h * k) / imgNatural.h * 100,
+    };
+  }
+
+  // Every box on the page currently shown, so a reviewer can see at a glance
+  // which figures on this sheet the pipeline actually located.
+  const boxesOnPage = $derived.by(() => {
+    const out: { field: string; label: string; box: any }[] = [];
+    const decl = fieldBboxes?.declaration || {};
+    for (const [field, bb] of Object.entries<any>(decl)) {
+      if (bb?.page !== currentPage) continue;
+      const b = pctBox(bb);
+      if (b) out.push({ field, label: field, box: b });
+    }
+    // Item rows too. These were computed and stored alongside the declaration
+    // boxes from the start and were just as unused. On these forms the item
+    // block often sits on the declaration's SECOND sheet, so an item box and a
+    // header box frequently land on different pages of the same document.
+    const items = fieldBboxes?.items || {};
+    for (const [idx, row] of Object.entries<any>(items)) {
+      for (const [field, bb] of Object.entries<any>(row || {})) {
+        if (bb?.page !== currentPage) continue;
+        const b = pctBox(bb);
+        if (b) out.push({ field: `item:${idx}:${field}`,
+                          label: `Item ${Number(idx) + 1} · ${field}`, box: b });
+      }
+    }
+    return out;
+  });
+
+  // The same zoom control drives both viewers, so switching between them does
+  // not silently change the size of the page.
+  const imgWidthStyle = $derived.by(() => {
+    if (pdfZoom === 'page-fit') return 'max-width: 100%; height: auto;';
+    if (pdfZoom === 'page-width') return 'width: 100%; height: auto;';
+    return `width: ${pdfZoom}%; max-width: none; height: auto;`;
+  });
+
   const pdfSrc = $derived.by(() => {
     if (!pdfBlobUrl) return '';
     const search = pdfSearchTerm ? `&search=${encodeURIComponent(pdfSearchTerm)}` : '';
-    return `${pdfBlobUrl}#page=${currentPage}&zoom=page-fit${search}`;
+    return `${pdfBlobUrl}#page=${currentPage}&zoom=${pdfZoom}${search}`;
   });
 
   // ── Edits-by-page (red dot on page strip) ──
@@ -701,11 +893,15 @@
   // ── Declaration field rows definition ──
   const declRows = [
     { field: 'declaration_no', label: 'DECL_NO' },
-    { field: 'declaration_date', label: 'DATE' },
+    { field: 'declaration_date', label: 'DECL_DATE' },
+    { field: 'release_order_date', label: 'RO_DATE' },
+    { field: 'arrival_date', label: 'ARRIVAL_DATE' },
+    { field: 'completion_date', label: 'COMPLETION_DATE' },
     { field: 'importer_name', label: 'IMPORTER' },
     { field: 'consignor_name', label: 'CONSIGNOR' },
     { field: 'invoice_number', label: 'INVOICE_NO' },
-    { field: 'invoice_price', label: 'INVOICE_PRICE' },
+    { field: 'invoice_price_fc', label: 'INVOICE_PRICE (FC)' },
+    { field: 'invoice_price', label: 'INVOICE_PRICE (MMK)' },
     { field: 'freight_value', label: 'FREIGHT' },
     { field: 'insurance_value', label: 'INSURANCE' },
     { field: 'adjustment_value', label: 'ADJUSTMENT' },
@@ -750,11 +946,17 @@
       style="background: var(--warning); color: white;">
       ⚠ {status}
     </span>
-    <span class="text-[11px] font-mono font-bold" style="color: var(--on-surface);">
-      {filename}
-    </span>
+    {#if !slim}
+      <span class="text-[11px] font-mono font-bold" style="color: var(--on-surface);">
+        {filename}
+      </span>
+    {/if}
     <span class="text-[10px] font-mono" style="color: var(--outline);">
-      {totalPages} pg · ${cost.toFixed(3)} · ITEMS:{itemsCount} · ACC:{accuracy.toFixed(1)}% · DEC:{decision} · TIME:{duration ? duration.toFixed(0) + 's' : '—'} · TOK:{(((job as any)?.tokens_in ?? 0)/1000).toFixed(1)}k/{(((job as any)?.tokens_out ?? 0)/1000).toFixed(1)}k · {(job as any)?.model_used || 'Atlas V14'} · EDITS:{editCount} · FLAGS:{flagCount}
+      {#if slim}
+        DEC:{decision} · EDITS:{editCount} · FLAGS:{flagCount}
+      {:else}
+        <span class="job-id" title={jobId}>JOB:{jobId}</span> · {totalPages} pg · ${cost.toFixed(3)} · ITEMS:{itemsCount} · ACC:{accuracy.toFixed(1)}% · DEC:{decision} · TIME:{duration ? duration.toFixed(0) + 's' : '—'} · TOK:{(((job as any)?.tokens_in ?? 0)/1000).toFixed(1)}k/{(((job as any)?.tokens_out ?? 0)/1000).toFixed(1)}k · {(job as any)?.model_used || 'Atlas V14'} · EDITS:{editCount} · FLAGS:{flagCount}
+      {/if}
     </span>
     <div class="flex-1"></div>
     <div class="flex flex-wrap gap-2">
@@ -829,6 +1031,43 @@
         <button
           class="px-2 py-0.5 text-[9px] font-medium uppercase border cursor-pointer"
           style="border-color: var(--surface); color: var(--surface); background: transparent;"
+          onclick={() => (viewer = viewer === 'page' ? 'pdf' : 'page')}
+          title={viewer === 'page'
+            ? 'Open the full PDF — text selection, print, download'
+            : 'Back to the page view, where page jumps actually move'}
+        >{viewer === 'page' ? 'FULL PDF' : 'PAGE VIEW'}</button>
+        {#if markCount > 0}
+          <a
+            class="px-2 py-0.5 text-[9px] font-medium uppercase border cursor-pointer no-underline"
+            style="border-color: var(--surface); color: var(--surface); background: transparent;"
+            href={markedPdfHref} target="_blank" rel="noopener"
+            title={markedPdfTitle}
+          >MARKED PDF ({markCount})</a>
+        {:else}
+          <span
+            class="px-2 py-0.5 text-[9px] font-medium uppercase border cursor-not-allowed"
+            style="border-color: var(--surface); color: var(--surface); background: transparent; opacity: 0.45;"
+            title={markedPdfTitle}
+          >MARKED PDF —</span>
+        {/if}
+        <div class="flex items-center gap-1">
+          <button
+            class="px-1.5 py-0.5 text-[10px] font-bold border cursor-pointer"
+            style="border-color: var(--surface); color: var(--surface); background: transparent;"
+            onclick={zoomOut} disabled={pdfZoom === PDF_ZOOM_STEPS[0]}
+            title="Zoom out"
+          >−</button>
+          <span class="text-[9px] font-mono w-10 text-center" title="Kept while you move between fields">{zoomLabel}</span>
+          <button
+            class="px-1.5 py-0.5 text-[10px] font-bold border cursor-pointer"
+            style="border-color: var(--surface); color: var(--surface); background: transparent;"
+            onclick={zoomIn} disabled={pdfZoom === PDF_ZOOM_STEPS[PDF_ZOOM_STEPS.length - 1]}
+            title="Zoom in"
+          >+</button>
+        </div>
+        <button
+          class="px-2 py-0.5 text-[9px] font-medium uppercase border cursor-pointer"
+          style="border-color: var(--surface); color: var(--surface); background: transparent;"
           onclick={() => showFieldJump = !showFieldJump}
           title="Jump to a field"
         >🔍 JUMP TO FIELD ▾</button>
@@ -886,8 +1125,62 @@
         onclick={() => jumpToPage(Math.min(totalPages, currentPage + 1))}>▶</button>
     </div>
 
-    <div class="flex-1 min-h-[400px]">
-      {#if pdfLoading}
+    <!-- Why there are no highlights, stated once, where the highlights would be.
+         A reviewer who sees an unmarked page and a greyed-out button otherwise
+         has to guess whether the run failed. It did not: the document is a
+         photograph and this is the permanent, correct outcome for it. -->
+    {#if markCount === 0 && noMarksReason}
+      <div class="px-2 py-1 text-[10px] font-mono"
+        style="background: var(--surface-container); color: var(--on-surface-muted); border-bottom: 1px solid rgba(56,56,50,0.15);">
+        NO MARKS — {noMarksReason}
+      </div>
+    {/if}
+
+    <!-- `text-align: center` and not `margin: auto`: the page wrapper is
+         inline-block so it shrinks to the image's rendered size, and auto
+         margins do not centre an inline-block. It sat hard left, which on a
+         scrolled column reads as an empty pane. -->
+    <div class="flex-1 min-h-[400px] overflow-auto custom-scrollbar"
+      style="background: var(--surface-container-low); text-align: center;">
+      {#if viewer === 'page'}
+        <!-- Page image. The reason this is the default: a browser PDF viewer
+             reads `#page=` ONCE, when it loads. Rewriting the fragment on an
+             already-loaded iframe changes nothing, so every page click and every
+             field hover was silently ignored — the strip said page 10 while the
+             document sat on page 3. An <img> has no such problem: change the
+             src, the page changes. -->
+        {#if pageImgSrc}
+          <!-- The wrapper is inline-block so it shrinks to the image's own
+               rendered size. Percentage-positioned boxes then line up at any
+               zoom without recomputing anything. -->
+          <div style="position: relative; display: inline-block; margin: 0 auto;">
+            <img
+              src={pageImgSrc}
+              alt="Page {currentPage} of {totalPages}"
+              style="display: block; {imgWidthStyle}"
+              onload={(e) => {
+                const t = e.currentTarget as HTMLImageElement;
+                imgNatural = { w: t.naturalWidth, h: t.naturalHeight };
+              }}
+            />
+            {#each boxesOnPage as b (b.field)}
+              <!-- Padded outward by a hair: `search_for` returns a tight glyph
+                   box, and a rectangle drawn exactly on the ink reads as a
+                   strikethrough rather than a highlight. -->
+              <div
+                class="rv-box {activeField === b.field ? 'on' : ''}"
+                style="left: calc({b.box.left}% - 2px); top: calc({b.box.top}% - 2px);
+                       width: calc({b.box.width}% + 4px); height: calc({b.box.height}% + 4px);"
+                title={b.label}
+              ></div>
+            {/each}
+          </div>
+        {:else}
+          <div class="flex items-center justify-center h-full">
+            <span class="text-xs font-bold uppercase" style="color: var(--outline);">NO PAGE</span>
+          </div>
+        {/if}
+      {:else if pdfLoading}
         <div class="flex items-center justify-center h-full">
           <span class="text-xs font-bold uppercase" style="color: var(--outline);">LOADING PDF...</span>
         </div>
@@ -913,6 +1206,62 @@
 
   <!-- RIGHT: DATA -->
   <div class="flex flex-col gap-2 {mobileTab === 'pdf' ? 'hidden md:flex' : 'flex'}" style="min-width: 0;">
+    <!-- Issues — why fields below are blank/wrong (mirrors the Excel "Issues" sheet) -->
+    {#if issues.length > 0}
+      <div class="border-2 stamp-shadow" style="border-color: var(--line); background: var(--surface);">
+        <button type="button" class="dark-bar text-xs flex justify-between w-full cursor-pointer" style="border: none;"
+                onclick={() => (issuesOpen = !issuesOpen)}>
+          <span>⚠ CHECK THESE ({issues.length})</span>
+          <span style="color: var(--on-surface-muted);">
+            {issues.filter(i => i.severity === 'error').length} must fix · {issues.filter(i => i.severity === 'warn').length} look at {issuesOpen ? '▾' : '▸'}
+          </span>
+        </button>
+        {#if issuesOpen}
+          <div class="overflow-x-auto" style="background: var(--surface-container-lowest);">
+            <table class="w-full text-[11px] font-mono">
+              <tbody>
+                {#each issues as iss}
+                  <tr style="border-bottom: 1px solid var(--line-2);">
+                    <td class="px-2 py-2 align-top" style="color: {sevColor(iss.severity)}; font-weight: 700; max-width: 190px; white-space: normal;">
+                      {iss.severity === 'error' ? '✗' : iss.severity === 'warn' ? '⚠' : 'ℹ'} {iss.title ?? iss.code}
+                    </td>
+                    <td class="px-2 py-2 align-top" style="color: var(--on-surface); white-space: normal;">
+                      {iss.detail}
+                      <div style="color: var(--on-surface-muted);">Why: {iss.cause}.</div>
+                      <div style="color: var(--success);">What to do: {iss.fix}.</div>
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    <!-- Uncertain values — the same cards as the Checks tab, for the reviewer who
+         is already in the document and should not have to leave it to settle one
+         number. Absent entirely when the engine recorded no evidence (older jobs,
+         other engines), which is why this is gated on length rather than shown
+         empty: "no evidence recorded" must never read as "nothing is wrong". -->
+    {#if evidenceChecks.length > 0}
+      <div class="border-2 stamp-shadow" style="border-color: var(--line); background: var(--surface);">
+        <button type="button" class="dark-bar text-xs flex justify-between w-full cursor-pointer"
+                style="border: none;" onclick={() => (evidenceOpen = !evidenceOpen)}>
+          <span>◎ VALUES TO CONFIRM ({evidenceChecks.length})</span>
+          <span style="color: var(--on-surface-muted);">{evidenceOpen ? '▾' : '▸'}</span>
+        </button>
+        {#if evidenceOpen}
+          <div class="p-2" style="background: var(--surface-container-lowest);">
+            {#each evidenceChecks as check (check.field)}
+              <EvidenceCard jobId={job.job_id} {check} compact
+                            onresolved={onEvidenceResolved} />
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {/if}
+
     <!-- Declaration -->
     <div class="border-2 stamp-shadow"
       style="border-color: var(--line); background: var(--surface);">
@@ -950,7 +1299,9 @@
         style="color: var(--on-surface-muted); border-color: var(--outline);">{row.label}</td>
       <td class="px-2 py-1 align-top border-b"
         style="background: {declBg(row.field)}; border-color: var(--outline);"
-        onmouseenter={() => jumpPdf(dPage, _searchVal)} role="cell">
+        onmouseenter={() => { activeField = row.field; if (dPage > 0) jumpPdf(dPage, _searchVal); }}
+        onmouseleave={() => { if (activeField === row.field) activeField = ''; }}
+        role="cell">
         {#if editing}
           <input
             class="w-full text-[11px] font-mono font-bold border px-1 py-0.5"
@@ -972,9 +1323,19 @@
         {/if}
       </td>
       <td class="px-1 py-1 align-top border-b" style="border-color: var(--outline);">
-        <button class="text-[9px] font-mono px-1 cursor-pointer border whitespace-nowrap"
-          style="border-color: var(--primary); color: var(--primary);"
-          title="Jump PDF to page {dPage}" onclick={() => jumpPdfImmediate(dPage)}>p{dPage}</button>
+        {#if dPage > 0}
+          <button class="text-[9px] font-mono px-1 cursor-pointer border whitespace-nowrap"
+            style="border-color: var(--primary); color: var(--primary);"
+            title="Jump to page {dPage} — where this value was found"
+            onclick={() => jumpPdfImmediate(dPage)}>p{dPage}</button>
+        {:else}
+          <!-- Not located. Say so, rather than printing a page number that
+               happens to be 1. A reviewer can tell "we could not find this on
+               the page" from "it is on page 1"; a fabricated chip cannot. -->
+          <span class="text-[9px] font-mono px-1 whitespace-nowrap"
+            style="color: var(--on-surface-subtle);"
+            title="Not located on the page — the stored value could not be matched to any text">–</span>
+        {/if}
       </td>
       <td class="px-1 py-1 align-top text-center border-b" style="border-color: var(--outline);">
         {#if _val}<span style="color: var(--success);">✓</span>{:else}<span style="color: var(--outline);">—</span>{/if}
@@ -993,6 +1354,12 @@
       onCellEdit={(row, col, val) => saveItemField(row._index, col.id, val)}
       onPageJump={(p) => jumpPdfImmediate(p)}
       pageRefAccessor={(row) => itemPageRef(row._index, 'item_name')}
+      onCellHover={(rowIdx, colId) => {
+        if (!colId) { activeField = ''; return; }
+        activeField = `item:${rowIdx}:${colId}`;
+        const p = itemPageRef(rowIdx, colId);
+        if (p > 0) jumpPdf(p);
+      }}
       onRowMoveUp={(idx) => moveItem(idx, -1)}
       onRowMoveDown={(idx) => moveItem(idx, 1)}
       onRowDelete={(idx) => deleteItemRow(idx)}
@@ -1117,6 +1484,39 @@
 {/if}
 
 <style>
+  /* Job id in the status-bar meta line: long and not worth wrapping, but must
+     stay fully selectable/copyable (users paste it into bug reports) even
+     when visually clipped — hence ellipsis + a title with the full value. */
+  .job-id {
+    display: inline-block;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
+  }
+
+  /* Where a value was found on the page.
+     Two states on purpose. Every located value gets a faint mark, so a reviewer
+     can see at a glance which figures on this sheet the pipeline actually found
+     and which it did not — an absence is information. The row under the cursor
+     gets the solid one.
+     `pointer-events: none` matters: these sit over the page image, and a box
+     that swallowed clicks would make the page feel broken. */
+  .rv-box {
+    position: absolute;
+    pointer-events: none;
+    border-radius: 2px;
+    background: rgb(250 204 21 / 0.22);        /* amber wash, keeps ink legible */
+    outline: 1px solid rgb(202 138 4 / 0.45);
+    transition: background 90ms linear, outline-color 90ms linear;
+  }
+  .rv-box.on {
+    background: rgb(250 204 21 / 0.42);
+    outline: 2px solid var(--primary);
+    box-shadow: 0 0 0 3px rgb(37 99 235 / 0.18);
+  }
+
   .review-grid {
     display: grid;
     grid-template-columns: minmax(0, 1fr);

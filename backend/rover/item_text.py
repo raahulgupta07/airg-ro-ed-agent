@@ -10,6 +10,12 @@ layer so the pipeline can cross-check and gap-fill vision output cheaply. It is
 best-effort and fail-safe by contract: every public function returns a sensible
 empty/unchanged value on any error and never raises into the pipeline.
 """
+# `X | None` annotations are evaluated at def time before 3.10. The image runs
+# 3.12, but a dev box on the system python (3.9 on macOS) cannot even import this
+# module — which takes rover.pipeline_fast down with it and blocks the whole test
+# suite at collection. Deferring annotations costs nothing and keeps both alive.
+from __future__ import annotations
+
 import re
 
 # HS code like 1806.20.90 or 1806.20.90 00 (trailing 2-digit statistical suffix).

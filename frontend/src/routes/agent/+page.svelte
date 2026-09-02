@@ -3,7 +3,6 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { api, extractPDF, normalizeExtractResult } from '$lib/api';
   import type { PipelineKey } from '$lib/pipelineConfig';
-  import ChapterHeading from '$lib/components/ChapterHeading.svelte';
   import KpiCard from '$lib/components/KpiCard.svelte';
   import Button from '$lib/components/Button.svelte';
   import Badge from '$lib/components/Badge.svelte';
@@ -29,6 +28,10 @@
     progress: number;
     stepLabel: string;
     jobId: string;
+    // Id the SERVER publishes SSE events + status under. Persisted alongside
+    // jobId so a page refresh can reopen the stream; without it a refresh left
+    // the job running on the server while the UI stopped following it.
+    streamId: string;
     accuracy: number;
     itemsCount: number;
     cost: number;
@@ -61,7 +64,11 @@
   let selectedPipeline = $state<PipelineKey>('v11');
   // V12: typed-page engine — 'classic' (V7 Veritas) | 'presto' (V12 fast) | 'auto'
   let selectedEngine = $state<'auto' | 'presto' | 'classic' | 'atlas'>('atlas');
-  // Engine availability — super-admin controls this in Settings; default ATLAS only.
+  // Engine availability — super-admin controls this in Settings.
+  // ROSETTA and ROVER PRO were retired as extraction engines on 2 Aug 2026: both
+  // returned before every ATLAS stage, so a scanned declaration was read off
+  // whichever attached page happened to carry a text layer. ROSETTA was also the
+  // pre-selected default here, which is what an ordinary upload used.
   const ENGINE_OPTIONS: [string,string,string][] = [
     ['auto','AUTO','admin default'],['classic','ATLAS CLASSIC','Gen 1 · legacy'],
     ['presto','ATLAS V14-1 SWIFT','V14-1 · fast typed'],['atlas','ATLAS V14','V14 · flagship'],
@@ -108,7 +115,7 @@
         filename: q.filename, size: q.size, savedPath: q.savedPath,
         isDuplicate: q.isDuplicate, canReprocess: q.canReprocess,
         existingJob: q.existingJob, status: q.status, progress: q.progress,
-        stepLabel: q.stepLabel, jobId: q.jobId, accuracy: q.accuracy,
+        stepLabel: q.stepLabel, jobId: q.jobId, streamId: q.streamId, accuracy: q.accuracy,
         itemsCount: q.itemsCount, cost: q.cost, duration: q.duration, gateLog: q.gateLog,
       }));
       localStorage.setItem(QUEUE_KEY, JSON.stringify(serializable));
@@ -122,7 +129,9 @@
       if (!saved) return false;
       const parsed = JSON.parse(saved) as any[];
       if (!parsed.length) return false;
-      queue = parsed.map(q => ({ ...q, file: new File([], q.filename) }));
+      // `streamId` was added later — entries written by an older build don't
+      // carry it, so default it rather than leaving the field undefined.
+      queue = parsed.map(q => ({ ...q, streamId: q.streamId ?? '', file: new File([], q.filename) }));
       const selIdx = parseInt(localStorage.getItem(SEL_KEY) || '-1');
       selectedIndex = selIdx >= 0 && selIdx < queue.length ? selIdx : 0;
       // Load results for completed jobs
@@ -151,6 +160,61 @@
   const selectedJob = $derived(selectedFile?.jobId ? jobResults[selectedFile.jobId] : null);
   const doneCount = $derived(queue.filter(f => f.status === 'done').length);
   const totalCount = $derived(queue.length);
+  // Review takes the full width once a finished job is open and nothing is running.
+  const hideQueueForReview = $derived(!!selectedJob && selectedPipeline === 'v11' && !running);
+
+  // Nothing queued, nothing running, nothing open: the page has one job, which is
+  // to accept a PDF. The engine picker went when ATLAS became the only engine, the
+  // QUEUE panel spent its life reading "0 files", and the console sat idle telling
+  // the reader to drop a PDF next to it — three panels explaining an empty state
+  // that the drop zone already explains by existing.
+  const idle = $derived(!running && queue.length === 0 && !hideQueueForReview
+                        && !selectedJob && !streamingJobId);
+
+  // CLI panel is always alive on the right — idle shows a ready banner.
+  const cliLines = $derived(
+    agentLines.length ? agentLines : [
+      { text: `cityagent cli ready — engine ${ENGINE_OPTIONS.find(o => o[0] === selectedEngine)?.[1] ?? selectedEngine}`, type: 'muted' },
+      { text: 'tip: drop a PDF left, EXECUTE, watch it stream here', type: 'muted' },
+    ]
+  );
+
+  // ── Finished-state actions ─────────────────────────────────────────────
+  // When a run ends the queue row said "DONE 100%" and stopped there — the
+  // things a reviewer actually wants next (open it, take the marked PDF, take
+  // the spreadsheet) were each somewhere else, and the marked PDF was reachable
+  // only by typing its URL. This puts them where the run finished.
+  //
+  // The mark count is fetched rather than assumed: a scanned declaration
+  // produces no coordinates, so offering a "marked PDF" there would hand the
+  // user a 404. `available:false` hides the action and keeps the reason.
+  let markInfo = $state<Record<string, { available: boolean; marks: number; reason: string | null }>>({});
+  async function loadMarkInfo(jobId: string) {
+    if (!jobId || markInfo[jobId]) return;
+    try {
+      markInfo[jobId] = await api.markedPdfStatus(jobId);
+    } catch {
+      // Never block the finished state on this — worst case the button is absent.
+      markInfo[jobId] = { available: false, marks: 0, reason: null };
+    }
+  }
+  $effect(() => {
+    for (const e of queue) if (e.status === 'done' && e.jobId) loadMarkInfo(e.jobId);
+  });
+
+  async function takeExcel(entry: any) {
+    try {
+      await api.downloadJobExcel(entry.jobId, entry.filename);
+    } catch (e: any) {
+      agentLines = [...agentLines, { text: `excel download failed — ${e?.message ?? e}`, type: 'error' }];
+    }
+  }
+
+  // Recent jobs shown at the bottom of the merged terminal (click → history detail).
+  let recentJobs = $state<any[]>([]);
+  onMount(async () => {
+    try { recentJobs = (await api.listJobs(6)) ?? []; } catch {}
+  });
 
   // ── Upload ──
   async function handleFiles(e: Event) {
@@ -186,6 +250,7 @@
         progress: 0,
         stepLabel: '',
         jobId: '',
+        streamId: '',
         accuracy: 0,
         itemsCount: 0,
         cost: 0,
@@ -230,6 +295,111 @@
     runHttpPipeline(filesToProcess);
   }
 
+  // Follow one V11 run to a terminal state by polling the queue status route.
+  // Shared by the submit path and by the refresh-resume path so a job picked
+  // back up after a reload resolves exactly like a freshly-submitted one.
+  // `initialDelayMs` is shortened on resume: the run may already have finished
+  // while the page was away, and the row must not sit spinning for a full tick.
+  async function pollV11Job(queueIdx: number, streamId: string, dbJobId: string, initialDelayMs = 3000) {
+    let pollAttempts = 0;
+    const MAX_POLL = 600;  // 600 × 3s = 30 min ceiling
+    let terminal = false;
+    // A stream id can outlive its RQ record (or be a stale one restored from
+    // localStorage). Without this the row polls a dead id for the full 30 min
+    // and the user just watches a spinner.
+    let consecutiveFailures = 0;
+    const MAX_FAILURES = 20;  // ~60s of unbroken failures
+
+    while (pollAttempts < MAX_POLL) {
+      await new Promise(r => setTimeout(r, pollAttempts === 0 ? initialDelayMs : 3000));
+      pollAttempts++;
+      // STOP & CLEAR (or CLEAR) can drop the row mid-poll; writing to a gone
+      // index would resurrect a phantom queue entry.
+      if (!queue[queueIdx]) return;
+      try {
+        const headers: Record<string, string> = {};
+        if (auth.token) headers['Authorization'] = `Bearer ${auth.token}`;
+        const r = await fetch(`/api/extract-v11/status/${streamId}`, { headers });
+        if (!r.ok) throw new Error(`status ${r.status}`);
+        const txt = await r.text();
+        const statusRes = JSON.parse(txt);
+        consecutiveFailures = 0;
+
+        const sLabel = statusRes.status === 'queued'
+          ? `QUEUED (pos: ${statusRes.queue_position ?? '?'})`
+          : statusRes.status === 'started' ? 'EXTRACTING...'
+          : statusRes.status === 'finished' ? 'DONE'
+          : statusRes.status === 'failed' ? 'FAILED'
+          : (statusRes.status?.toUpperCase?.() || 'PROCESSING');
+        const sProgress = statusRes.status === 'started' ? 50
+          : statusRes.status === 'finished' ? 95
+          : statusRes.status === 'failed' ? 100
+          : 10;
+        queue[queueIdx] = { ...queue[queueIdx], stepLabel: sLabel, progress: sProgress };
+        queue = [...queue];
+
+        if (statusRes.status === 'finished') {
+          // Worker creates a fresh DB row inside V11._save_to_db.
+          // Prefer the worker's result.job_id (real data row); fall back to pre-created dbJobId.
+          const realJobId = statusRes?.result?.job_id || dbJobId;
+          const job = await api.getJob(realJobId);
+          jobResults[realJobId] = job;
+          jobResults = { ...jobResults };
+          queue[queueIdx] = {
+            ...queue[queueIdx],
+            status: 'done',
+            jobId: realJobId,
+            accuracy: job?.accuracy_percent || 0,
+            itemsCount: job?.items?.length || 0,
+            cost: job?.cost_usd || 0,
+            duration: job?.processing_time_seconds || 0,
+            progress: 100,
+            stepLabel: '',
+          };
+          queue = [...queue];
+          viewMode = 'results';
+          terminal = true;
+          break;
+        } else if (statusRes.status === 'failed') {
+          queue[queueIdx] = {
+            ...queue[queueIdx],
+            status: 'error',
+            progress: 100,
+            stepLabel: (statusRes.error || 'WORKER FAILED').slice(0, 80),
+          };
+          queue = [...queue];
+          terminal = true;
+          break;
+        }
+      } catch {
+        // network blip — keep polling, but give up on a status id that never
+        // answers so the row can't stay 'processing' forever
+        consecutiveFailures++;
+        if (consecutiveFailures >= MAX_FAILURES) {
+          queue[queueIdx] = {
+            ...queue[queueIdx],
+            status: 'error',
+            progress: 100,
+            stepLabel: 'LOST TRACK OF JOB — check /history',
+          };
+          queue = [...queue];
+          terminal = true;
+          break;
+        }
+      }
+    }
+
+    if (!terminal && pollAttempts >= MAX_POLL) {
+      queue[queueIdx] = {
+        ...queue[queueIdx],
+        status: 'error',
+        progress: 100,
+        stepLabel: 'TIMEOUT — check /history',
+      };
+      queue = [...queue];
+    }
+  }
+
   // ── HTTP pipeline path (V11 queue-based) ──
   // V11 is now QUEUE-BASED: /api/extract-v11 returns 202 + {job_id, stream_id}
   // and we poll /api/extract-v11/status/{stream_id} until finished/failed.
@@ -247,6 +417,9 @@
           : `${selectedPipeline.toUpperCase()} extracting...`,
         progress: selectedPipeline === 'v11' ? 5 : 30,
         jobId: preAllocId || entry.jobId,
+        // Persisted from the very first tick so a refresh during the upload —
+        // before the 202 comes back — still has an id to reconnect with.
+        streamId: preAllocId || entry.streamId,
       };
       queue = [...queue];
       selectedIndex = queueIdx;
@@ -260,80 +433,21 @@
           const streamId: string = submitRes?.stream_id || preAllocId;
           const dbJobId: string = submitRes?.job_id || preAllocId;
 
-          let pollAttempts = 0;
-          const MAX_POLL = 600;  // 600 × 3s = 30 min ceiling
-          let terminal = false;
+          // Listen on the id the SERVER published under. `streamingJobId` was
+          // set to our client-generated preAllocId before submitting, but the
+          // server may allocate its own stream id — and the worker emits to
+          // that one. When they differ the terminal subscribed to a channel
+          // nothing was ever published on, so a running job showed the idle
+          // banner and no log at all.
+          if (streamId && streamId !== streamingJobId) streamingJobId = streamId;
 
-          while (pollAttempts < MAX_POLL) {
-            await new Promise(r => setTimeout(r, 3000));
-            pollAttempts++;
-            try {
-              const headers: Record<string, string> = {};
-              if (auth.token) headers['Authorization'] = `Bearer ${auth.token}`;
-              const r = await fetch(`/api/extract-v11/status/${streamId}`, { headers });
-              const txt = await r.text();
-              const statusRes = JSON.parse(txt);
+          // Persist the server's stream id with the queue row. A refresh mid-run
+          // used to lose it entirely: the job kept running but the UI had no id
+          // to reopen the stream or the status poll with.
+          queue[queueIdx] = { ...queue[queueIdx], streamId, jobId: dbJobId || queue[queueIdx].jobId };
+          queue = [...queue];
 
-              const sLabel = statusRes.status === 'queued'
-                ? `QUEUED (pos: ${statusRes.queue_position ?? '?'})`
-                : statusRes.status === 'started' ? 'EXTRACTING...'
-                : statusRes.status === 'finished' ? 'DONE'
-                : statusRes.status === 'failed' ? 'FAILED'
-                : (statusRes.status?.toUpperCase?.() || 'PROCESSING');
-              const sProgress = statusRes.status === 'started' ? 50
-                : statusRes.status === 'finished' ? 95
-                : statusRes.status === 'failed' ? 100
-                : 10;
-              queue[queueIdx] = { ...queue[queueIdx], stepLabel: sLabel, progress: sProgress };
-              queue = [...queue];
-
-              if (statusRes.status === 'finished') {
-                // Worker creates a fresh DB row inside V11._save_to_db.
-                // Prefer the worker's result.job_id (real data row); fall back to pre-created dbJobId.
-                const realJobId = statusRes?.result?.job_id || dbJobId;
-                const job = await api.getJob(realJobId);
-                jobResults[realJobId] = job;
-                jobResults = { ...jobResults };
-                queue[queueIdx] = {
-                  ...queue[queueIdx],
-                  status: 'done',
-                  jobId: realJobId,
-                  accuracy: job?.accuracy_percent || 0,
-                  itemsCount: job?.items?.length || 0,
-                  cost: job?.cost_usd || 0,
-                  duration: job?.processing_time_seconds || 0,
-                  progress: 100,
-                  stepLabel: '',
-                };
-                queue = [...queue];
-                viewMode = 'results';
-                terminal = true;
-                break;
-              } else if (statusRes.status === 'failed') {
-                queue[queueIdx] = {
-                  ...queue[queueIdx],
-                  status: 'error',
-                  progress: 100,
-                  stepLabel: (statusRes.error || 'WORKER FAILED').slice(0, 80),
-                };
-                queue = [...queue];
-                terminal = true;
-                break;
-              }
-            } catch {
-              // network blip — keep polling
-            }
-          }
-
-          if (!terminal && pollAttempts >= MAX_POLL) {
-            queue[queueIdx] = {
-              ...queue[queueIdx],
-              status: 'error',
-              progress: 100,
-              stepLabel: 'TIMEOUT — check /history',
-            };
-            queue = [...queue];
-          }
+          await pollV11Job(queueIdx, streamId, dbJobId);
         } else {
           // ── Legacy sync path (V10 etc.): result returned directly ──
           const job = submitRes;
@@ -375,6 +489,14 @@
     // V11 queue-based path — no WebSocket. Stopping is not yet wired through
     // the queue. Mark UI as not running so the user can re-execute.
     running = false;
+  }
+
+  // Stop whatever is (or looks) running — including a stale job restored from
+  // localStorage after a reload — and wipe the queue back to the idle state.
+  function stopAndClear() {
+    running = false;
+    streamingJobId = null;
+    clearAll();
   }
 
   // ── Load job results ──
@@ -436,6 +558,35 @@
     }
   }
 
+  // Reconnect to a run that was still going when the page was refreshed.
+  // The job never stopped server-side — only the UI stopped following it, so
+  // progress froze and the queue row stayed 'processing' forever. Reopening the
+  // stream replays the whole log from Redis, and the status poll settles the row
+  // even when the run already finished while the page was away.
+  async function resumeInterruptedJob() {
+    const idx = queue.findIndex(q => q.status === 'processing' && (q.streamId || q.jobId));
+    if (idx < 0) return;
+    const entry = queue[idx];
+    const streamId = entry.streamId || entry.jobId;
+
+    selectedIndex = idx;
+    viewMode = 'pipeline';
+    queue[idx] = { ...queue[idx], stepLabel: 'RECONNECTING — following job...' };
+    queue = [...queue];
+
+    if (selectedPipeline === 'v11') streamingJobId = streamId;
+    running = true;
+    try {
+      // Short first delay (not 0): if the run already finished, the status check
+      // resolves the row almost immediately, but the terminal still gets a
+      // moment to replay the historical events before the stream is closed.
+      await pollV11Job(idx, streamId, entry.jobId || streamId, 1500);
+    } finally {
+      running = false;
+      streamingJobId = null;
+    }
+  }
+
   // On mount: restore queue (V11 SSE handles live updates).
   onMount(async () => {
     // Load which engines the admin enabled + the default selection.
@@ -454,7 +605,7 @@
       for (const entry of queue) {
         if (entry.status === 'processing') {
           // Mark all stale processing entries — they'll be re-checked via poll if they have jobId
-          if (!entry.jobId) {
+          if (!entry.jobId && !entry.streamId) {
             entry.status = 'error';
             entry.stepLabel = 'INTERRUPTED — re-upload to retry';
             changed = true;
@@ -472,13 +623,17 @@
         // Fall through to check DB for in-progress jobs
       }
 
-      // V11 SSE handles live status; nothing to poll on restore.
       // Load results for completed items
       for (const entry of queue) {
         if (entry.status === 'done' && entry.jobId && !jobResults[entry.jobId]) {
           loadJobResult(entry.jobId);
         }
       }
+
+      // Persistence must be live before the resume awaits anything, otherwise a
+      // second refresh during the resume would restore the pre-resume snapshot.
+      mounted = true;
+      resumeInterruptedJob();
       return;
     }
 
@@ -503,6 +658,10 @@
               progress: 50,
               stepLabel: 'PROCESSING...',
               jobId: job.job_id,
+              // The DB row knows nothing about the SSE channel the worker
+              // published on, so leave it blank rather than opening a stream
+              // on an id that was never a stream id.
+              streamId: '',
               accuracy: 0,
               itemsCount: 0,
               cost: 0,
@@ -539,431 +698,356 @@
 <input type="file" accept=".pdf" multiple class="hidden" bind:this={fileInput} onchange={handleFiles} />
 
 <!-- ═══════════════════════════════════════════════════════════ -->
-<!-- STATE 1: EMPTY — Full-width hero drop zone                -->
+<!-- MERGED SINGLE PAGE — light controls left · CLI-only right  -->
 <!-- ═══════════════════════════════════════════════════════════ -->
-{#if queue.length === 0}
-  <div class="flex flex-col items-center justify-center" style="min-height: calc(100vh - 180px);">
-    <!-- Smart Router info card (auto-routing, no choice exposed) -->
-    <div class="cl-panel w-full max-w-4xl mb-5">
-      <div class="cl-bd">
-      <div class="flex items-start gap-3 flex-wrap">
-        <span class="material-symbols-outlined" style="color: var(--primary); font-size: 22px;">auto_awesome</span>
-        <div class="flex-1 min-w-[200px]">
-          <div class="font-serif text-base" style="color: var(--on-surface); font-weight: 500;">Atlas Router <span style="color: var(--on-surface-muted); font-weight: 400;">· auto</span></div>
-          <div class="text-sm mt-1" style="color: var(--on-surface-muted); line-height: 1.5;">
-            Auto-classifies each page → PRINTED runs Atlas Swift, INKED runs Atlas Vision, EXTRA attachments skipped. Best for any doc — printed, inked, or mixed.
-          </div>
-        </div>
-        <div class="flex gap-4 text-xs" style="color: var(--on-surface-muted);">
-          <div class="flex items-center gap-1"><span class="material-symbols-outlined text-sm" style="color: var(--primary);">payments</span>$0.08–0.40</div>
-          <div class="flex items-center gap-1"><span class="material-symbols-outlined text-sm" style="color: var(--primary);">schedule</span>60–150s</div>
-        </div>
-      </div>
-      <!-- Engine selector -->
-      <div class="mt-3 pt-3" style="border-top: 1px solid var(--line-2);">
-        <div class="text-[11px] uppercase tracking-wider mb-1.5" style="color: var(--on-surface-muted);">Engine</div>
-        <div class="flex gap-2 flex-wrap">
-          {#each visibleEngines as opt}
-            <button
-              type="button"
-              class="px-3 py-1.5 cursor-pointer transition-all text-left"
-              style="border: 1.5px solid {selectedEngine === opt[0] ? 'var(--primary)' : 'var(--line)'}; border-radius: var(--radius-md); background: {selectedEngine === opt[0] ? 'var(--primary-tint)' : 'var(--surface-container-lowest)'}; {selectedEngine === opt[0] ? 'box-shadow: 0 0 0 3px var(--primary-tint);' : ''}"
-              onclick={() => (selectedEngine = opt[0] as 'auto' | 'presto' | 'classic' | 'atlas')}>
-              <div class="flex items-center gap-1.5">
-                <div class="text-xs font-bold" style="color: var(--on-surface);">{opt[1]}</div>
-                {#if selectedEngine === opt[0]}<span class="pill clay" style="padding: 1px 7px; font-size: 9px;">SELECTED</span>{/if}
-              </div>
-              <div class="text-[10px]" style="color: var(--on-surface-muted);">{opt[2]}</div>
+
+<div class={(hideQueueForReview || idle) ? 'grid grid-cols-1 gap-4' : 'grid grid-cols-1 xl:grid-cols-[minmax(660px,64%)_1fr] gap-4'} style="overflow-x: hidden;">
+
+  <!-- ═══════════ LEFT: merged control terminal (light) ═══════════ -->
+  {#if !hideQueueForReview}
+  <div class="rv-term">
+    <div class="rv-tbar">
+      <span class="rv-dots"><span style="background:var(--error)"></span><span style="background:var(--warning)"></span><span style="background:var(--success)"></span></span>
+      cityagent — agent
+      <span class="flex-1"></span>
+      <span>{doneCount}/{totalCount}</span>
+    </div>
+    <div class="rv-body">
+     <div class="rv-work {idle ? 'stack' : ''}">
+      <!-- rail: add work, run it -->
+      <div class="rv-rail">
+      <!-- One engine, no choice to make. The picker reappears by itself if a
+           second engine is ever enabled again — the list is server-driven. -->
+      {#if visibleEngines.length > 1}
+        <div><span class="rv-p">❯</span> engine <span class="rv-cmt"># applies to whole queue</span></div>
+        <div class="rv-engines">
+          {#each visibleEngines as opt, ei}
+            <button type="button" class="rv-eng {selectedEngine === opt[0] ? 'sel' : ''}"
+                    onclick={() => (selectedEngine = opt[0] as 'auto' | 'presto' | 'classic' | 'atlas')}>
+              <span class="rv-k">[{ei + 1}]</span><b>{opt[1]}</b>
+              {#if selectedEngine === opt[0]}<span class="rv-mark">●</span>{/if}
+              <div class="rv-d">{opt[2]}</div>
             </button>
           {/each}
         </div>
+        <div class="rv-rule">── DROP ──────────────────────────────────</div>
+      {/if}
+
+      <button type="button" class="rv-drop {idle ? 'big' : ''}" onclick={() => fileInput.click()}>
+        <span class="rv-arr">⇪</span>
+        <span class="text-left">
+          <b>drop customs PDFs here</b> <span class="rv-cmt">or click to browse</span><br/>
+          <span class="rv-sub">.pdf ≤ 50 MB · multiple ok{idle ? '' : ' · lands in QUEUE below'}</span>
+        </span>
+      </button>
+
+      <div class="rv-exec">
+        {#if running}
+          <button type="button" class="rv-btn danger" onclick={stopPipeline}>■ STOP</button>
+          <button type="button" class="rv-btn danger" onclick={stopAndClear}>■ STOP &amp; CLEAR</button>
+        {:else}
+          {#if queue.some(f => f.status === 'processing')}
+            <button type="button" class="rv-btn danger" onclick={stopAndClear}>■ STOP &amp; CLEAR</button>
+          {/if}
+          {#if queue.some(f => f.status === 'queued' || f.status === 'duplicate')}
+            <button type="button" class="rv-btn pri" onclick={startPipeline}>▶ EXECUTE ({queue.filter(f => f.status === 'queued' || f.status === 'duplicate').length})</button>
+          {/if}
+          {#if queue.length > 0}
+            <button type="button" class="rv-btn" onclick={clearAll}>CLEAR</button>
+          {/if}
+        {/if}
       </div>
-      </div>
-    </div>
-    <!-- Big drop zone -->
-    <button
-      class="cl-drop w-full max-w-4xl group"
-      style="padding: 64px;"
-      onclick={() => fileInput.click()}
-    >
-      <div class="text-center">
-        <span class="material-symbols-outlined" style="font-size: 4rem; color: var(--primary);">cloud_upload</span>
-        <div class="mt-4 font-serif text-2xl" style="color: var(--on-surface); font-weight: 500; letter-spacing: -0.01em;">
-          Drop customs PDFs here
+      </div><!-- /rv-rail -->
+
+      <!-- runs: what is queued and what has already been read -->
+      <div class="rv-runs">
+      <!-- The queue panel only ever had something to say once a file was in it.
+           Empty, it was a heading and a line of text restating the drop zone. -->
+      {#if queue.length > 0}
+        <div class="rv-rule">── QUEUE ── {totalCount} file{totalCount === 1 ? '' : 's'} ────────────────────</div>
+        <table class="rv-q">
+          <tbody>
+          {#each queue as entry, i}
+            <tr class="rv-row {selectedIndex === i ? 'sel' : ''}" onclick={() => selectFile(i)}>
+              <td class="rv-fn">{entry.filename}</td>
+              <td class="rv-sz">{(entry.size / 1048576).toFixed(1)}M</td>
+              <td>
+                {#if entry.status === 'processing'}
+                  <span class="rv-st p">◐ PROCESSING</span>
+                  <span class="rv-bar"><i style="width:{Math.max(entry.progress || 0, 8)}%"></i></span>
+                {:else if entry.status === 'duplicate'}
+                  <span class="rv-st d">⧉ DUPLICATE</span>
+                {:else if entry.status === 'done'}
+                  <span class="rv-st ok">✓ DONE{entry.accuracy ? ' ' + entry.accuracy.toFixed(1) + '%' : ''}</span>
+                {:else if entry.status === 'error'}
+                  <span class="rv-st er">✗ ERROR</span>
+                {:else if entry.status === 'stopped'}
+                  <span class="rv-st er">■ STOPPED</span>
+                {:else}
+                  <span class="rv-st q">· QUEUED</span>
+                {/if}
+              </td>
+              <td class="rv-act">
+                {#if entry.status === 'duplicate'}
+                  <button type="button" onclick={(e) => { e.stopPropagation(); viewDuplicateResult(i); }}>view</button>
+                  <button type="button" class="pri" onclick={(e) => { e.stopPropagation(); selectedIndex = i; showReprocessConfirm = true; }}>re-run</button>
+                {/if}
+                {#if entry.status !== 'processing'}
+                  <button type="button" aria-label="Remove from queue"
+                          onclick={(e) => { e.stopPropagation(); queue = queue.filter((_, x) => x !== i); if (selectedIndex === i) selectedIndex = -1; }}>✕</button>
+                {/if}
+              </td>
+            </tr>
+            {#if entry.status === 'done' && entry.jobId}
+              {@const mi = markInfo[entry.jobId]}
+              <tr class="rv-expand"><td colspan="4">
+                <div class="rv-done">
+                  <button type="button" class="rv-btn pri"
+                          onclick={(e) => { e.stopPropagation(); selectFile(i); }}>OPEN REVIEW</button>
+                  {#if mi?.available}
+                    <a class="rv-btn" href={api.markedPdfUrl(entry.jobId)} target="_blank"
+                       rel="noopener" onclick={(e) => e.stopPropagation()}>⬇ MARKED PDF ({mi.marks})</a>
+                  {/if}
+                  <button type="button" class="rv-btn"
+                          onclick={(e) => { e.stopPropagation(); takeExcel(entry); }}>⬇ EXCEL</button>
+                </div>
+                <div class="rv-batch">
+                  {entry.duration ? entry.duration.toFixed(1) + 's · ' : ''}{entry.cost ? '$' + entry.cost.toFixed(4) + ' · ' : ''}{entry.itemsCount ?? 0} items{mi?.available ? ' · ' + mi.marks + ' values marked on the PDF' : ''}
+                  {#if mi && !mi.available && mi.reason}
+                    <br/><span class="rv-cmt">{mi.reason}</span>
+                  {/if}
+                </div>
+              </td></tr>
+            {/if}
+            {#if entry.status === 'duplicate' && selectedIndex === i}
+              {@const ej = entry.existingJob}
+              <tr class="rv-expand"><td colspan="4">
+                └ <b>already processed</b> {ej?.created_at?.split(' ')[0] ?? '—'} · acc {ej?.accuracy_percent?.toFixed(1) ?? '—'}% · {ej?.total_pages ?? '—'} pg · ${ej?.cost_usd?.toFixed(3) ?? '—'}
+                <span class="rv-cmt"> — view = free · re-run ≈ $0.04, old result kept</span>
+                {#if showReprocessConfirm}
+                  <div class="rv-confirm">
+                    re-run full pipeline (~60s, ~$0.04)?
+                    <button type="button" class="danger"
+                            onclick={() => { showReprocessConfirm = false; entry.status = 'queued'; queue = [...queue]; startPipeline(); }}>yes, re-run</button>
+                    <button type="button" onclick={() => (showReprocessConfirm = false)}>cancel</button>
+                  </div>
+                {/if}
+              </td></tr>
+            {/if}
+          {/each}
+          </tbody>
+        </table>
+      {/if}
+
+
+      {#if batchSummary}
+        <div class="rv-rule">── BATCH ─────────────────────────────────</div>
+        <div class="rv-batch">
+          done {batchSummary.completed}/{batchSummary.total} · fail {batchSummary.failed}{batchSummary.stopped > 0 ? ' · stopped ' + batchSummary.stopped : ''} · avg acc {batchSummary.avg_accuracy}% · items {batchSummary.total_items} · ${batchSummary.total_cost}
         </div>
-        <div class="mt-1.5 text-sm" style="color: var(--on-surface-muted);">
-          or click to browse
+      {/if}
+
+      {#if recentJobs.length > 0}
+        <div class="rv-head">
+          <span class="rv-rule" style="margin:0;">── RECENT ── last {recentJobs.length} ─────────────────</span>
+          <a href="/history" class="rv-all">view all →</a>
         </div>
-        <div class="mt-5 flex items-center justify-center gap-3 text-xs" style="color: var(--on-surface-subtle);">
-          <span>Single or multiple files</span>
-          <span>·</span>
-          <span>.pdf up to 50 MB each</span>
-          <span>·</span>
-          <span>Batch processing supported</span>
-        </div>
-      </div>
-    </button>
+        <table class="rv-q">
+          <tbody>
+          {#each recentJobs as rj}
+            <tr class="rv-row" onclick={() => { window.location.href = '/history?job=' + rj.job_id; }}>
+              <td class="rv-fn">{rj.pdf_name}</td>
+              <td class="rv-sz">{rj.created_at?.split(' ')[0] ?? ''}</td>
+              <td><span class="rv-st" style="color: {getAccuracyColor(rj.accuracy_percent ?? 0)};">{(rj.accuracy_percent ?? 0).toFixed(1)}%</span></td>
+              <td><span class="rv-st {rj.review_status === 'approved' ? 'ok' : 'd'}">{rj.review_status === 'approved' ? '✓ APPROVED' : (rj.review_status ?? rj.status ?? '').toUpperCase()}</span></td>
+            </tr>
+          {/each}
+          </tbody>
+        </table>
+      {/if}
 
-
-    <!-- Discovery UI removed -->
-
-
-    <!-- Recent jobs below -->
-    <div class="w-full max-w-4xl mt-6">
-      <RecentJobs onselect={(jobId) => { loadJobResult(jobId); selectedIndex = -2; }} />
+      </div><!-- /rv-runs -->
+     </div><!-- /rv-work -->
     </div>
   </div>
+  {/if}
 
-<!-- ═══════════════════════════════════════════════════════════ -->
-<!-- STATE 2: FILES LOADED — Split layout                      -->
-<!-- ═══════════════════════════════════════════════════════════ -->
-{:else}
-  <ChapterHeading
-    icon="description"
-    title="DOCUMENT_INTELLIGENCE"
-    subtitle="Upload customs PDFs and extract structured data"
-    question="Drop one or multiple PDFs to start extraction"
-  />
-
-  {@const _hideQueueForReview = !!selectedJob && selectedPipeline === 'v11' && !running}
-  <div class={_hideQueueForReview ? 'grid grid-cols-1 gap-4' : 'grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-4'} style="min-height: calc(100vh - 280px); overflow-x: hidden;">
-
-    <!-- ═══════════ LEFT PANEL ═══════════ -->
-    {#if !_hideQueueForReview}
-    <div class="flex flex-col">
-      <!-- Smart Router info banner (compact for left panel) -->
-      <div class="mb-3 px-3 py-2 flex items-center gap-2"
-           style="background: var(--primary-tint); border: 1px solid var(--line); border-radius: var(--radius-md);">
-        <span class="material-symbols-outlined text-sm" style="color: var(--primary);">auto_awesome</span>
-        <span class="text-xs font-medium" style="color: var(--on-surface);">Atlas Router</span>
-        <span class="text-[11px] flex-1" style="color: var(--on-surface-muted);">auto · PRINTED→Atlas Swift · INKED→Atlas Vision</span>
-        <span class="text-[11px]" style="color: var(--on-surface-muted);">$0.08–0.40</span>
-      </div>
-      <!-- V12 engine selector: typed-page extraction engine -->
-      <div class="mb-3">
-        <div class="text-[10px] uppercase tracking-wider mb-1" style="color: var(--on-surface-muted);">Typed-page engine</div>
-        <div class="flex gap-1">
-          {#each visibleEngines as opt}
-            <button
-              class="flex-1 px-2 py-1.5 cursor-pointer transition-all text-center"
-              style="border: 1.5px solid {selectedEngine === opt[0] ? 'var(--primary)' : 'var(--line)'}; border-radius: var(--radius-md); background: {selectedEngine === opt[0] ? 'var(--primary-tint)' : 'var(--surface-container-lowest)'}; {selectedEngine === opt[0] ? 'box-shadow: 0 0 0 3px var(--primary-tint);' : ''}"
-              onclick={() => (selectedEngine = opt[0] as 'auto' | 'presto' | 'classic' | 'atlas')}>
-              <div class="text-[11px] font-bold" style="color: var(--on-surface);">{opt[1]}</div>
-              <div class="text-[9px]" style="color: var(--on-surface-muted);">{opt[2]}</div>
-            </button>
-          {/each}
-        </div>
-      </div>
-      <!-- Add more / New job buttons -->
-      <div class="flex gap-2 mb-3">
-        <button
-          class="cl-drop flex-1"
-          style="padding: 10px 12px;"
-          onclick={() => fileInput.click()}
-        >
-          <div class="flex items-center justify-center gap-1.5">
-            <span class="material-symbols-outlined text-base" style="color: var(--primary);">add_circle</span>
-            <span class="text-xs font-medium" style="color: var(--on-surface);">Add more PDFs</span>
+  <!-- ═══════════ RIGHT: CLI only (review takes over full width when done) ═══════════ -->
+  <!-- Hidden while idle. An empty console whose only content is a tip telling you
+       to drop a PDF is half the screen spent restating the drop zone. It comes
+       back the moment there is something to stream. -->
+  {#if !idle}
+  <div style="min-width: 0; overflow-x: hidden;">
+    {#if hideQueueForReview && selectedJob}
+      {#if selectedPipeline === 'v11'}
+        <ReviewSplitView
+          jobId={selectedJob.job_id}
+          job={selectedJob}
+          onApprove={() => { reviewToast('Approved'); }}
+          onReject={() => { reviewToast('Rejected'); }}
+          onClose={() => { reviewToast('Closed'); }}
+        />
+      {:else}
+        <ResultAccordion job={selectedJob} defaultOpen={true}
+          pipelineSteps={terminalSteps}
+          bind:pipelineCollapsed={terminalCollapsed}
+          agentLines={agentLines}
+          agentSummary={terminalSummary}
+          vizSteps={vizSteps}
+          vizSummary={vizSummary}
+        />
+      {/if}
+    {:else}
+      {#if viewMode === 'pipeline'}
+        <div class="mb-2 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-bold uppercase" style="color: var(--on-surface);">Processing: {selectedFile?.filename ?? ''}</span>
+            <span class="pill clay">RUNNING</span>
           </div>
-        </button>
-        <button
-          class="px-3 py-2.5 cursor-pointer press-effect transition-colors"
-          style="background: var(--primary); color: #fff; border-radius: var(--radius-md); box-shadow: var(--shadow-xs);"
-          onclick={clearAll}
-        >
-          <div class="flex items-center justify-center gap-1.5">
-            <span class="material-symbols-outlined text-base">restart_alt</span>
-            <span class="text-xs font-medium">New job</span>
-          </div>
-        </button>
-      </div>
-
-      <!-- Queue -->
-      <div class="cl-panel flex-1 flex flex-col">
-        <div class="cl-hd">
-          <span class="dot">◉</span>Queue
-          <span class="ct">{doneCount}/{totalCount}</span>
-        </div>
-
-        <!-- Queue list -->
-        <div class="flex-1 overflow-y-auto custom-scrollbar" style="max-height: 400px; background: var(--surface-container-lowest);">
-          {#each queue as entry, i}
-            <QueueItem
-              filename={entry.filename}
-              size={entry.size}
-              items={entry.itemsCount}
-              accuracy={entry.accuracy}
-              status={entry.status}
-              progress={entry.progress}
-              stepLabel={entry.stepLabel}
-              selected={selectedIndex === i}
-              onclick={() => selectFile(i)}
-            />
-          {/each}
-        </div>
-
-        <!-- Pipeline Mode -->
-        <div class="px-3 pt-2 flex items-center gap-2" style="border-top: 1px solid var(--line-2);">
-          <span class="pill ok" style="padding: 2px 8px; font-size: 9px;">CITY AGENT ROVER</span>
-          <span class="text-[7px] font-mono" style="color: var(--on-surface-subtle);">SMART EXTRACTION · HD VISION</span>
-        </div>
-
-        <!-- Actions -->
-        <div class="p-2 flex gap-2">
           {#if running}
             <Button variant="danger" size="sm" onclick={stopPipeline}>
               <span class="flex items-center gap-1">
                 <span class="material-symbols-outlined text-xs">stop_circle</span> STOP
               </span>
             </Button>
-          {:else}
-            {#if queue.some(f => f.status === 'queued' || f.status === 'duplicate')}
-              <Button variant="primary" size="sm" onclick={startPipeline}>
-                <span class="flex items-center gap-1">
-                  <span class="material-symbols-outlined text-xs">play_arrow</span> EXECUTE ({queue.filter(f => f.status === 'queued' || f.status === 'duplicate').length})
-                </span>
-              </Button>
-            {/if}
-            <Button variant="dark" size="sm" onclick={clearAll}>CLEAR</Button>
           {/if}
         </div>
-      </div>
-
-      <!-- Duplicate actions for selected file -->
-      {#if selectedFile?.status === 'duplicate'}
-        {@const ej = selectedFile.existingJob}
-        <div class="cl-panel mt-2">
-          <div class="cl-hd">
-            <span class="dot" style="color: var(--warning);">◉</span>This Document Was Already Processed
-          </div>
-          <div class="cl-bd space-y-3">
-            <!-- Previous result info -->
-            <div class="p-2" style="border: 1px solid var(--line-2); border-radius: var(--radius-sm); background: var(--surface-container-low);">
-              <div class="text-[9px] font-bold uppercase" style="color: var(--on-surface-subtle);">PREVIOUS EXTRACTION</div>
-              <div class="mt-1 grid grid-cols-3 gap-2 text-[10px]" style="color: var(--on-surface);">
-                <div>Processed: <span class="font-bold">{ej?.created_at?.split(' ')[0] ?? '—'}</span></div>
-                <div>By: <span class="font-bold">{ej?.username ?? '—'}</span></div>
-                <div>Accuracy: <span class="font-bold" style="color: var(--success);">{ej?.accuracy_percent?.toFixed(1) ?? '—'}%</span></div>
-                <div>Items: <span class="font-bold">{ej?.items?.length ?? '—'}</span></div>
-                <div>Pages: <span class="font-bold">{ej?.total_pages ?? '—'}</span></div>
-                <div>Cost: <span class="font-bold" style="color: var(--warning);">${ej?.cost_usd?.toFixed(3) ?? '—'}</span></div>
-              </div>
-            </div>
-
-            <!-- Action buttons -->
-            <div class="text-[10px] font-bold uppercase" style="color: var(--on-surface);">What would you like to do?</div>
-            <div class="flex gap-2">
-              <button class="cl-btn sm flex items-center gap-1"
-                onclick={() => viewDuplicateResult(selectedIndex)}>
-                <span class="material-symbols-outlined text-xs">visibility</span> VIEW RESULTS (free)
-              </button>
-              <button class="cl-btn sm flex items-center gap-1"
-                style="border-color: var(--warning); color: var(--warning);"
-                onclick={() => showReprocessConfirm = true}>
-                <span class="material-symbols-outlined text-xs">refresh</span> RE-PROCESS (~$0.04)
-              </button>
-              <button class="cl-btn sm flex items-center gap-1"
-                style="color: var(--on-surface-muted);"
-                onclick={() => { queue = queue.filter((_, i) => i !== selectedIndex); selectedIndex = -1; }}>
-                <span class="material-symbols-outlined text-xs">close</span> CANCEL
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Re-process confirmation dialog -->
-        {#if showReprocessConfirm}
-          <div class="mt-2 p-3" style="border: 1px solid var(--error); border-radius: var(--radius-md); background: var(--error-soft);">
-            <div class="text-xs font-bold uppercase" style="color: var(--error);">Are you sure you want to re-process?</div>
-            <div class="mt-2 text-[10px] space-y-1" style="color: var(--on-surface);">
-              <div>• Run the full pipeline again (~60s)</div>
-              <div>• Cost approximately $0.04-0.15</div>
-              <div>• Creates a new job (old results kept)</div>
-            </div>
-            <div class="flex gap-2 mt-3">
-              <button class="cl-btn sm flex items-center gap-1"
-                style="background: var(--error); color: white; border-color: var(--error);"
-                onclick={() => { showReprocessConfirm = false; selectedFile.status = 'queued'; queue = [...queue]; startPipeline(); }}>
-                <span class="material-symbols-outlined text-xs">check</span> YES, RE-RUN
-              </button>
-              <button class="cl-btn sm"
-                style="color: var(--on-surface-muted);"
-                onclick={() => showReprocessConfirm = false}>
-                CANCEL
-              </button>
-            </div>
-          </div>
-        {/if}
       {/if}
 
-      <!-- Batch Summary -->
-      {#if batchSummary}
-        <div class="cl-panel mt-3">
-          <div class="cl-hd"><span class="dot">◉</span>Batch Summary</div>
-          <div class="cl-bd space-y-1 text-[10px] font-mono">
-            <div>COMPLETED: {batchSummary.completed}/{batchSummary.total}</div>
-            <div>FAILED: {batchSummary.failed}</div>
-            {#if batchSummary.stopped > 0}<div style="color: var(--warning);">STOPPED: {batchSummary.stopped}</div>{/if}
-            <div>AVG ACCURACY: {batchSummary.avg_accuracy}%</div>
-            <div>TOTAL ITEMS: {batchSummary.total_items}</div>
-            <div>TOTAL COST: ${batchSummary.total_cost}</div>
-          </div>
+      {#if loadError && !selectedJob}
+        <div class="mb-2 px-3 py-2 flex items-center gap-3" style="border: 1px solid var(--error); border-radius: var(--radius-md); background: var(--error-soft);">
+          <span class="text-[11px] font-mono" style="color: var(--error);">failed to load results — {loadError}</span>
+          {#if selectedFile?.jobId}
+            <button class="cl-btn sm" style="border-color: var(--primary); color: var(--primary);"
+              onclick={() => { loadError = ''; loadJobResult(selectedFile.jobId); }}>RETRY</button>
+            <a href="/history?job={selectedFile.jobId}" class="cl-btn sm no-underline">HISTORY →</a>
+          {/if}
+        </div>
+      {:else if loadingResult && !selectedJob}
+        <div class="mb-2 px-3 py-2 flex items-center gap-2" style="border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-container-lowest);">
+          <div class="agent-spinner" style="width: 14px; height: 14px; border-color: var(--secondary); border-top-color: transparent;"></div>
+          <span class="text-[11px] font-mono" style="color: var(--on-surface-muted);">loading results…</span>
         </div>
       {/if}
 
-    </div>
+      <AgentTerminal
+        filename={selectedFile?.filename ?? ''}
+        lines={cliLines}
+        running={running}
+        summary={terminalSummary}
+        jobId={selectedPipeline === 'v11' ? streamingJobId : null}
+        defaultHeight={520}
+        light
+      />
     {/if}
-
-    <!-- ═══════════ RIGHT PANEL ═══════════ -->
-    <div style="min-width: 0; overflow-x: hidden;">
-      {#if viewMode === 'pipeline'}
-        <!-- Pipeline progress for current file -->
-        <div class="mb-4 flex items-center justify-between">
-          <div class="flex items-center gap-2">
-            <span class="text-xs font-bold uppercase" style="color: var(--on-surface);">Processing: {selectedFile?.filename ?? ''}</span>
-            <span class="pill clay">RUNNING</span>
-            <span class="pill ok">CITY AGENT ROVER</span>
-          </div>
-          {#if running}
-            <Button variant="danger" size="sm" onclick={stopPipeline}>
-              <span class="flex items-center gap-1">
-                <span class="material-symbols-outlined text-xs">stop_circle</span> STOP_PIPELINE
-              </span>
-            </Button>
-          {/if}
-        </div>
-        <!-- Pipeline Flow Visualizer -->
-        {#if vizSteps.length > 0}
-          <div class="mb-3">
-            <PipelineVisualizer
-              bind:steps={vizSteps}
-              filename={selectedFile?.filename ?? ''}
-              complete={terminalComplete}
-              summary={vizSummary}
-            />
-          </div>
-        {/if}
-
-        <!-- Detailed CLI Terminal -->
-        <AgentTerminal
-          filename={selectedFile?.filename ?? ''}
-          lines={agentLines}
-          running={running}
-          summary={terminalSummary}
-          jobId={selectedPipeline === 'v11' ? streamingJobId : null}
-        />
-
-      {:else if viewMode === 'results' || selectedJob || loadingResult || loadError}
-        <!-- Results for selected file -->
-        {#if loadError && !selectedJob}
-          <div class="flex flex-col items-center gap-4 p-12 justify-center">
-            <span class="material-symbols-outlined text-3xl" style="color: var(--error);">error</span>
-            <span class="text-sm font-bold uppercase" style="color: var(--on-surface);">FAILED TO LOAD RESULTS</span>
-            <span class="text-[10px] font-mono" style="color: var(--on-surface-muted);">{loadError}</span>
-            <div class="flex gap-3">
-              {#if selectedFile?.jobId}
-                <button class="cl-btn sm"
-                  style="border-color: var(--primary); color: var(--primary);"
-                  onclick={() => { loadError = ''; loadJobResult(selectedFile.jobId); }}>
-                  RETRY
-                </button>
-                <a href="/history?job={selectedFile.jobId}" class="cl-btn sm no-underline">
-                  VIEW IN HISTORY →
-                </a>
-              {/if}
-            </div>
-          </div>
-        {:else if loadingResult && !selectedJob}
-          <div class="flex flex-col items-center gap-4 p-12 justify-center">
-            <div class="agent-spinner" style="border-color: var(--secondary); border-top-color: transparent;"></div>
-            <span class="text-sm font-bold uppercase" style="color: var(--on-surface);">LOADING RESULTS...</span>
-          </div>
-        {:else if selectedJob}
-          {#if selectedPipeline === 'v11'}
-            <ReviewSplitView
-              jobId={selectedJob.job_id}
-              job={selectedJob}
-              onApprove={() => { reviewToast('Approved'); }}
-              onReject={() => { reviewToast('Rejected'); }}
-              onClose={() => { reviewToast('Closed'); }}
-            />
-          {:else}
-            <ResultAccordion job={selectedJob} defaultOpen={true}
-              pipelineSteps={terminalSteps}
-              bind:pipelineCollapsed={terminalCollapsed}
-              agentLines={agentLines}
-              agentSummary={terminalSummary}
-              vizSteps={vizSteps}
-              vizSummary={vizSummary}
-            />
-          {/if}
-        {/if}
-
-      {:else if batchSummary}
-        <!-- Batch complete: show all results as accordions -->
-        <div class="mb-4">
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-            <KpiCard title="TOTAL" value="{batchSummary.total}" icon="folder" accent="var(--info)" subtitle="PDFs processed" />
-            <KpiCard title="AVG ACCURACY" value="{batchSummary.avg_accuracy}%" progress={batchSummary.avg_accuracy} accent={getAccuracyColor(batchSummary.avg_accuracy)} />
-            <KpiCard title="TOTAL ITEMS" value="{batchSummary.total_items}" icon="inventory_2" accent="var(--success)" />
-            <KpiCard title="TOTAL COST" value="${batchSummary.total_cost}" icon="payments" accent="var(--info)" />
-          </div>
-        </div>
-
-        {#each queue.filter(f => f.status === 'done' && f.jobId) as entry}
-          <ResultAccordion job={jobResults[entry.jobId]} defaultOpen={false} />
-        {/each}
-
-      {:else if selectedFile?.status === 'error'}
-        <!-- Error state -->
-        <div class="flex flex-col items-center justify-center h-64">
-          <span class="material-symbols-outlined text-4xl" style="color: var(--error);">error</span>
-          <div class="mt-2 text-sm font-bold uppercase" style="color: var(--on-surface);">{selectedFile.filename}</div>
-          <div class="text-xs mt-1 font-mono" style="color: var(--error);">
-            {selectedFile.stepLabel || 'FAILED — pipeline error'}
-          </div>
-          <div class="mt-3 text-[10px] uppercase" style="color: var(--on-surface-subtle);">
-            Clear queue and re-upload to retry
-          </div>
-        </div>
-
-      {:else if selectedFile}
-        <!-- Selected file waiting — show PDF preview -->
-        {#if selectedFile.savedPath}
-          {@const previewFilename = selectedFile.savedPath.split('/').pop()}
-          <div class="cl-panel">
-            <div class="cl-hd">
-              <span class="dot">◉</span>PDF Preview — {selectedFile.filename}
-              <span class="ct">
-                {selectedFile.status === 'queued' ? 'Click EXECUTE to process' : selectedFile.status === 'duplicate' ? 'Duplicate — view results or reprocess' : selectedFile.status.toUpperCase()}
-              </span>
-            </div>
-            <iframe
-              src="/api/jobs/preview-pdf/{previewFilename}?token={auth.token}"
-              title="PDF Preview"
-              style="width: 100%; height: calc(100vh - 350px); border: none; min-height: 500px;"
-            ></iframe>
-          </div>
-        {:else}
-          <div class="flex flex-col items-center justify-center h-64 opacity-40">
-            <span class="material-symbols-outlined text-4xl" style="color: var(--on-surface);">
-              {selectedFile.status === 'duplicate' ? 'content_copy' : 'schedule'}
-            </span>
-            <div class="mt-2 text-sm font-bold uppercase" style="color: var(--on-surface);">{selectedFile.filename}</div>
-            <div class="text-xs mt-1" style="color: var(--on-surface-muted);">
-              {selectedFile.status === 'queued' ? 'Waiting to process — click EXECUTE' : selectedFile.status === 'duplicate' ? 'Duplicate — view results or reprocess' : selectedFile.status}
-            </div>
-          </div>
-        {/if}
-
-      {:else}
-        <!-- No file selected -->
-        <div class="flex flex-col items-center justify-center h-64 opacity-20">
-          <span class="material-symbols-outlined text-4xl" style="color: var(--on-surface);">arrow_back</span>
-          <div class="mt-2 text-sm font-bold uppercase" style="color: var(--on-surface);">SELECT A FILE</div>
-          <div class="text-xs mt-1" style="color: var(--on-surface-muted);">Click a file in the queue to view details</div>
-        </div>
-      {/if}
-    </div>
   </div>
-{/if}
+  {/if}
+</div>
+
+<style>
+  /* Merged control terminal — light "paper console", palette from the mockup */
+  .rv-term { border: 1px solid var(--line); background: var(--surface-container-lowest); border-radius: 8px; overflow: hidden;
+             box-shadow: 0 1px 3px rgba(60,50,30,0.06);
+             font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; color: var(--on-surface); }
+  .rv-tbar { display: flex; align-items: center; gap: 8px; padding: 7px 12px; background: var(--surface-container-low);
+             border-bottom: 1px solid var(--line); font-size: 10.5px; color: var(--on-surface-muted); }
+  .rv-dots span { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; opacity: 0.75; }
+  .rv-body { padding: 12px 14px; }
+  .rv-p { color: var(--primary); font-weight: 700; }
+  .rv-cmt { color: var(--on-surface-subtle); }
+  .rv-sub { color: var(--on-surface-muted); font-size: 11px; }
+  .rv-rule { color: var(--on-surface-subtle); margin: 14px 0 8px; font-size: 11px; letter-spacing: 0.05em; white-space: nowrap; overflow: hidden; }
+
+  .rv-engines { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+
+  /* Workbench layout: a narrow rail for "what to run and how", a wide column
+     for "what is running and what already ran". Below 1000px they stack, so a
+     laptop or tablet still gets the old single-column reading order. */
+  .rv-work { display: grid; grid-template-columns: 1fr; gap: 18px; }
+  @media (min-width: 1000px) {
+    .rv-work { grid-template-columns: 212px minmax(0, 1fr); }
+    .rv-rail { border-right: 1px solid var(--line); padding-right: 16px; }
+    .rv-rail .rv-engines { flex-direction: column; gap: 6px; }
+    .rv-rail .rv-eng { min-width: 0; width: 100%; }
+    .rv-rail .rv-drop { width: 100%; }
+    .rv-rail .rv-exec { flex-direction: column; align-items: stretch; }
+    .rv-rail .rv-exec button { width: 100%; }
+    /* The rail's own rules would run the full column width and look broken. */
+    .rv-rail .rv-rule { overflow: hidden; }
+  }
+  /* Idle: one column, drop zone on top, recent below. The rail's divider and
+     fixed width only make sense next to a running queue. */
+  .rv-work.stack { grid-template-columns: 1fr !important; gap: 22px; }
+  .rv-work.stack .rv-rail { border-right: none; padding-right: 0; }
+
+  .rv-runs { min-width: 0; }
+  .rv-runs .rv-q { width: 100%; }
+  .rv-head { display: flex; align-items: baseline; justify-content: space-between;
+             gap: 12px; margin: 14px 0 8px; }
+  .rv-all { color: var(--primary); font-size: 11px; text-decoration: none; white-space: nowrap; }
+  .rv-all:hover { text-decoration: underline; }
+  .rv-eng { flex: 1; min-width: 150px; border: 1px solid var(--line); border-radius: 6px; padding: 7px 11px;
+            cursor: pointer; background: var(--surface-container-lowest); text-align: left; color: var(--on-surface);
+            font-family: inherit; font-size: 12px; }
+  .rv-eng:hover { border-color: var(--on-surface-muted); }
+  .rv-eng.sel { border-color: var(--primary); background: var(--primary-container); }
+  .rv-eng.sel b { color: var(--primary); }
+  .rv-eng .rv-k { color: var(--on-surface-subtle); margin-right: 6px; }
+  .rv-eng .rv-d { color: var(--on-surface-muted); font-size: 10.5px; }
+  .rv-mark { color: var(--primary); margin-left: 6px; }
+
+  .rv-drop { width: 100%; border: 1.5px dashed var(--primary); border-radius: 6px; padding: 12px 14px;
+             display: flex; align-items: center; gap: 12px; cursor: pointer; background: var(--primary-soft);
+             color: var(--on-surface); font-family: inherit; font-size: 12px; }
+  .rv-drop:hover { background: var(--primary-container); }
+  .rv-arr { color: var(--primary); font-size: 18px; }
+  /* Idle: the drop zone IS the page, so it gets the room the other panels gave up. */
+  .rv-drop.big { flex-direction: column; justify-content: center; text-align: center;
+                 gap: 8px; padding: 40px 20px; }
+  .rv-drop.big .rv-arr { font-size: 30px; }
+  .rv-drop.big :global(b) { font-size: 14px; }
+
+  .rv-q { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .rv-q td { padding: 5px 8px; vertical-align: middle; white-space: nowrap; }
+  .rv-row { border-bottom: 1px solid var(--line-soft); cursor: pointer; }
+  .rv-row:hover { background: var(--surface-container-low); }
+  .rv-row.sel { background: var(--primary-container); box-shadow: inset 2px 0 0 var(--primary); }
+  .rv-fn { color: var(--on-surface); max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+  .rv-sz { color: var(--on-surface-subtle); font-size: 11px; }
+  .rv-st { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; }
+  .rv-st.q { color: var(--on-surface-muted); } .rv-st.p { color: var(--info); } .rv-st.d { color: var(--warning); }
+  .rv-st.ok { color: var(--success); } .rv-st.er { color: var(--error); }
+  .rv-bar { display: inline-block; width: 80px; height: 5px; background: var(--line-soft); border-radius: 3px;
+            overflow: hidden; vertical-align: middle; margin-left: 6px; }
+  .rv-bar i { display: block; height: 100%; background: var(--info); transition: width 0.4s; }
+  .rv-act { text-align: right; }
+  .rv-act button { font-size: 10px; color: var(--on-surface-muted); border: 1px solid var(--line); border-radius: 4px;
+                   padding: 1px 8px; margin-left: 4px; background: transparent; cursor: pointer;
+                   font-family: inherit; }
+  .rv-act button:hover { color: var(--on-surface); border-color: var(--on-surface-muted); }
+  .rv-act button.pri { color: var(--primary); border-color: var(--primary); }
+  .rv-expand td { background: var(--surface-container-low); border-bottom: 1px solid var(--line-soft); white-space: normal;
+                  color: var(--on-surface-muted); font-size: 11px; padding: 8px 12px; }
+  .rv-expand b { color: var(--warning); }
+  .rv-confirm { margin-top: 6px; color: var(--on-surface); }
+  .rv-confirm button { font-size: 10px; border: 1px solid var(--line); border-radius: 4px; padding: 2px 8px;
+                       margin-left: 6px; background: transparent; color: var(--on-surface); cursor: pointer;
+                       font-family: inherit; }
+  .rv-confirm button.danger { color: var(--error); border-color: var(--error-container); }
+  /* `.rv-empty` went with the "queue empty — drop a PDF above" line it styled. */
+
+  .rv-exec { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .rv-btn { border: 1px solid var(--line); border-radius: 5px; padding: 6px 14px; cursor: pointer;
+            background: var(--surface-container-lowest); color: var(--on-surface); font-family: inherit; font-size: 11px;
+            font-weight: 700; letter-spacing: 0.05em; }
+  .rv-btn:hover { border-color: var(--on-surface-muted); }
+  .rv-btn.pri { background: var(--primary); border-color: var(--primary); color: var(--surface-container-lowest); }
+  .rv-btn.pri:hover { background: var(--primary-hover); }
+  .rv-btn.danger { color: var(--error); border-color: var(--error-container); }
+  .rv-btn.danger:hover { background: var(--error-soft); }
+
+  .rv-batch { color: var(--on-surface-muted); font-size: 11px; }
+  /* Finished-state actions: what to do next, where the run ended. */
+  .rv-done { display: flex; gap: 7px; flex-wrap: wrap; margin: 2px 0 6px; }
+  .rv-done .rv-btn { text-decoration: none; display: inline-block; }
+</style>

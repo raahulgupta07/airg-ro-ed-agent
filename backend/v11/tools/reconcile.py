@@ -77,6 +77,20 @@ def cif_tight_tolerance_pct() -> float:
         return 4.0
 
 
+def _first_present(decl: Dict, *keys):
+    """First key that parses to a number, keeping an explicit 0.0.
+
+    `decl.get(a) or decl.get(b)` is the obvious form and is wrong here: a
+    zero-valued fee is a real reading, and treating it as absent changes which
+    tolerance the CIF gate applies.
+    """
+    for k in keys:
+        v = _to_float(decl.get(k))
+        if v is not None:
+            return v
+    return None
+
+
 def _cif_closure(decl: Dict, declared) -> Dict:
     """Secondary invariant: CIF build-up × exchange_rate ≈ total_customs_value, where
         CIF build-up = invoice_price + freight + insurance + adjustment   (invoice currency)
@@ -86,20 +100,59 @@ def _cif_closure(decl: Dict, declared) -> Dict:
     is complete, so the tolerance tightens. Returns
     {cif_checked, cif_ok, cif_gap_pct, cif_basis, cif_tol_pct}.
     """
-    inv = _to_float(decl.get("invoice_price") or decl.get("Invoice Price"))
-    rate = _to_float(decl.get("exchange_rate") or decl.get("Exchange Rate"))
+    # The identity is stated in the INVOICE currency, so the foreign-currency
+    # invoice is the correct basis when the engine captured it. `invoice_price`
+    # is whichever of the form's two figures the read landed on (the form prints
+    # both "THB 481,406.664" and "(MMK) 32,356,946.56"), so it is the fallback.
+    inv = _first_present(decl, "invoice_price_fc", "invoice_price", "Invoice Price")
+    rate = _first_present(decl, "exchange_rate", "Exchange Rate")
     if not (inv and rate and declared and declared > 0):
         return {"cif_checked": False, "cif_ok": True, "cif_gap_pct": 0.0,
-                "cif_basis": None, "cif_tol_pct": 0.0}
-    frt = _to_float(decl.get("freight_value") or decl.get("Freight"))
-    ins = _to_float(decl.get("insurance_value") or decl.get("Insurance"))
-    adj = _to_float(decl.get("adjustment_value") or decl.get("Adjustment"))
+                "cif_basis": None, "cif_tol_pct": 0.0, "cif_ratio": None}
+    # `a or b` would discard an explicit 0.0 — and a declared zero freight is
+    # information, not a missing value. It says the CIF build-up is complete,
+    # which is exactly what decides whether the tolerance below tightens to 4%.
+    frt = _first_present(decl, "freight_value", "Freight")
+    ins = _first_present(decl, "insurance_value", "Insurance")
+    adj = _first_present(decl, "adjustment_value", "Adjustment")
     has_buildup = any(v is not None for v in (frt, ins, adj))
-    basis = inv + (frt or 0.0) + (ins or 0.0) + (adj or 0.0)
+
+    # Each build-up line is printed with its OWN currency code, and they differ on
+    # the same form — "Insurance E - MMK - 267,383.37" beside
+    # "Adjustment value AD - CNY - 1,051.894". Adding an already-MMK figure into an
+    # invoice-currency basis and multiplying the lot by the rate inflated one real
+    # declaration from 24,886,695 to 103,859,443 and would fail a correct document.
+    # A line whose stated currency is MMK is added AFTER conversion, not before.
+    # No stated currency -> invoice currency, which is how every stored row behaves.
+    def _is_mmk(*keys) -> bool:
+        for k in keys:
+            v = decl.get(k)
+            if v:
+                return str(v).strip().upper() in ("MMK", "MMK.", "KS", "KYAT", "KYATS")
+        return False
+
+    fc_parts, mmk_parts = [], []
+    for val, cur_keys in ((frt, ("freight_currency", "Freight Currency")),
+                          (ins, ("insurance_currency", "Insurance Currency")),
+                          (adj, ("adjustment_currency", "Adjustment Currency"))):
+        if val is None:
+            continue
+        (mmk_parts if _is_mmk(*cur_keys) else fc_parts).append(val)
+
+    basis = inv + sum(fc_parts)
     tol = cif_tight_tolerance_pct() if has_buildup else cif_tolerance_pct()
-    gap_pct = round(abs(basis * rate - declared) / declared * 100, 2)
+    computed = basis * rate + sum(mmk_parts)
+    gap_pct = round(abs(computed - declared) / declared * 100, 2)
+    # How the declared total relates to the computed one, reported alongside the
+    # gap. Measured over the stored corpus, the failures are not near-misses that
+    # a wider tolerance would absorb — they cluster on clean multiples (four
+    # separate declarations sit at exactly 1.500, one at 10.654). A ratio names
+    # that: "the total is 1.5x the invoice basis" points at a missed invoice or
+    # the wrong one of two printed figures, where a bare percentage does not.
+    ratio = round(declared / computed, 4) if computed else None
     return {"cif_checked": True, "cif_ok": gap_pct <= tol,
-            "cif_gap_pct": gap_pct, "cif_basis": round(basis, 2), "cif_tol_pct": tol}
+            "cif_gap_pct": gap_pct, "cif_basis": round(basis, 2),
+            "cif_tol_pct": tol, "cif_ratio": ratio}
 
 
 def duty_tolerance_pct() -> float:
@@ -286,6 +339,43 @@ def _row_closure(decl: Dict, items: List[Dict]) -> Dict:
             "bad_rows": bad, "n_rows_checked": checked}
 
 
+def _document_check(items: List[Dict]) -> Dict:
+    """Did every surviving item come off the declaration?
+
+    A bundled release order carries an IMPORT LICENCE beside the CUSDEC, and a
+    licence has its own goods table — same HS codes, same product names, licence
+    quantities, and its own CIF total. When both reach the merge, the arithmetic
+    can close on the WRONG document: on `0259100560` the licence's eleven lines
+    summed to the licence's own total to within 456 kyat, while the declaration
+    itself had four items. Item-sum cannot see that; both sides came from the
+    same wrong page.
+
+    `_src_doc` is stamped by `workflow._scope_items`, which drops foreign-document
+    items outright when it can. This gate covers what it deliberately cannot: the
+    case where no page was identified as the declaration (so there was nothing to
+    scope to), and the case where the foreign lane was the ONLY source of items
+    and was kept rather than leaving the job empty. In both, the rows are here on
+    purpose and a human has to see them.
+
+    Untagged items return `checked: False`. Every pre-`document` job, every
+    reviewer-added row and every recovered slice is untagged, and treating
+    "unstamped" as "foreign" would flag the entire corpus.
+
+    NOT caught: a licence the classifier labelled DECLARATION. Its items are
+    then stamped DECLARATION and this agrees with them. That is a limit of
+    trusting the label, not of the arithmetic.
+    """
+    seen = {str(it.get("_src_doc")).upper() for it in (items or [])
+            if it.get("_src_doc")}
+    if not seen:
+        return {"doc_checked": False, "doc_ok": True, "item_documents": []}
+    foreign = sorted(d for d in seen if d not in ("DECLARATION", "UNKNOWN", "NONE"))
+    return {"doc_checked": True,
+            "doc_ok": not foreign,
+            "item_documents": sorted(seen),
+            "foreign_documents": foreign}
+
+
 def reconcile(declaration: Dict, items: List[Dict]) -> Dict:
     """Check items value sum against the declared customs-value total, AND that
     invoice_price × exchange_rate ≈ total (catches a wrong exchange rate).
@@ -371,13 +461,38 @@ def reconcile(declaration: Dict, items: List[Dict]) -> Dict:
                       "advance_income_tax_at", "advance_income_tax")
     _core_taxes_present = any(_to_float(decl.get(k)) is not None for k in _core_tax_keys)
     taxes_missing = bool(declared) and declared > 0 and not _core_taxes_present
+    # The CIF closure compares the INVOICE value against the ASSESSED customs value.
+    # Customs routinely assesses above invoice — an uplift — so a large positive gap
+    # is a normal declaration, not a misread. Measured on this corpus: a document
+    # whose item sum matches its declared total EXACTLY (gap 0.0%) and whose tax
+    # block is complete was still marked unbalanced on a 30.4% CIF gap, purely
+    # because 481,406.664 x 67.2133 = 32.36M was assessed at 46.49M.
+    #
+    # Direction matters. Assessed ABOVE invoice is an uplift and is expected.
+    # Assessed BELOW invoice is not, and still counts against the closure — that is
+    # the shape a wrong exchange rate or a missed invoice produces.
+    cif_uplift_only = (
+        cif.get("cif_checked") and not cif.get("cif_ok")
+        and (cif.get("cif_ratio") or 0) > 1.0        # declared exceeds computed
+        and gap_pct <= tol                            # items still reconcile exactly
+        and not taxes_missing
+    )
+    doc = _document_check(items)
     return {
         "checked": True,
         # Balanced requires the item-sum closure, the CIF closure, that the tax block
         # was captured, AND that the exchange rate survives the independent MATH
         # cross-check — a suspect rate forces downstream review.
-        "balanced": ((gap_pct <= tol) and cif["cif_ok"]
-                     and not taxes_missing and not rate["rate_suspect"]),
+        #
+        # It also requires that the items came off the DECLARATION. Every other
+        # clause here is arithmetic, and arithmetic is exactly what a licence
+        # defeats: its own goods table sums to its own total, so a self-consistent
+        # read of the wrong document passes all four. This is the only clause that
+        # asks WHICH PAPER the numbers were read from.
+        "balanced": ((gap_pct <= tol) and (cif["cif_ok"] or cif_uplift_only)
+                     and not taxes_missing and not rate["rate_suspect"]
+                     and doc["doc_ok"]),
+        "cif_uplift_only": bool(cif_uplift_only),
         "taxes_missing": taxes_missing,
         "declared_total": declared,
         "items_sum": isum,
@@ -390,6 +505,7 @@ def reconcile(declaration: Dict, items: List[Dict]) -> Dict:
         **duty,
         **row,
         **rate,
+        **doc,
     }
 
 

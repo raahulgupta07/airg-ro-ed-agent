@@ -21,11 +21,23 @@ bundle (CUSDEC / invoice / packing list). Extract EVERY product row you can see.
 
 Return ONLY one JSON object:
 {"items": [ {"no": <row no or null>, "hs_code": "...", "description": "...",
-             "quantity": <number or null>, "unit": "...", "value": <number or null>} ]}
+             "quantity": <number or null>, "unit": "...", "value": <number or null>,
+             "unit_price": <number or null>, "customs_value": <number or null>} ]}
 
 RULES (follow exactly):
 - One object per product row. Do NOT merge rows and do NOT skip rows.
 - Read quantities from the Quantity column (not the value/price column).
+- On a CUSDEC / release-order item block ('No. 001  HS <code>', 'Item name',
+  'Quantity (1)', 'Item value', 'Invoice unit price', 'Customs value'):
+  value <- 'Item value', unit_price <- 'Invoice unit price',
+  customs_value <- 'Customs value'.
+  'Item value' and 'Invoice unit price' are in the INVOICE currency; 'Customs value'
+  is the assessed MMK figure and is usually far larger. They are DIFFERENT UNITS —
+  never copy one into the other, and never multiply by the exchange rate to invent
+  customs_value: the assessed value may carry an uplift. No 'Customs value' printed
+  on the row -> customs_value must be null.
+- On an invoice / packing list / import-licence table there is no assessed value:
+  set value from the amount column and leave customs_value null.
 - Use null for any field that is absent on a row.
 - If the same table repeats across pages, still list every row you see — the
   caller de-duplicates.

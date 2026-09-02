@@ -37,10 +37,13 @@ shape (omit nothing you can find; use null when truly absent):
 
 {
   "declaration": {
-    "declaration_no","declaration_date","importer_name","consignor_name",
+    "declaration_no","declaration_no_official","declaration_date",
+    "importer_name","consignor_name",
     "invoice_number","invoice_number_customs","invoice_number_commercial",
     "currency","currency_2","exchange_rate","invoice_price",
-    "freight_value","insurance_value","adjustment_value","total_customs_value",
+    "invoice_price_fc","invoice_price_mmk",
+    "freight_value","freight_currency","insurance_value","insurance_currency",
+    "adjustment_value","adjustment_currency","total_customs_value",
     "customs_duty","commercial_tax","advance_income_tax","security_fee",
     "maccs_service_fee","exemption"
   },
@@ -59,6 +62,22 @@ Rules:
 - Include ALL line items — do not merge or drop rows.
 
 Per-field guidance (read carefully — these columns are easy to confuse):
+- declaration_no: ALWAYS the "Declaration No." printed at the TOP of the form, in
+  the header line beside Customs station / Section. Digits only.
+  Do NOT use "First approval declaration No." — that is a DIFFERENT, earlier
+  declaration that this one refers back to. On an Ex-bond release the two numbers
+  differ, and only the top-of-form one identifies THIS document.
+  (No example numbers are given here on purpose: quoting a specific wrong value in
+  an instruction makes a model more likely to return that very value.)
+  Record the first-approval number separately in declaration_no_official if the form
+  prints one, and null when it does not.
+- total_customs_value: the "Total customs value" figure in the HEADER value block
+  (the MMK one, not the "(USD)" line under it). It equals the sum of the items'
+  "Customs value". Do NOT take the amount printed beside "Commercial tax" or
+  "SPECIFIC GOODS TAX" in the item block — that is the TAX BASE, which is the
+  customs value PLUS the customs duty and is therefore always larger. On a real
+  declaration the header said 198,450,000 while the commercial-tax base said
+  204,403,500 (= 198,450,000 + 5,953,500 duty); taking the latter is wrong.
 - origin: ISO 3166-1 alpha-2 country CODE, not the name. ITALY->IT, AUSTRIA->AT,
   THAILAND->TH, CHINA->CN, MYANMAR->MM, etc.
 - invoice_unit_price: the per-unit price in the INVOICE currency (the small number,
@@ -77,20 +96,38 @@ Per-field guidance (read carefully — these columns are easy to confuse):
   typically like "AM-PD-012/2024". NOT a Bill of Lading / container / BoL number
   (e.g. TCLBIL...). If only one invoice number is shown, use it for both.
 - currency: the invoice currency code (e.g. THB); currency_2 the secondary (e.g. USD).
-- freight_value: the freight / shipping cost, in the INVOICE currency (NOT MMK).
-  Labelled Freight / FRT / Carriage. 0 if the terms are CIF/CIP (already included)
-  or none is shown.
-- insurance_value: the insurance cost, in the INVOICE currency (NOT MMK). Labelled
-  Insurance / INS. 0 if none shown.
-- adjustment_value: any other additions or deductions to the customs value, in the
-  INVOICE currency (NOT MMK) — e.g. other charges, discounts. SIGNED: negative for a
-  deduction. 0 if none shown.
+- invoice_price_fc: the "Invoice price" amount on the FOREIGN-currency line — the
+  figure printed just before the "(MMK)" line, e.g. "A - C&F - CNY - 82,022.1072".
+- invoice_price_mmk: the "Invoice price" amount on the "(MMK)" line, e.g.
+  24,307,579.55. These are the SAME money in two units. Return BOTH when both are
+  printed; null for either that is absent. Do not put one in the other's field.
+
+- THE BUILD-UP LINES CARRY THEIR OWN CURRENCY CODE. Freight, Insurance and
+  Adjustment value each print a code immediately before the amount, e.g.
+  "Freight - CNY - 1,234.5", "Insurance E - MMK - 267,383.37",
+  "Adjustment value AD - CNY - 1,051.894". READ THAT CODE. Do NOT assume the
+  invoice currency: on real declarations Insurance is frequently already in MMK
+  while Adjustment on the same form is in the invoice currency. Report each
+  amount exactly as printed, and report the code you read in
+  freight_currency / insurance_currency / adjustment_currency.
+- freight_value: the freight / shipping cost. Labelled Freight / FRT / Carriage.
+- insurance_value: the insurance cost. Labelled Insurance / INS.
+- adjustment_value: other additions or deductions to the customs value — other
+  charges, discounts. SIGNED: negative for a deduction. This is the money amount
+  next to "Adjustment value", NOT the small integer code printed beside the word
+  "Adjustment" on its own line.
+- A blank line, a dash, or an absent field is NULL — never 0. Return 0 ONLY when
+  the form actually prints a zero. "Not shown" and "shown as zero" are different
+  facts and the reviewer needs to tell them apart: a CIF/CIP shipment with no
+  freight line has null freight, whereas an ex-bond entry really can print
+  "IMPORT/EXPORT CUSTOMS DUTY  0".
 - exchange_rate: the rate converting the INVOICE currency (`currency`) to MMK.
   The form may print SEVERAL rates (e.g. a THB rate ~57 and a USD rate ~2100) —
-  pick the one for `currency`. Self-check: the CIF build-up
-  (invoice_price + freight_value + insurance_value + adjustment_value) × exchange_rate
-  must be approximately total_customs_value. If it fails badly, you picked the wrong
-  rate or mis-read a value.
+  pick the one for `currency`. Self-check, converting each build-up line from ITS
+  OWN currency: invoice_price_mmk + (each of freight/insurance/adjustment, already
+  MMK if its code says MMK, else × exchange_rate) must be approximately
+  total_customs_value. If it fails badly, you picked the wrong rate, mis-read a
+  value, or assumed the wrong currency for one of the lines.
 
 Return ONLY the JSON object.
 

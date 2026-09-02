@@ -13,6 +13,8 @@ Per-field rules to pick winner on disagreement:
 """
 
 import re
+
+import numeric
 import difflib
 from typing import Dict, List, Tuple, Any
 
@@ -36,15 +38,19 @@ def _str_eq(a, b) -> bool:
 
 
 def _num_eq(a, b, tol: float = 0.001) -> bool:
-    """Numeric equality with tolerance."""
-    try:
-        fa = float(str(a).replace(",", ""))
-        fb = float(str(b).replace(",", ""))
-        if fa == 0 and fb == 0:
-            return True
-        return abs(fa - fb) / max(abs(fa), abs(fb), 1e-9) < tol
-    except (ValueError, TypeError):
+    """Numeric equality with tolerance.
+
+    Parsed by the shared parser so "THB 652,279.7184" and "652279.7184" compare
+    equal — a comma-strip alone read the first as unparseable and declared two
+    identical amounts different, costing a consensus vote.
+    """
+    fa = numeric.to_float(a)
+    fb = numeric.to_float(b)
+    if fa is None or fb is None:
         return False
+    if fa == 0 and fb == 0:
+        return True
+    return abs(fa - fb) / max(abs(fa), abs(fb), 1e-9) < tol
 
 
 def _is_currency(v) -> bool:

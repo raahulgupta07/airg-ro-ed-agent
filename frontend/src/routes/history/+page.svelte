@@ -3,7 +3,6 @@
   import { api } from '$lib/api';
   import { auth } from '$lib/stores/auth.svelte';
   import ChapterHeading from '$lib/components/ChapterHeading.svelte';
-  import KpiCard from '$lib/components/KpiCard.svelte';
   import Button from '$lib/components/Button.svelte';
   import Badge from '$lib/components/Badge.svelte';
   import ResultAccordion from '$lib/components/ResultAccordion.svelte';
@@ -16,6 +15,13 @@
   let dateFrom = $state('');
   let dateTo = $state('');
   let selectedUser = $state('');
+  let selectedEngine = $state('');
+  let selectedStatus = $state('');
+  let confBand = $state('');           // '90' | '70' | 'low'
+
+  // Declaration numbers live on /data/declarations, not on the job row — load them
+  // once so "search by declaration no" works here too. Fail-safe: no map, no match.
+  let declNoByJob = $state<Record<string, string>>({});
 
   // Screen 2 state
   let selectedJobId = $state<string | null>(null);
@@ -101,17 +107,98 @@
     return results;
   });
 
-  const allUsers = $derived([...new Set(jobs.map(j => j.username).filter(Boolean))]);
+  // ── Dates in the data are TEXT and NOT one format: mostly ISO (2025-06-25), but
+  // also 2024/04/01 and day-first 12/10/2025. Normalise to YYYY-MM-DD; return ''
+  // when it cannot be parsed so the caller can keep (never drop) the row.
+  const _p2 = (n: number | string) => String(n).padStart(2, '0');
+  const MONTHS: Record<string, number> = {
+    jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+    jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+  };
+  function normDate(raw: any): string {
+    if (raw == null) return '';
+    const s = String(raw).trim();
+    if (!s) return '';
+    // year-first: 2025-06-25 / 2025/06/25 / 2025.06.25 (optional time after)
+    let m = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+    if (m) return `${m[1]}-${_p2(m[2])}-${_p2(m[3])}`;
+    // day-first (Myanmar customs forms): 12/10/2025 · 01-04-2024
+    m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
+    if (m) {
+      let d = Number(m[1]), mo = Number(m[2]);
+      if (mo > 12 && d <= 12) { const t = d; d = mo; mo = t; }  // was month-first
+      if (mo < 1 || mo > 12 || d < 1 || d > 31) return '';
+      return `${m[3]}-${_p2(mo)}-${_p2(d)}`;
+    }
+    // 25 Jun 2025 · Jun 25, 2025
+    m = s.match(/^(\d{1,2})[\s-]([A-Za-z]{3,})[\s-](\d{4})/);
+    if (m) { const mo = MONTHS[m[2].slice(0, 3).toLowerCase()]; return mo ? `${m[3]}-${_p2(mo)}-${_p2(m[1])}` : ''; }
+    m = s.match(/^([A-Za-z]{3,})[\s-](\d{1,2}),?[\s-](\d{4})/);
+    if (m) { const mo = MONTHS[m[1].slice(0, 3).toLowerCase()]; return mo ? `${m[3]}-${_p2(mo)}-${_p2(m[2])}` : ''; }
+    return '';
+  }
+  /** True unless the value parses AND falls outside the range. Unparseable/blank stays. */
+  function inDateRange(raw: any, from: string, to: string): boolean {
+    if (!from && !to) return true;
+    const d = normDate(raw);
+    if (!d) return true;
+    if (from && d < from) return false;
+    if (to && d > to) return false;
+    return true;
+  }
+
+  const todayISO = () => new Date().toISOString().slice(0, 10);
+  function daysAgoISO(n: number) {
+    const d = new Date();
+    d.setDate(d.getDate() - n);
+    return d.toISOString().slice(0, 10);
+  }
+  function setRange(days: number) {
+    const from = days === 0 ? todayISO() : daysAgoISO(days);
+    const to = todayISO();
+    if (dateFrom === from && dateTo === to) { dateFrom = ''; dateTo = ''; }
+    else { dateFrom = from; dateTo = to; }
+  }
+  const rangeActive = (days: number) =>
+    dateFrom === (days === 0 ? todayISO() : daysAgoISO(days)) && dateTo === todayISO();
+
+  const engineOf = (j: any) => (j.model_used || j.pipeline_mode || '').trim();
+  const bandOf = (a: number) => (a >= 90 ? '90' : a >= 70 ? '70' : 'low');
+
+  // Dropdown values come from the data, never a hardcoded list.
+  const allUsers = $derived([...new Set(jobs.map(j => j.username).filter(Boolean))].sort());
+  const allEngines = $derived([...new Set(jobs.map(engineOf).filter(Boolean))].sort());
+  const allStatuses = $derived([...new Set(jobs.map(j => j.status).filter(Boolean))].sort());
+
+  const anyFilter = $derived(
+    !!(searchQuery || dateFrom || dateTo || selectedUser || selectedEngine || selectedStatus || confBand)
+  );
+
+  function resetFilters() {
+    searchQuery = '';
+    dateFrom = '';
+    dateTo = '';
+    selectedUser = '';
+    selectedEngine = '';
+    selectedStatus = '';
+    confBand = '';
+  }
 
   const filteredJobs = $derived(() => {
     let result = jobs;
     if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter(j => j.pdf_name?.toLowerCase().includes(q) || j.job_id?.toLowerCase().includes(q));
+      const q = searchQuery.toLowerCase().trim();
+      result = result.filter(j =>
+        j.pdf_name?.toLowerCase().includes(q) ||
+        j.job_id?.toLowerCase().includes(q) ||
+        (declNoByJob[j.job_id] || '').toLowerCase().includes(q)
+      );
     }
     if (selectedUser) result = result.filter(j => j.username === selectedUser);
-    if (dateFrom) result = result.filter(j => (j.created_at || '').split(' ')[0] >= dateFrom);
-    if (dateTo) result = result.filter(j => (j.created_at || '').split(' ')[0] <= dateTo);
+    if (selectedEngine) result = result.filter(j => engineOf(j) === selectedEngine);
+    if (selectedStatus) result = result.filter(j => j.status === selectedStatus);
+    if (confBand) result = result.filter(j => bandOf(j.accuracy_percent ?? 0) === confBand);
+    if (dateFrom || dateTo) result = result.filter(j => inDateRange(j.created_at, dateFrom, dateTo));
     return result;
   });
 
@@ -166,6 +253,27 @@
   let showPdf = $state(false);
   let declView = $state<'cards' | 'table'>('cards');
 
+  // ── Marked PDF ────────────────────────────────────────────────────────
+  // The original with every extracted value highlighted. The count comes from
+  // the server, not from `field_bboxes` on the payload: a stored box whose
+  // value is gone is not a mark, so counting boxes here overstates what the
+  // file will actually contain.
+  let markCount = $state(0);
+  let noMarksReason = $state('');
+  $effect(() => {
+    const id = selectedJob?.job_id;
+    if (!id) { markCount = 0; noMarksReason = ''; return; }
+    let cancelled = false;
+    api.markedPdfStatus(id)
+      .then((s) => {
+        if (cancelled) return;
+        markCount = s?.marks ?? 0;
+        noMarksReason = s?.reason || '';
+      })
+      .catch(() => { if (!cancelled) { markCount = 0; noMarksReason = ''; } });
+    return () => { cancelled = true; };
+  });
+
   function ptColor(pageType: string): string {
     return getPageTypeColor(pageType || 'unknown').bg;
   }
@@ -179,6 +287,12 @@
   onMount(async () => {
     try { jobs = await api.listJobs(200); } catch {}
     loading = false;
+    // Background: declaration numbers for search. Never blocks the table.
+    api.listDeclarations().then(ds => {
+      const m: Record<string, string> = {};
+      for (const d of ds ?? []) if (d?.job_id && d?.declaration_no) m[d.job_id] = String(d.declaration_no);
+      declNoByJob = m;
+    }).catch(() => {});
     const params = new URLSearchParams(window.location.search);
     const jobParam = params.get('job');
     if (jobParam) openJob(jobParam);
@@ -195,35 +309,86 @@
 {:else if !selectedJobId}
   <ChapterHeading icon="history" title="EXTRACTION_HISTORY" subtitle="Review past extraction jobs" question="Click any job to view details" />
 
+  {@const jobRows = filteredJobs()}
+
   <!-- Filters -->
-  <div class="flex flex-wrap gap-3 items-end mb-5">
-    <div class="flex-1 min-w-[180px]">
+  <div class="fbar">
+    <div class="fsearch">
       <label class="cl-lbl" for="hist-search">Search</label>
-      <input id="hist-search" type="text" placeholder="Document name or number..." bind:value={searchQuery} class="cl-inp" />
+      <div class="fsearch-in">
+        <span class="material-symbols-outlined fsearch-ic" aria-hidden="true">search</span>
+        <input id="hist-search" type="search" class="cl-inp"
+               placeholder="File name, declaration no or job id..."
+               bind:value={searchQuery} />
+      </div>
     </div>
-    <div>
+    <div class="ffield">
+      <label class="cl-lbl" for="hist-from">From</label>
+      <input id="hist-from" type="date" bind:value={dateFrom} class="cl-inp" />
+    </div>
+    <div class="ffield">
+      <label class="cl-lbl" for="hist-to">To</label>
+      <input id="hist-to" type="date" bind:value={dateTo} class="cl-inp" />
+    </div>
+    <div class="ffield">
+      <label class="cl-lbl" for="hist-engine">Engine</label>
+      <select id="hist-engine" bind:value={selectedEngine} class="cl-inp">
+        <option value="">All engines</option>
+        {#each allEngines as e}<option value={e}>{e}</option>{/each}
+      </select>
+    </div>
+    <div class="ffield">
+      <label class="cl-lbl" for="hist-status">Status</label>
+      <select id="hist-status" bind:value={selectedStatus} class="cl-inp">
+        <option value="">All statuses</option>
+        {#each allStatuses as s}<option value={s}>{s}</option>{/each}
+      </select>
+    </div>
+    <div class="ffield">
+      <label class="cl-lbl" for="hist-conf">Confidence</label>
+      <select id="hist-conf" bind:value={confBand} class="cl-inp">
+        <option value="">Any confidence</option>
+        <option value="90">90% and above</option>
+        <option value="70">70–90%</option>
+        <option value="low">Below 70%</option>
+      </select>
+    </div>
+    <div class="ffield">
       <label class="cl-lbl" for="hist-user">User</label>
       <select id="hist-user" bind:value={selectedUser} class="cl-inp">
         <option value="">All users</option>
         {#each allUsers as u}<option value={u}>{u}</option>{/each}
       </select>
     </div>
-    <div>
-      <label class="cl-lbl" for="hist-from">From</label>
-      <input id="hist-from" type="date" bind:value={dateFrom} class="cl-inp" />
-    </div>
-    <div>
-      <label class="cl-lbl" for="hist-to">To</label>
-      <input id="hist-to" type="date" bind:value={dateTo} class="cl-inp" />
+    <div class="fend">
+      <button class="cl-btn sm" onclick={resetFilters} disabled={!anyFilter}>Reset</button>
+      <span class="fcount" aria-live="polite">showing {jobRows.length} of {jobs.length}</span>
     </div>
   </div>
 
+  <!-- Quick filters -->
+  <div class="fchips" role="group" aria-label="Quick filters">
+    <button class="fchip" aria-pressed={rangeActive(0)} onclick={() => setRange(0)}>Today</button>
+    <button class="fchip" aria-pressed={rangeActive(7)} onclick={() => setRange(7)}>Last 7 days</button>
+    <button class="fchip" aria-pressed={rangeActive(30)} onclick={() => setRange(30)}>Last 30 days</button>
+    <button class="fchip" aria-pressed={confBand === 'low'}
+            onclick={() => confBand = confBand === 'low' ? '' : 'low'}>Needs review (below 70%)</button>
+    <button class="fchip" aria-pressed={confBand === '90'}
+            onclick={() => confBand = confBand === '90' ? '' : '90'}>High confidence (90%+)</button>
+    <button class="fchip" aria-pressed={selectedStatus === 'COMPLETED'}
+            onclick={() => selectedStatus = selectedStatus === 'COMPLETED' ? '' : 'COMPLETED'}>Completed only</button>
+    {#if auth.user?.username}
+      {@const me = auth.user.username}
+      <button class="fchip" aria-pressed={selectedUser === me}
+              onclick={() => selectedUser = selectedUser === me ? '' : me}>My jobs</button>
+    {/if}
+  </div>
+
   <!-- Jobs Table -->
-  {@const jobRows = filteredJobs()}
   <div class="cl-panel">
     <div class="cl-hd">
       <span class="dot">◉</span>Jobs
-      <span class="ct">{jobRows.length} / {jobs.length} jobs</span>
+      <span class="ct">showing {jobRows.length} of {jobs.length} jobs</span>
     </div>
     <div class="overflow-x-auto custom-scrollbar">
       <table class="cl-table">
@@ -261,7 +426,16 @@
           {/each}
           {#if jobRows.length === 0}
             <tr>
-              <td colspan="10" class="px-4 py-12 text-center" style="color: var(--on-surface-subtle);">No jobs</td>
+              <td colspan="10" class="fempty">
+                {#if jobs.length === 0}
+                  <div class="fempty-t">No extraction jobs yet</div>
+                  <div class="fempty-s">Run a document on the Agent page and it will appear here.</div>
+                {:else}
+                  <div class="fempty-t">No jobs match these filters</div>
+                  <div class="fempty-s">{jobs.length} jobs are loaded — widen the dates or clear the search.</div>
+                  <button class="cl-btn sm" onclick={resetFilters}>Reset filters</button>
+                {/if}
+              </td>
             </tr>
           {/if}
         </tbody>
@@ -302,46 +476,54 @@
     {@const _to = selectedJob.tokens_out ?? 0}
     {@const _model = selectedJob.model_used || (selectedJob.pipeline_mode || '').toUpperCase() || '—'}
 
-    <!-- Header bar -->
-    <div class="flex items-center justify-between mb-4 p-3 cl-panel" style="padding: 12px;">
-      <div class="flex items-center gap-3">
-        <button class="cl-btn sm flex items-center gap-1" onclick={backToList}>
-          <span class="material-symbols-outlined text-sm">arrow_back</span> History
-        </button>
-        <span class="text-sm font-bold" style="color: var(--on-surface);">{selectedJob.pdf_name}</span>
-        <span class="pill muted">{selectedJob.username ?? '?'}</span>
-        <span class="pill {selectedJob.status === 'COMPLETED' ? 'ok' : 'err'}">{selectedJob.status}</span>
-      </div>
-      <div class="flex items-center gap-2">
-        <span class="text-[9px] font-mono" style="color: var(--outline);">{selectedJob.created_at?.split(' ')[0] ?? ''}</span>
-        <Button variant="secondary" size="sm" onclick={() => showPdf = !showPdf}>
-          <span class="flex items-center gap-1">
-            <span class="material-symbols-outlined text-xs">picture_as_pdf</span> {showPdf ? 'HIDE' : 'PDF'}
-          </span>
-        </Button>
-        <Button variant="secondary" size="sm" onclick={downloadExcel}>
-          <span class="flex items-center gap-1">
-            <span class="material-symbols-outlined text-xs">download</span> XLSX
-          </span>
-        </Button>
-      </div>
-    </div>
+    <!-- Header bar — file + status + inline stats + actions, one row -->
+    <div class="flex items-center gap-3 flex-wrap mb-4 cl-panel" style="padding: 10px 12px;">
+      <button class="cl-btn sm flex items-center gap-1" onclick={backToList}>
+        <span class="material-symbols-outlined text-sm">arrow_back</span> History
+      </button>
+      <span class="text-sm font-bold" style="color: var(--on-surface);">{selectedJob.pdf_name}</span>
+      <span class="pill {selectedJob.status === 'COMPLETED' ? 'ok' : 'err'}">{selectedJob.status}</span>
 
-    <!-- KPI Row 1: 6 across -->
-    <div class="grid grid-cols-6 gap-2 mb-2">
-      <KpiCard title="ITEMS" value="{items.length}" accent="var(--success)" />
-      <KpiCard title="ACCURACY" value="{acc.toFixed(1)}%" progress={acc} accent={getAccuracyColor(acc)} />
-      <KpiCard title="DECISION" value="{decision}" accent={getAccuracyColor(acc)} />
-      <KpiCard title="PAGES" value="{selectedJob.total_pages ?? '—'}" accent="var(--info)" />
-      <KpiCard title="TIME" value="{selectedJob.processing_time_seconds?.toFixed(0) ?? '—'}s" accent="var(--info)" />
-      <KpiCard title="COST" value="${selectedJob.cost_usd?.toFixed(3) ?? '—'}" accent="#8b6914" />
-    </div>
-    <!-- KPI Row 2: tokens + model + processed -->
-    <div class="grid grid-cols-4 gap-2 mb-4">
-      <KpiCard title="TOKENS_IN" value="{(_ti/1000).toFixed(1)}K" accent="#1d4ed8" subtitle="{_ti.toLocaleString()}" />
-      <KpiCard title="TOKENS_OUT" value="{(_to/1000).toFixed(1)}K" accent="#7c3aed" subtitle="{_to.toLocaleString()}" />
-      <KpiCard title="TOKENS_TOTAL" value="{((_ti+_to)/1000).toFixed(1)}K" accent="#6d28d9" subtitle="$/1k: ${_ti+_to > 0 ? (((selectedJob.cost_usd||0)*1000)/(_ti+_to)).toFixed(4) : '—'}" />
-      <KpiCard title="MODEL" value="{_model}" accent="#7e22ce" subtitle="{selectedJob.pipeline_mode || ''}" />
+      <span class="text-[11px] font-mono flex items-center gap-2 flex-wrap" style="color: var(--on-surface-muted);">
+        <span><b style="color: var(--on-surface);">{items.length}</b> items</span>·
+        <span style="color: {getAccuracyColor(acc)}; font-weight: 700;">{acc.toFixed(1)}%</span>·
+        <span>{selectedJob.total_pages ?? '—'} pg</span>·
+        <span>{selectedJob.processing_time_seconds?.toFixed(0) ?? '—'}s</span>·
+        <span>${selectedJob.cost_usd?.toFixed(3) ?? '—'}</span>·
+        <span>TOK {((_ti+_to)/1000).toFixed(1)}k</span>·
+        <span class="truncate max-w-[180px]" title={_model}>{_model}</span>
+      </span>
+
+      <span class="flex-1"></span>
+      <span class="text-[9px] font-mono" style="color: var(--outline);">{selectedJob.created_at?.split(' ')[0] ?? ''}</span>
+      <Button variant="secondary" size="sm" onclick={() => showPdf = !showPdf}>
+        <span class="flex items-center gap-1">
+          <span class="material-symbols-outlined text-xs">picture_as_pdf</span> {showPdf ? 'HIDE' : 'PDF'}
+        </span>
+      </Button>
+      {#if markCount > 0}
+        <a href={api.markedPdfUrl(selectedJob.job_id)} target="_blank" rel="noopener"
+          class="cl-btn sm no-underline"
+          title="Open the PDF with all {markCount} extracted values highlighted on it">
+          <span class="flex items-center gap-1">
+            <span class="material-symbols-outlined text-xs">highlight</span> MARKED ({markCount})
+          </span>
+        </a>
+      {:else}
+        <!-- Disabled, not hidden: the absence is a property of the document, and
+             a button that simply is not there reads as a missing feature. -->
+        <span class="cl-btn sm" style="opacity: 0.45; cursor: not-allowed;"
+          title={noMarksReason || 'No positions could be measured on this document, so nothing can be marked'}>
+          <span class="flex items-center gap-1">
+            <span class="material-symbols-outlined text-xs">highlight</span> MARKED —
+          </span>
+        </span>
+      {/if}
+      <Button variant="secondary" size="sm" onclick={downloadExcel}>
+        <span class="flex items-center gap-1">
+          <span class="material-symbols-outlined text-xs">download</span> XLSX
+        </span>
+      </Button>
     </div>
 
     <!-- Tab bar -->
@@ -368,7 +550,7 @@
 
     <!-- V11 jobs use side-by-side review; others stay on ResultAccordion -->
     {#if selectedJob.pipeline_mode === 'v11'}
-      <ReviewSplitView jobId={selectedJob.job_id} job={selectedJob} />
+      <ReviewSplitView jobId={selectedJob.job_id} job={selectedJob} slim />
     {:else}
       <ResultAccordion job={selectedJob} defaultOpen={true} />
     {/if}
@@ -436,3 +618,59 @@
 
   {/if}
 {/if}
+
+<style>
+  /* Filter bar — shared shape across History / Declarations / Items.
+     Colours come from tokens only; the older names are fallbacks so the bar
+     stays readable while app.css is being re-tokenised. */
+  .fbar {
+    display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 12px;
+    padding: 12px; margin-bottom: 8px;
+    background: var(--surface, #fff);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+  }
+  .fsearch { flex: 1 1 240px; min-width: 190px; }
+  .ffield { display: flex; flex-direction: column; }
+  .ffield .cl-inp { min-width: 132px; }
+  .fsearch-in { position: relative; }
+  .fsearch-ic {
+    position: absolute; inset-inline-start: 8px; top: 50%; transform: translateY(-50%);
+    font-size: 16px; pointer-events: none;
+    color: var(--ink-4, var(--on-surface-subtle));
+  }
+  .fsearch-in input { padding-inline-start: 28px; }
+  .fend { display: flex; align-items: center; gap: 10px; margin-inline-start: auto; }
+  .fcount {
+    font-size: 11px; font-weight: 500; white-space: nowrap;
+    color: var(--ink-3, var(--on-surface-muted));
+  }
+  .fbar button:disabled { opacity: 0.45; cursor: default; }
+
+  .fchips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+  .fchip {
+    font-size: 11px; font-weight: 500; line-height: 1;
+    padding: 5px 10px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--line);
+    background: var(--surface, #fff);
+    color: var(--ink-3, var(--on-surface-muted));
+    transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
+  }
+  .fchip:hover {
+    background: var(--hover, var(--sunk, var(--surface-container-low)));
+    color: var(--ink-2, var(--on-surface));
+  }
+  .fchip[aria-pressed='true'] {
+    background: var(--accent-weak, var(--primary-soft));
+    color: var(--accent, var(--primary));
+    border-color: var(--accent, var(--primary));
+  }
+  .fchip:focus-visible { outline: 2px solid var(--accent, var(--primary)); outline-offset: 1px; }
+
+  .fempty { padding: 40px 16px; text-align: center; }
+  .fempty-t { font-size: 13px; font-weight: 600; color: var(--ink-2, var(--on-surface)); }
+  .fempty-s {
+    font-size: 12px; margin: 4px 0 12px;
+    color: var(--ink-3, var(--on-surface-muted));
+  }
+</style>

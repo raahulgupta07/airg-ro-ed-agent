@@ -118,11 +118,22 @@ class ItemResponse(BaseModel):
     job_id: str
     item_name: Optional[str] = None
     customs_duty_rate: Optional[float] = None
-    quantity: Optional[str] = None
-    invoice_unit_price: Optional[str] = None
-    cif_unit_price: Optional[str] = None
+    # `numeric` since migration 0007, and these four were still declared `str`.
+    # psycopg returns Decimal for a numeric column, Pydantic v2 will not coerce
+    # Decimal to str, so validation raised on the FIRST row and `GET /api/data/items`
+    # answered 500 for every request — the Items page read "0 of 0 records" with
+    # 799 items in the table. Nothing logged: the ValidationError became a plain
+    # Internal Server Error, and the page's own empty state ("No product items
+    # yet — extract a customs document and its line items land here") explained
+    # the blank screen convincingly enough to look intended.
+    #
+    # A schema that describes the database wrongly is not caught by any test that
+    # only checks the endpoint's shape; it needs a row to travel through it.
+    quantity: Optional[float] = None
+    invoice_unit_price: Optional[float] = None
+    cif_unit_price: Optional[float] = None
     commercial_tax_percent: Optional[float] = None
-    exchange_rate: Optional[str] = None
+    exchange_rate: Optional[float] = None
     hs_code: Optional[str] = None
     origin_country: Optional[str] = None
     customs_value_mmk: Optional[float] = None

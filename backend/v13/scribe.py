@@ -35,10 +35,13 @@ ink/printed values carefully. Extract the declaration header and every line item
 into strict JSON:
 
 {
-  "declaration": {"declaration_no","declaration_date","importer_name",
+  "declaration": {"declaration_no","declaration_no_official","declaration_date",
+    "importer_name",
     "consignor_name","invoice_number","invoice_number_customs",
     "invoice_number_commercial","currency","currency_2","exchange_rate",
-    "invoice_price","freight_value","insurance_value","adjustment_value",
+    "invoice_price","invoice_price_fc","invoice_price_mmk",
+    "freight_value","freight_currency","insurance_value","insurance_currency",
+    "adjustment_value","adjustment_currency",
     "total_customs_value","customs_duty","commercial_tax",
     "advance_income_tax","security_fee","maccs_service_fee","exemption"},
   "items": [{"item_name","hs_code","quantity","invoice_unit_price",
@@ -51,10 +54,46 @@ into strict JSON:
 Rules:
 - Numbers as numbers (strip separators); rates as fractions (15%->0.15).
 - origin as ISO-2 code (ITALY->IT). quantity keeps its unit ("108 KG").
-- freight_value / insurance_value / adjustment_value: in the INVOICE currency (not
-  MMK); 0 if not shown. adjustment_value is signed (negative for a deduction).
-- exchange_rate: (invoice_price + freight_value + insurance_value + adjustment_value)
-  x exchange_rate should be ~ total_customs_value.
+- total_customs_value: the "Total customs value" in the header value block. NOT the
+  amount beside "Commercial tax" or "SPECIFIC GOODS TAX" in the item block — that is
+  the tax BASE (customs value + duty) and is always larger.
+- ABSENT IS NULL, NEVER 0. A blank box, a dash, or a field this form does not have
+  is null. Return 0 only where the form actually prints a zero — an ex-bond entry
+  really can show "IMPORT/EXPORT CUSTOMS DUTY 0", and a reviewer must be able to
+  tell that apart from "we could not read it".
+- invoice_price_fc / invoice_price_mmk: the 'Invoice price' figure on the foreign
+  currency line and on the '(MMK)' line — the same money in two units. Both when
+  both are printed; null for whichever is absent.
+- freight_value / insurance_value / adjustment_value each print THEIR OWN currency
+  code beside the amount ("Insurance E - MMK - 267,383.37",
+  "Adjustment value AD - CNY - 1,051.894"). Read that code into
+  freight_currency / insurance_currency / adjustment_currency and return the amount
+  as printed. Do NOT assume the invoice currency — Insurance is often already MMK
+  on a form whose Adjustment is in the invoice currency.
+- adjustment_value is the money amount beside 'Adjustment value', SIGNED (negative
+  for a deduction) — NOT the small integer code printed beside the word 'Adjustment'.
+- Self-check: invoice_price_mmk plus each build-up line converted from ITS OWN
+  currency (already MMK if its code says MMK, else x exchange_rate) should be about
+  total_customs_value.
+
+THIS DOCUMENT MAY BE THE OLD HANDWRITTEN "CUSDEC 1" FORM rather than a MACCS
+release order. It is a purple pre-printed sheet titled CUSTOMS DEPARTMENT / IMPORT
+DECLARATION, with NUMBERED boxes filled in by hand, and it lays the same facts out
+completely differently:
+  * box 11 Registration No. -> declaration_no (e.g. "MA-0259 100560": the digits
+    after the MA-#### prefix are the declaration number).
+  * box 15 Import Licence / Permit No. is a LICENCE (e.g. YGNBIL12425001953). It is
+    NOT the invoice number. If no commercial invoice number appears on this sheet,
+    return null for invoice_number rather than substituting the licence.
+  * box 14 Rate -> exchange_rate. box 27 Value (CIF/FOB/C&F) In FE -> invoice_price_fc.
+  * box 46 Amount (Ks) under "Import Duty" -> customs_duty, and box 48 Amount (Ks)
+    under "C.T." -> commercial_tax. The SAME two figures are printed again lower
+    down at box 59 "Import Duty (Ks)" and box 60 "Commercial Tax (Ks)" — read both
+    places and use them to check each other.
+  * box 50 Total -> total_customs_value. box 62 Total Amount (Ks) is the sum of the
+    taxes, NOT the customs value.
+  * This form has NO Advance Income Tax box. Return advance_income_tax as null.
+    Do not compute it, do not copy another figure into it, and do not return 0.
 - If a handwritten digit is ambiguous, give your best reading and lower
   field_confidence. Return ONLY the JSON object.
 """

@@ -78,6 +78,35 @@
   // ── PDF viewer ──
   const pdfUrl = $derived(job?.job_id ? `/api/jobs/${job.job_id}/pdf?token=${auth.token}` : '');
 
+  // ── Marked PDF ────────────────────────────────────────────────────────
+  // This tab pointed an iframe straight at the marked-PDF route regardless of
+  // whether the job had any coordinates. On a scanned declaration the route
+  // correctly answers 404, and the browser rendered that JSON body inside the
+  // viewer — a reviewer saw an error where the document should be and read it
+  // as the pipeline having failed. Count first, and say why when there is
+  // nothing.
+  // The count is the server's. Counting `field_bboxes` here would overstate it:
+  // a stored box whose value is gone is not a highlight in the file.
+  let markCount = $state(0);
+  let noMarksReason = $state('');
+  $effect(() => {
+    const id = job?.job_id;
+    if (!id) { markCount = 0; noMarksReason = ''; return; }
+    let cancelled = false;
+    api.markedPdfStatus(id)
+      .then((s) => {
+        if (cancelled) return;
+        markCount = s?.marks ?? 0;
+        noMarksReason = s?.reason || '';
+      })
+      .catch(() => { if (!cancelled) { markCount = 0; noMarksReason = ''; } });
+    return () => { cancelled = true; };
+  });
+  // Falling back to the original when nothing can be marked would be the one
+  // thing this must never do: an unmarked file presented as the marked one.
+  const markedSrc = $derived(
+    job?.job_id && markCount > 0 ? api.markedPdfUrl(job.job_id) : '');
+
   // ── Confidence ──
   let confidence = $state<any>(null);
   let confidenceLoaded = $state(false);
@@ -423,7 +452,7 @@
       <div class="border-t-2 animate-slideDown" style="border-color: var(--line); background: var(--surface);">
         <!-- Tab bar -->
         <div class="flex gap-0 border-b" style="border-color: rgba(56,56,50,0.15);">
-          {#each [['results', 'RESULTS'], ['annotated', 'PDF (ANNOTATED)'], ['log', 'PIPELINE LOG']] as [key, label]}
+          {#each [['results', 'RESULTS'], ['annotated', 'MARKED PDF'], ['log', 'PIPELINE LOG']] as [key, label]}
             <button class="px-3 py-1.5 text-[10px] font-bold uppercase cursor-pointer"
               style="{activeTab === key ? 'background: var(--surface-container); color: var(--on-surface);' : 'color: var(--outline); background: var(--surface-container);'}"
               onclick={() => { activeTab = key as any; if (key === 'pagemap') loadPageData(); }}>
@@ -1083,24 +1112,38 @@
                   <div class="flex gap-0" style="border: 1px solid var(--primary-container);">
                     <button class="px-2 py-0.5 text-[8px] font-bold cursor-pointer"
                       style="{pdfMode === 'annotated' ? 'background: var(--primary-container); color: var(--on-surface);' : 'color: var(--primary-container);'}"
-                      onclick={() => pdfMode = 'annotated'}>ANNOTATED</button>
+                      disabled={markCount === 0}
+                      title={markCount === 0 ? (noMarksReason || 'Nothing could be marked on this document') : `${markCount} values highlighted`}
+                      onclick={() => pdfMode = 'annotated'}>MARKED{markCount > 0 ? ` (${markCount})` : ''}</button>
                     <button class="px-2 py-0.5 text-[8px] font-bold cursor-pointer"
                       style="{pdfMode === 'original' ? 'background: var(--primary-container); color: var(--on-surface);' : 'color: var(--primary-container);'}"
                       onclick={() => pdfMode = 'original'}>ORIGINAL</button>
                   </div>
                 </div>
-                {#if pdfMode === 'annotated'}
+                {#if pdfMode === 'annotated' && markCount > 0}
+                  <!-- The colours the backend actually writes: header amber
+                       (0.98,0.75,0.14), items blue (0.15,0.39,0.92). The legend
+                       said green/amber, which matched neither. -->
                   <div class="flex items-center gap-3 text-[8px]">
-                    <span><span style="display:inline-block;width:8px;height:8px;background:var(--success);margin-right:3px;"></span> Declaration</span>
-                    <span><span style="display:inline-block;width:8px;height:8px;background:var(--warning);margin-right:3px;"></span> Items</span>
+                    <span><span style="display:inline-block;width:8px;height:8px;background:#FABF24;margin-right:3px;"></span> Declaration</span>
+                    <span><span style="display:inline-block;width:8px;height:8px;background:#2664EB;margin-right:3px;"></span> Items</span>
+                    <a href={markedSrc} target="_blank" rel="noopener"
+                      style="color: var(--primary-container); text-decoration: underline;">OPEN / DOWNLOAD</a>
                   </div>
                 {/if}
               </div>
-              <iframe
-                src={pdfMode === 'annotated' ? `/api/jobs/${job.job_id}/annotated-pdf?token=${auth.token}` : pdfUrl}
-                title="PDF Viewer"
-                style="width: 100%; height: 700px; border: none;"
-              ></iframe>
+              {#if pdfMode === 'annotated' && markCount === 0}
+                <div class="px-3 py-6 text-center text-[11px] font-mono"
+                  style="color: var(--on-surface-muted); background: var(--surface-container-low);">
+                  NO MARKED PDF — {noMarksReason || 'no positions could be measured on this document'}
+                </div>
+              {:else}
+                <iframe
+                  src={pdfMode === 'annotated' ? markedSrc : pdfUrl}
+                  title="PDF Viewer"
+                  style="width: 100%; height: 700px; border: none;"
+                ></iframe>
+              {/if}
             </div>
 
           {:else if activeTab === 'log'}

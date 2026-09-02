@@ -201,6 +201,193 @@ Products) exports, terracotta header. **Add a column → update `excel.py` write
 needs recreate**, which reverts hot-cp'd files — so bake first: `docker commit ro-ed-api
 ro-ed-lang-app:latest` **then** `docker compose -p ro-ed-lang up -d --no-deps app worker`
 (app + worker share `ro-ed-lang-app:latest`). Frontend rover pages: `frontend/src/routes/rover/`.
+Also add `COPY backend/rover/ /app/rover/` to the Dockerfile (present now) so a full rebuild
+keeps rover — it previously survived only through `docker commit`.
+
+### ROVER PRO — the same engine on the Agent page (hybrid)
+
+ROVER is also selectable as an **engine on the Agent page** under the name **ROVER PRO**
+(engine id `rover`), alongside ATLAS V14 — while the standalone `/rover` surface stays the
+deep-review workbench. Wiring: `routes/settings.py` registers `rover` in `ALL_ENGINES`
+(default-enabled `['rover','atlas']`); **`v11/workflow._run_rover()`** is the bridge — an
+`engine=='rover'` intercept at the top of `run()` calls `rover.pipeline_fast.run()`, maps the
+ROVER `Cell` record → the V11 declaration/items snake_case schema, persists through the same
+`_save_to_db`, and emits the same live events, so the Agent page (upload → terminal → results
+→ review/approve, History/Items/Declarations) works unchanged. It never falls through to
+V7/V10. `model_used = "Rover Pro · Native-PDF"`.
+
+**Gotchas the bridge handles:**
+- **ROVER returns numeric strings with thousands separators** (`"1,394,615"`,
+  `"111,488.4288"`). Postgres numeric columns are `real` and reject commas — one bad item
+  value aborts the whole `save_items` batch (items silently vanish; declaration limps through
+  because `save_declarations` coerces). `_run_rover` runs every numeric decl + item field
+  through `_num()` (strip commas → float; leave dates/currency/names) before save.
+- Terminal banners (`AgentTerminal.svelte`) were hardcoded `[ATLAS V14]` for JOB_START/DONE —
+  now label-aware (`pipeLabel(d.label ?? d.pipeline)`, `rover→ROVER PRO`), and the bridge's
+  JOB_START/DONE carry `label:"ROVER PRO"`.
+- An empty DECLARATION panel after a run is usually a **stale job** created before a mapping
+  change deployed — re-run to repopulate.
+
+### ROVER PRO — 16-doc phased UAT (native-PDF, `google/gemini-3-flash-preview`)
+
+Ran the full team test set one-by-one vs the **PD sheet** of `Testing Results(15.7.25).xlsx`
+(that sheet = the manual truth ledger; the "AI results" sheet is the OLD 3-Jul run + red
+remarks, NOT truth). Totals: **$0.2421** all-in, avg **$0.0151**/doc, median **38s**,
+**10/16 money-clean**. Deliverable: `~/Desktop/ro-ed/RO_ROVER_Phased_Report.xlsx`
+(Summary + P1–P16, per-doc Declaration 27-col + Items 13-col + 8-field compare + narrative).
+
+Scoreboard (of 7 scored fields): P1–P3 7/7 · **P4 5/7** · P5–P7 6/7 · **P8 1/7** · P9 4/7 ·
+**P10 3/5** · P11 5/7 (rate-ok) · P12 6/7 · P13 7/7 · P14 7/7 · P15 5/7 · P16 4/7.
+
+**Proven fixes on real docs:** A invoice de-prefix (P2/P3/P6/P7) · C freight 326,139.86 (P6) ·
+D MA slash decl-no `MA0259/100405`,`MA0259/100560` (P15/P16). Native **beats the ledger on
+rate** where FC×rate=total reconciles but the ledger value doesn't (P11/P13/P14 — likely
+ledger typos).
+
+**Open landmines found (fix order):**
+1. **Silent-ship via gameable JUDGE (P10, worst)** — model fabricated Adjustment 44,612.82 so
+   `(FC+adj)×rate` closed the CIF identity → `suspect=[]` → wrong total shipped (truth = FC×rate).
+   Math JUDGE is beatable by self-consistent hallucination. **Need a build-up/silent-ship guard.**
+2. **Trim under-selects on big multi-invoice docs** — harness keeps only pages with ≥2 text
+   markers; P8 kept 5/28, P9 kept 1/13, dropping money/invoice pages → header-from-items
+   fallback (P8) + hallucinated rate 2100 (P9). Need retain-key-page + header/AT/rate fallbacks.
+3. **CIF false-flag on uplift-heavy docs (P3/P7/P16)** — rate+total both correct yet marked
+   suspect → needless escalation cost (3×). Need a build-up/tolerance gate.
+4. **Commercial-invoice vs CUSDEC-ref (P4/P16)** — model returns the form's `A-/AM-` reference,
+   ledger keys on the exporter commercial number (`EX25003MM`, `PD001`). Need a bridge.
+5. **AT 2% unread (P15/P16)** — AT=0 vs ledger = exactly 2%×total on both. Deterministic
+   fallback `AT = 2%×total when blank` recovers to the cent.
+6. **Text-less scans (P4)** — no text layer → whole-doc vision (slow), empty product line,
+   invoice/date degrade. Need OCR-first / image-marker page targeting.
+
+**Batch-date semantics (confirm with team):** the ledger "date" is a shared registration/batch
+date, not the per-doc form date — P10/P11/P12 (different docs) all ledger-dated 2025-10-09 while
+their printed declaration dates differ; direction (team earlier/later) varies. Not on the CUSDEC
+form. **Recommendation:** keep native-PDF + `gemini-3-flash-preview`, but do NOT auto-ship until
+the silent-ship guard (#1) lands; pre-trim/split large PDFs.
+
+## ROSETTA — engine id `rosetta` (2026-07-30)
+
+Same native-PDF reader as ROVER PRO, plus two things: it **re-reads a document that comes
+back obviously incomplete**, and it **pins its own model** instead of inheriting a shared
+env var. ROVER PRO is unchanged and sits beside it so the two can be compared.
+
+`v11/workflow.py`: `ROSETTA_MODEL` (default `google/gemini-3.6-flash`), an `engine=='rosetta'`
+intercept calling `_run_rover(..., retry_on_empty=True, label="ROSETTA", model=ROSETTA_MODEL)`,
+plus `_looks_incomplete()` and `_run_with_retry()`. `model_used = "Rosetta · Native-PDF"`.
+
+**Why it exists — measured, not assumed.** The same 28-page bundle (100306922661), same
+model, same code, three runs: header wrong + 0 items ($0.3303); everything correct + 7 items
+($0.1731); header correct + **0 items** ($0.2050). Header 2/3, items 1/3. Nothing noticed,
+because a missing item list is not an arithmetic error — there is no sum to fail when there
+are no rows. The bad run also cost **twice** the good one, because the failure triggered
+rescue/recovery passes.
+
+The guard is deliberately narrow — only outcomes that cannot be right:
+- declared total + **zero** product rows → re-read
+- product rows + no total → re-read
+- neither → left alone (a doc with no items has no total; retrying buys the same empty answer)
+- total of `0` → not "present" (0 is what the old code wrote when it read nothing)
+
+**One retry, never a loop.** Second read no better → first stands, `needs_review=True`.
+Retry crashes → first read kept. A retry must never make the outcome worse than not retrying.
+
+**Scope limit, verified:** the guard catches an EMPTY item list, not a WRONG one. Three
+ROSETTA runs all scored 5/5 on header fields, but one produced item rows with `quantity=1`
+and `unit_price=24,021,813.4` (truth: 2400 @ 129.521). Item VALUES are still
+non-deterministic. The next guard needs the form's own `Total items` / `Total item value`,
+which are printed on the page and not currently extracted.
+
+**★★★ A new engine touches SEVEN places** — six in code, one in the database:
+`routes/settings.py` `ALL_ENGINES` + `_DEFAULT_ENABLED` · `v11/workflow.py` model constant +
+`run()` intercept · `agent/+page.svelte` type union + `ENGINE_OPTIONS` + `enabledEngines` ·
+`AgentTerminal.svelte` `PIPELINE_LABEL` + the single-pass check that hides CLASSIFY/ROUTE ·
+**and `settings.engines_enabled` in the DB, which OVERRIDES `_DEFAULT_ENABLED`.** That row
+held `["rover","atlas"]`, so ROSETTA was invisible in the UI no matter how correct the code
+was. Same trap as `engine_default`, which is why ATLAS stayed selected until it was updated.
+
+## ★★★ `invoice_price` changed UNIT — the regression that cost 10 fields
+
+When ROVER PRO was bridged in, `v11/workflow.py` mapped
+`"invoice_price": _num(vals.get("invoice_price_mmk"))`. That **redefined an existing column's
+meaning**. `invoice_price` had always been the INVOICE-CURRENCY amount — the team's ledger THB
+column, both Excel writers, and the signed Beta v3 requirement form (§3 *"Values are read in
+the invoice currency (not MMK)"*) all read it that way.
+
+Scored against the manual PD ledger: **3 Jul run 54/60. Pre-fix today 44/60.** Invoice price
+alone fell **12/13 → 1/13**. After the fix and a re-extract of all 20 documents: **59/60, zero
+regressions.**
+
+**Why three safety nets missed it:** (1) no test asserted the column's UNIT — nothing crashed,
+a float column got a valid float; (2) **the CIF gate reads `invoice_price_fc` FIRST**, so the
+arithmetic still closed and documents shipped `suspect=[]` — the one guard that could have
+caught a wrong invoice was reading the *other* column; (3) nothing compares to the ledger
+automatically. Same shape as the freight/insurance/adjustment NULLs and the mixed date
+formats: **the engine→DB bridge is hand-written field-by-field with no schema contract.**
+
+Fix: `invoice_price_fields(vals, coerce)` in `v11/workflow.py` (extracted so a test calls the
+REAL mapping — the first version of that test copied it and would have passed regardless),
+plus a new `invoice_price_mmk` column so the kyat figure has its own home.
+
+## Shared parsers — `numeric.py` and `dates.py`
+
+Ten near-copies of `_num()` (nine of them `float(str(v).replace(",", ""))`) silently dropped
+any amount printed with its currency: `"THB 652,279.7184"` → None. **`backend/numeric.py`** is
+now the single parser. It does NOT strip every non-digit — that turns `2026/01/08` into
+20260108 and `MA0259/100405` into a number. Currency list is EXPLICIT, not `[A-Za-z]{1,4}`:
+replaying 231 stored values through the loose pattern turned the invoice reference
+`"A- 9518633846"` into a float.
+
+**`backend/dates.py`** — the four date columns are TEXT and held `2025-06-25`, `2024/04/01`
+and `12/10/2025` at once. Day-first vs year-first is settled by the documents: the same bundle
+prints `27/09/2029` and `19/10/2025`, whose leading groups cannot be months. Wired into
+`save_declarations` (every engine) and `coerce_for_column` (reviewer edits).
+
+**`_pick()` in `_save_to_db`** replaced `a or b` on every money row. `or` cannot tell **zero**
+from **absent**: Commercial Tax is genuinely 0 on many declarations and was being stored NULL,
+and on the release order **`Adjustment` is the small CODE integer (2)** printed beside
+`Adjustment value` — a blank adjustment picked up the code as money AND tightened the CIF
+tolerance as though a build-up existed.
+
+## Excel export = the team's own layout
+
+The per-job and bulk writers now emit **exactly** the team's workbook: Declaration **23
+columns**, Product Items **13 columns**, their names and order. Verified by generating a real
+export and diffing headers against the file they supplied. `Release Order Date`, `Arrival
+Date`, `Completion Date`, `Invoice Price (FC)` and `Invoice Price (MMK)` are deliberately NOT
+in the sheet — still extracted, stored, editable and used by the gates.
+`tests/test_export_columns.py` pins the layout and asserts every listed column is actually
+populated. `routes/data.py` used the name `all_cols` for BOTH sheets; renamed.
+
+## ★★ SSE: the terminal listened on the wrong channel
+
+`agent/+page.svelte` set `streamingJobId` to a **client-generated** `preAllocId` before
+submitting, read the server's `stream_id` into a local, and never updated what it listened to.
+The worker publishes to the server's id. Redis showed both key shapes side by side
+(`v11:history:v11-fd698d79c3ff` and `v11:history:b9875677-…`). `AgentTerminal` renders SSE
+lines only `{#if jobId}` and otherwise falls back to the legacy `lines` prop — that fallback
+is the idle `cityagent cli ready` banner users saw while a job was running.
+
+**Refresh dropped the stream too.** The restore path said *"V11 SSE handles live status;
+nothing to poll on restore"* — but nothing reopened it. The job kept running server-side; only
+the UI stopped following it. Now `streamId` is persisted per queue entry and
+`resumeInterruptedJob()` reopens the stream on mount. **The SSE endpoint replays history from
+Redis** (verified: 200, 2373 bytes for a finished job), so the whole log comes back.
+
+## UI revamp — `DESIGN.md` (2026-07-30)
+
+`DESIGN.md` in the project root is the design system, derived by **measuring** the sibling
+CityAgent Insights codebase (`CityAgentWork/bagofwords`, 345 components) rather than by taste:
+`text-xs` 1,952× (body is **12px**), `font-medium` 1,177× vs `font-normal` 30× (**500 is the
+default weight**), `border-gray-200` 619× vs `shadow-*` 144× (**hairlines, not shadows**),
+`dark:` **7,969×** (dark mode is first-class), 2,183 `hover:` and 867 focus rules.
+
+Landing now: `app.css` on the **Tailwind gray + blue-600** palette with three-way dark mode
+and `html { font-size: 12px }`; `AppSidebar.svelte` replacing `TopNav.svelte` (224/56px,
+collapse persisted, mobile drawer); search + **date range** + filters + chips + live count on
+history / declarations / items. Declarations lets you choose WHICH date the range applies to.
+★ The date filter must NEVER drop a row it cannot parse — `inDateRange` returns true on an
+unparseable value.
 
 ## Active extract endpoints
 
@@ -237,6 +424,72 @@ POST   /api/review/{job_id}/rerun                 re-extract; links via parent_j
 ```
 
 Every cell change writes a row in `field_edits` (job_id, field_path, old, new, user, ts).
+
+### Issues layer (plain-English, 2026-07-18)
+
+`backend/issues.py` `build_issues(job, decl, items)` derives a machine-readable list of
+everything wrong/missing on a job — `{code, title, severity, field, detail, cause, fix}` —
+written in PLAIN ENGLISH for non-technical reviewers (no Σ, no CUSDEC/attachment/cross-val
+jargon in user-facing strings; titles like "Products do not add up to the total").
+Computed at READ time from stored declarations/items → works for all past jobs and every
+engine, no migration. Checks: item-sum gap >5%, no items, no declared total, all-5-taxes
+missing, 9 key header fields empty (each with its usual real-world cause), items missing
+HS/price/qty, cross-val failed, accuracy <90.
+
+Wired into: `GET /api/review/{job_id}` (`issues` key, fail-safe wrapper — never breaks the
+payload) → ReviewSplitView "⚠ CHECK THESE" collapsible panel above DECLARATION; and the
+per-job Excel (`routes/jobs.py download_job_excel`) as the FIRST sheet "Issues" (Type =
+MUST FIX / LOOK AT / FYI · Problem · What happened · Why · What to do) — users complain
+from the Excel file, so the explanation ships inside it. Gotchas: the declarations column
+is `invoice_number` (NOT `invoice_no`); add new issue checks to `issues.py` only — both
+consumers pick them up automatically.
+
+### Lifecycle dates (team feedback 2026-07-18)
+
+Each customs PDF carries up to SIX dates. The team's ledger keys on the **Release-Order
+date** (their sheet column "RO/ID Date"), not the Declaration date — the cause of every
+"wrong date" complaint in Testing Results(15.7.25).xlsx. Four dates are now first-class
+columns on `declarations`: `declaration_date`, `arrival_date`, `release_order_date`,
+`completion_date` (TEXT; self-heal ALTERs in `database.py`). Flow: ROVER
+`schema.COLUMNS` + `single_agent` prompt + `deterministic._labeled_date` readers →
+`v11/workflow._run_rover` decl mapping → `_save_to_db` whitelist → `save_declarations`
+INSERT → ReviewSplitView `declRows` → Excel `download_job_excel`. Add a new decl field =
+touch ALL of those; miss one and it silently drops.
+
+**The three lifecycle dates are DETERMINISTIC-ONLY since 2026-08-04.** `arrival_date`,
+`release_order_date` and `completion_date` were removed from the Presto (`v11/presto.py`)
+and Scribe (`v13/scribe.py`) prompts — ~212 tokens/call, which was never the point. The
+point: they are printed at fixed labels, so `v11/textlayer_header.py` and `v11/formread.py`
+read them for FREE and exactly, while on a scanned page — where no reader can run and
+there is nothing to check an answer against — the model filled the blank row by **echoing a
+neighbouring date**. `rover/supervisor.flag_echoed_dates` documents two real documents
+carrying an arrival date and a release-order date printed nowhere in the file, both equal
+to that document's declaration date. **A date has no arithmetic to fail, so no gate catches
+it.** Blank is now the answer on a scan: a reviewer can see a blank, they cannot see an echo.
+Columns, `DECLARATION_FIELD_MAP`, the review screen and the `/declarations` date filter are
+all unchanged — the team still keys on RO/ID Date. `arrival_date` in
+`v11/tools/vision_rescue.py` is the deliberate EXEMPTION (asserted by a test): it is the
+only reader that can overrule an arrival date the typed lane scraped off a waybill
+attachment, which is why `workflow.py` lists it as authoritative from that source.
+Pinned by `tests/test_lifecycle_dates_deterministic.py`.
+
+**★★★ `_save_to_db` whitelist LANDMINE** (`v11/workflow.py`): `db_decl` is a hard
+whitelist — any field an engine extracts but this dict doesn't map is SILENTLY dropped
+before the DB. This is why freight/insurance/adjustment were NULL for every job ever
+(now mapped through; extraction itself still pending) and why the new date columns read
+NULL until added here. Check this FIRST when a field extracts fine in `pipeline_fast`
+but lands empty in the DB.
+
+**Deterministic date readers** (`rover/deterministic.py`): `_labeled_date` tries EVERY
+occurrence of a label (a blank "Arrival Date :" exists on the port delivery-order page
+before the filled CUSDEC one) and excludes false labels — "Release order" must skip the
+"Release order notification" page TITLE. On digital docs these $0 readers beat vision.
+
+**PDF download filename** — `serve_pdf` (`routes/jobs.py /{job_id}/pdf`) sets
+`Content-Disposition: inline; filename="<decl_no>_<job_id>.pdf"` so a saved PDF is
+traceable to both the customs doc and the job. ReviewSplitView loads the viewer iframe
+from the DIRECT token URL, not a blob — a blob-URL download loses the server filename.
+Keep it that way.
 
 ## Auth
 
@@ -296,13 +549,32 @@ frontend/static/
   cityagent-logo-web.png   trimmed brand lockup (login + sidebar)
   cityagent-mark.png       square emblem (favicon / compact use)
 
-UI shell (Claude-style redesign):
-  - `lib/components/Sidebar.svelte` — grouped left rail (Documents / Insights /
-    Admin), 236px, replaces the old top Header (`Header.svelte` kept as fallback,
-    unused). Layout in `routes/+layout.svelte` is sidebar + content; Footer
-    offset left-[236px]. **Mobile (< 768px):** rail is off-canvas behind a
-    hamburger (`mobileOpen` + backdrop); layout/footer offsets are `md:`-gated so
-    content goes full-width.
+UI shell (2026-07-18 overhaul — top nav + merged CLI agent page):
+  - `lib/components/TopNav.svelte` — horizontal top bar (Agent / History / Review /
+    Items / Declarations / Costs / Settings, `auth.canPage`-filtered, sticky,
+    terracotta active underline). REPLACES `Sidebar.svelte` (file kept, unused).
+    The ROVER nav group was deleted — `/rover/*` pages stay reachable by URL only.
+    `Footer.svelte` is full-width (no 236px offset).
+  - `routes/agent/+page.svelte` — ONE merged page (old empty/loaded split deleted):
+    LEFT = light "paper terminal" (`rv-*` scoped styles): engine cards `[1]/[2]`,
+    slim DROP line, QUEUE table (duplicate expands INLINE with view/re-run/confirm),
+    EXECUTE / STOP & CLEAR / CLEAR, BATCH one-liner, RECENT_JOBS (api.listJobs(6)).
+    RIGHT = CLI only (`AgentTerminal` with `light` prop, idle ready-banner via
+    `cliLines`); NO PDF pane — review opens full-width once the job is done.
+    `stopAndClear()` also appears for a stale `processing` entry restored from
+    localStorage after a reload (kills it + wipes the queue).
+  - `AgentTerminal.svelte` light mode = `.atl-flip { filter: invert(0.93)
+    hue-rotate(180deg); }` on title bar + body — the dark console's hardcoded
+    hexes flip to a light palette without touching them. `defaultHeight` prop +
+    SIZE button cycles 520/220/40.
+  - Typography is unified to the terminal grammar: `html { font-size: 15px }`
+    (global rem scale), `.cl-hd` + `.dark-bar` = JetBrains Mono 11px UPPERCASE
+    (NOT serif), `.cl-ph h1` 18px mono, `.cl-stat .n` mono 19px, KpiCard values
+    mono (+ `compact` prop). Don't reintroduce serif panel headers.
+  - FE deploy into the running container: `docker exec -u root ro-ed-api rm -rf
+    /app/frontend-build/_app` (non-root can't delete) → `docker cp frontend/build/.
+    ro-ed-api:/app/frontend-build/` → bake (`docker commit`) → `compose up -d
+    --no-deps app worker`. Skip the rm and stale hashed bundles accumulate.
   - `lib/components/ReviewSplitView.svelte` — split reviewer. All cell/border/
     status colors use theme tokens (`--info` edited, `--warning` empty/flag,
     `--success` ok, `--error`/`--outline-variant` reject) — no raw hex. Every
@@ -328,6 +600,171 @@ scripts/
   pg_backup_now.sh         manual one-shot backup
   pg_restore.sh            restore from <file>.sql.gz
 ```
+
+## Storage types + JSONB — migration `0007` (2026-08-01)
+
+**Alembic owns the DDL. Editing a `CREATE TABLE` in `database.py` changes nothing.** Tables
+are created by `0001_initial_schema`; the boot self-heal only `ADD COLUMN IF NOT EXISTS` —
+it never ALTERs an existing type. A column type is changed by a migration or not at all.
+This was proven the hard way: a "fix" to `importer_profiles.exchange_rate_*` in
+`database.py` was reviewed, looked correct, and was completely inert.
+
+**`0007_storage_types`** — `real` columns 11 → 4, `jsonb` 0 → 12, adds `jobs.raw_extraction`.
+Money is `numeric(20,4)`; rates and unit prices `numeric(24,10)` (a real ledger rate is
+`61.95007144978846` — `real` stored `61.95007`); quantity `numeric(24,6)`; `jobs.cost_usd`
+`numeric(20,8)` because per-call spend drops below $0.0001. `items.{quantity,
+invoice_unit_price, cif_unit_price, exchange_rate}` were **`text`**. Deliberately left `real`:
+`jobs.accuracy_percent`, `jobs.processing_time_seconds`, `processing_logs.duration_seconds`,
+`page_extractions.confidence` — telemetry that never multiplies into money. But
+`items.customs_duty_rate` / `commercial_tax_percent` ARE converted: percentages that are
+inputs to a monetary product.
+
+**★★★ Every migration must guard its ALTERs against a missing column.**
+`0006` altered `invoice_price_fc`, a column **no migration creates** — it exists only via the
+`database.py` self-heal, which runs AFTER alembic. Transactional DDL meant 0006 throwing
+rolled back all six migrations: zero tables, no `alembic_version`, uvicorn crash-looping
+forever. **A first-time deploy could not boot**, and no existing database showed it. Both
+0006 and 0007 now use a `_present_cols()` helper — one `information_schema` query filtered
+by `table_schema = current_schema()`.
+
+**★★★ Converting `text` → `jsonb` breaks two caller patterns, one of them silently.**
+1. `json.loads(row["x_json"])` — psycopg3 returns jsonb already parsed, so this raises
+   `TypeError: ... not dict`. Six sites; two sat inside `except Exception: continue`, so the
+   **checks page rendered empty with no error anywhere**. Use `jsonio.loads_maybe()`, which
+   accepts dict / list / str / bytes / None and works either side of the migration.
+2. `WHERE evidence_json <> ''` — fine on text, a **hard Postgres error** on jsonb
+   (`invalid input syntax for type json`). Use `<> '{}'::jsonb`.
+
+**All jsonb callers CLOSED 2026-08-04** — `tests/test_jsonb_callers.py` was a strict
+`xfail` over 8 open sites; the last two are fixed and the marker is gone, so the file is now
+a live guard that fails when a NEW unguarded parse appears. Both survivors were fixed with
+`jsonio.loads_maybe`. **Neither matched its own pinned description**, which is worth
+remembering because the fix order was chosen from those descriptions:
+
+- `routes/data.py` (`GET /api/data/ai-tables`) — SILENT as documented. Its `except`
+  absorbed the TypeError *per row* inside the aggregation loop, so once every row failed
+  identically the endpoint answered **200 with an empty table list**, not one job missing.
+- `database.py get_page_extractions` — pinned as the worst SILENT site, "nothing raised
+  anywhere". **Wrong: it crashed.** `json.loads(row.pop(jf))` popped BEFORE parsing, so the
+  TypeError left the key already gone and the handler's own `del row[jf]` raised `KeyError`,
+  which `except (JSONDecodeError, TypeError, ValueError)` does not catch.
+
+The blind-spot test that guarded it was **vacuous**: it grepped a 600-char window for
+`"TypeError"` and `"= {}"`, which the replacement's own explanatory COMMENT satisfied. It
+went green while asserting nothing. Now walks the AST — asserts `loads_maybe` present, no
+raw `json.loads`, no `Try`, no `Delete` in that loop. **A guard that greps source text for
+a string can be satisfied by a comment.**
+
+**★★★ A `numeric` column rejects `''`, and one bad row kills the whole batch.**
+`save_items` used `_g(..., default='')`. Against `text` that was harmless; against `numeric`
+it raises `invalid input syntax for type numeric: ""`, the `executemany` aborts, **every item
+is lost and the job still reports success**. All 7 save sites now coerce through
+`numeric.to_float`. That parser is deliberately conservative — it refuses `MA0259/100405` and
+`2026/01/08` rather than mangling an ID or a date — so quantity needs a narrow fallback for
+the unit-suffixed shape (`'383000 U'`) that appears in the team's own export.
+
+**Absent is NULL, never `0.0`.** `database.py` defaulted the item customs value to `0.0`,
+which made "could not read" indistinguishable from "the form says zero" and had the item-sum
+gate report a 100% shortfall on a document where nothing was missing.
+
+**`backend/fields.py`** — a 50-field registry (name / meaning / **unit** / type / nullable /
+export header / aliases) with `validate()`. It is INERT: nothing consumes it yet. It already
+documents 27 live type contradictions and **6 orphan fields that are extracted and then
+silently discarded** — `declaration_no_official`, `importer_code`, `customs_value_usd`,
+`items[].value`, `items[].unit`, `items[].no`.
+
+## Reading the item block — the prompt was written against the wrong form
+
+`rover/single_agent.py` asked for `13.No / 14.Hscode / 15.Description / 18.Quantity /
+19.Value`. Those are **Import Licence (Appendix 4b)** field numbers, and `19.Value` is
+invoice-currency by definition — so `customs_value_mmk` held THB, ~58x wrong, in a column the
+customer's spreadsheet labels MMK. The CUSDEC item block is what to read: `No. 001  HS <code>`
+then `Item name`, `Quantity (1)`, `Item value`, `Invoice unit price`, `Customs value`.
+`value` <- Item value (invoice currency), `customs_value` <- Customs value (assessed MMK).
+Never derive one from the other: the assessed value may carry an uplift.
+
+**★★ There are TWO product lanes.** `single_agent.run()` returns items, and `products.run()`
+returns items, and `pipeline_fast.py` does `items = prod.get("items") or routed_items` — so
+**`products.py` wins**. Fixing only `single_agent.py` changes nothing; the first attempt at
+this fix produced `0.0` on every row for exactly that reason. Any item-schema change must
+land in BOTH prompts.
+
+**Excel is exactly two sheets** — `Product Items` (13 cols) then `Declaration` (23 cols),
+matching the workbook the team supplied. The `Issues` sheet was removed on request; the
+issues themselves still surface in the review UI via `GET /api/review/{job_id}`.
+
+## ★★★ Document identity — a bundle holds a LICENCE beside the declaration (2026-08-04)
+
+`0259100560` stored **19 product rows for a four-item declaration**. Seven were Belgian
+chocolate that is not in the shipment. The bundle is 12 pages: CUSDEC on 3-4, **Import
+Licence (Appendix 4b) on 6-8**, invoice/packing list on 9-10 — and **every page is a
+photograph, 0 extractable characters**, so `triage._locate_cusdec_page` (which searches
+`get_text()` for markers) found no CUSDEC anchor at all.
+
+A licence carries its OWN goods table: same HS codes, same product names, licence
+quantities, and its own `Total CIF Value (Kyats)`. It lists everything the importer is
+PERMITTED to import — here 11 lines against the shipment's 4, and 3,303 KG of one item
+where the CUSDEC declares 3,168. **Both documents are correct.** This can never be fixed by
+picking the "better" read.
+
+**The duplication was the visible problem, not the dangerous one.** The licence's 11 lines
+sum to 95,707,004.71 against the licence total of 95,707,461.09 the header had ALSO taken —
+a 456-kyat gap, 0.0005%, inside any tolerance. Fix the dedup alone and the job ships eleven
+tidy rows reconciling to the penny off the wrong paper, `suspect=[]`. Same shape as the P10
+silent-ship landmine: arithmetic closing on self-consistent wrong inputs.
+
+**Root cause: the classifier knew and threw it away.** Its `reason` string said *"CUSDEC-1
+Customs Import Declaration form"* for p3 and *"Myanmar Import Licence"* for p6 — free text,
+truncated to 80 chars, display only. The only STRUCTURED answer was TYPED / HANDWRITTEN /
+ATTACHMENT, which describes how a page is FILLED IN. A licence is machine-printed, so TYPED
+is honest — and "typed" then stood in for "authoritative" all the way to
+`v7_typed_priority`, which handed a licence the header and the item list.
+
+Four parts, and **the order they were applied in is load-bearing**:
+
+1. **`page_classifier`** now returns `document` — `DECLARATION | LICENCE | INVOICE |
+   PACKING_LIST | OTHER | UNKNOWN` — as a second, independent axis. The prompt states the
+   trap explicitly and that a **continuation sheet IS the declaration** (it carries the item
+   rows). `_document_rescue` settles it free from printed title blocks where text exists.
+   **The licence markers are TITLE-BLOCK phrases, never customs vocabulary** — a licence
+   prints an HS column, a goods table and `Total CIF Value`, so the older `_DECL_MARKERS`
+   (which contains `"cif value"`) identifies the WRONG document with full confidence.
+2. **`workflow._scope_items`** (Phase 3.95): a lane whose pages are positively LICENCE /
+   INVOICE / PACKING_LIST and which touched no DECLARATION page **contributes no items**,
+   and if it is the typed lane it loses `_OFF_DECLARATION_HEADER` too. This overrides
+   Phase 3.9's deliberate *"the typed lane keeps its ITEMS"* — right for misrouted
+   continuation sheets, wrong for a licence.
+3. **`reconcile._document_check`** folds `doc_ok` into `balanced`. Every other clause is a
+   sum, and a licence defeats all four at once because it is internally consistent. **This
+   is the only clause that asks WHICH PAPER.**
+4. **`merger._dedup_match`** last: `_norm_name` strips punctuation + collapses whitespace,
+   plus a `SequenceMatcher >= 0.94` near-match **only when HS, pack or quantity was present
+   AND agreed** (FLAVORED vs FLAVOURED; a -OUR/-OR dictionary is unsafe — FLOUR → FLOR).
+
+**Fail-safes, all pinned by tests:** `UNKNOWN`/`OTHER` are never proof (absence of evidence
+must not delete rows); scoping **never empties a job** — a foreign lane that is the only
+item source is KEPT + `needs_review` (a reviewer can delete a wrong row, not recover a
+dropped one); no DECLARATION page identified → legacy behaviour; untagged items make
+`_document_check` return `doc_checked=False` so no pre-existing job's verdict changes.
+`_src_doc` is stamped BEFORE any dropping and before the no-anchor bail-out — stamping only
+on the drop path leaves the gate blind exactly where it is needed. `save_items` reads
+columns by explicit name, so `_src_doc` never reaches the DB.
+
+**VERIFIED on the real document 2026-08-04:** 19 → **4 items**, quantities 3312 / 5676 /
+**3168** / 5664 matching the CUSDEC (not the licence's 3303), chocolate gone, item sum
+105,506,056 = the total handwritten in the CUSDEC's own box. Cost **$0.2578 → $0.0849** —
+dropping the wrong lane removed the work it caused.
+
+**STILL BROKEN on that document:** `total_customs_value` stored **942,418,932**. The form
+prints `CIF- 942,418.9320` (THB) in field 29 — wrong field AND a lost decimal. Correct
+total is 105,506,056, which the items already sum to. `cross_val_passed=0`, correctly
+flagged. Unrelated to the four phases above; it is the vision rescue reading the header.
+Also: stored `sanity_flags` still quote `decl=95707461` from a reconcile pass that runs
+BEFORE scoping — stale and confusing in the review UI.
+
+**Not caught:** a licence the classifier labels DECLARATION. Its rows are stamped
+DECLARATION and the gate agrees. On an all-photograph bundle the deterministic title check
+cannot run, so the model's label is the only defence.
 
 ## DB schema
 
@@ -395,8 +832,223 @@ Config/code one-liners, not repo leaks (`.env`/certs are gitignored):
 7. **Dedup is strict, not fuzzy.** Item dedup keys include pack-size + price + quantity. Names match exactly (not substring) at merger. Over-collapse loses real items; under-collapse is harmless (review UI handles).
 8. **Design system is token-driven.** All colors / fonts / radii / shadows flow from `frontend/src/app.css` `:root`. Components reference `var(--*)` — never raw hex. Replacing the palette = edit one file.
 
-## DON'T list
+## Evidence layer — boxes, provenance, marked PDF (2026-08-02)
 
+The review screen can now point at WHERE on the page each value came from, say HOW it
+was obtained, and hand back the PDF with every value highlighted.
+
+**`v11/tools/field_bbox.py`** — `compute_field_bboxes(pdf, decl, items, pages=None)`.
+`pages` is the 1-based set the declaration occupies; `None` searches the whole document
+(what every pre-existing caller did); `[]` means the classifier found nothing and
+returns NO boxes rather than falling back.
+
+**`v11/triage.declaration_pages(pdf, cusdec_page, declaration_no)`** — marker anchor
+(only sheet 1 carries the tax block) extended by pages AFTER it that reprint the
+declaration number (the continuation sheets, which hold the item block). Measured on
+the 20-doc corpus: 9 exact, 0 strays, 11 empty — every empty one a scanned declaration.
+
+**`v11/tools/provenance.py`** — `build_evidence(db_decl, field_engine, flags, bboxes)`
+→ `evidence_json`, consumed by `routes/evidence.py` (the Checks queue, which existed
+and was starved once ROVER was retired). Two words per cell on purpose: `trust`
+(corroborated / read / derived) is how the value was obtained, `status`
+(ok / review / suspect) is whether a human must act. **No confidence percentages** —
+there is no honest number for "a model read this once".
+
+**`POST /api/jobs/{id}/relocate-boxes`** — recompute coordinates from the values already
+in the DB. 0.2s, no model call. Exists because boxes are computed ONCE at extraction, so
+without it every locator fix would reach only future jobs.
+
+**`GET /api/jobs/{id}/annotated-pdf`** + **`/marks`** — the original PDF with real
+PyMuPDF highlight annotations (header amber, items blue, popup names field and value),
+and a cheap status call so the UI can decide whether to OFFER the download.
+
+### ★★★ Four places invented a page number
+
+Each rendered identically to a real answer, so none looked like a bug:
+
+- `_search_first` took the FIRST hit anywhere in the bundle — **31 of 54 boxes landed
+  on the invoice or packing list**, not the declaration.
+- `declPageRef()` ended `return 1`. Neither `declFieldPages` nor `decl_page_no` is
+  served by the API, so **page 1 was the only answer it ever gave**.
+- `itemPageRef()` fell back to `page = idx + 1`. Items sit in ONE block on the
+  declaration's second sheet, so a 7-item document offered seven wrong pages.
+- `annotated-pdf` re-searched from scratch and carried all of it into the file.
+
+0 now means "not located" and the UI renders `–`. **No box beats a wrong box**: a
+reviewer sent to the wrong document to confirm a customs figure is being told something
+false, and it looks deliberate.
+
+### ★★★ The stored spelling is not the printed spelling
+
+Verbatim search never matched a money row or a date:
+
+- DB `98773433.29`, form `98,773,433.29`; also `20000.0` (a `numeric` artefact) vs `20000`
+- `dates.py` normalises to ISO `2025-10-14`, the form prints `2025/10/14`
+
+`_variants()` generates the printed forms and is **driven by the value's TYPE, not by
+whether the text parses as a number** — grouping the string `declaration_no` into
+`100,313,870,641` would match nothing, and a partial match would box the wrong figure.
+
+### ★★★ A marked PDF must never assert a value it does not have
+
+Boxes are keyed by field name and both key spaces get located, so a job carries boxes
+under names the table has no column for. Seven highlights read `customs_duty = None`
+while sitting on the figure already correctly marked under its DB name. `iter_marks()`
+skips a box whose value is gone — which also covers a reviewer clearing a field.
+
+### ★★★ Half the corpus cannot be located by text at all
+
+On `100306922661` the declaration is pages 1-5 with **0 characters**; the 66k characters
+in that PDF are all on the licence, invoice and packing list. A naive search finds
+matches — every one on the wrong document. Those jobs get values, gates and Excel but
+no boxes and no marked PDF, and the app says so.
+
+**Vision-reported coordinates — WIRED IN 2026-08-04, NOT YET PROVEN ON A LIVE MODEL.**
+`vision_rescue.py` now appends a `"boxes"` key to the call Phase 4.36 *already makes* on
+a photographed declaration — no second call, ~$0.0035/scanned page at the default 2
+votes. Boxes are converted against that page's real `page.rect` (never assumed A4),
+tagged `source: "vision"`, folded additively into `field_bboxes["declaration"]` in Phase
+4.5, and picked up unchanged by `build_evidence`, `/marks` and `/annotated-pdf`.
+`field_bbox.py` is deliberately untouched — the text-layer path measures 28/28 and stays
+exactly as it was. Kill switch: `VISION_RESCUE_BOXES=0` restores the byte-identical
+value-only prompt.
+
+**Five layers, every one DROPS rather than repairs** — out-of-range is rejected, never
+clamped, because a clamped box is indistinguishable from a measured one once stored:
+(1) the prompt tells the model omitting costs nothing; (2) `_norm_box` rejects wrong
+arity / non-numeric / NaN / inf / out-of-range / inverted / hairline / **oversized —
+`[0,0,1,1]` and a full-width band are the model gesturing at the form, not pointing at a
+figure**; (3) `_extract_boxes` drops a box whose value this same read did not return,
+including one a sanity gate nulled — else the box lands on exactly the figure the
+pipeline just decided not to trust; (4) `_vote` drops a box two reads placed >0.05 apart,
+never averages; (5) `workflow` keeps only fields the rescue actually WROTE.
+
+**The tier is `estimated`, not `exact`, and that must not drift.** `routes/evidence.py
+_located()` returns `exact` only when `model == "geometry"`; the rescue tags its fields
+`vision_cusdec`, so a reported box reads *"The reader reported this spot; it has not been
+measured."* A test pins that `"vision_cusdec"` is NOT in `_GEOMETRY_WRITERS` — the single
+line that would silently relabel every reported box as a measurement.
+
+`relocate-boxes` PRESERVES `source: "vision"` boxes (a text-layer hit still wins). Without
+that, one click on a photographed job recomputes nothing and deletes the only positions it
+has. It cannot CREATE them — that needs a paid call — so **jobs extracted before 4 Aug
+2026 stay boxless until re-extracted.**
+
+**Still unproven / not covered:** no real model has been asked for coordinates with this
+prompt. The "28 of 28, $0.03/page" experiment this was built from **is not in the repo** —
+searched, it does not exist. A live run must still show the model emits `boxes` at all,
+that they land right, that two votes agree often enough that the 0.05 gate does not reject
+nearly everything, and — the one to watch — **that the longer prompt does not degrade the
+VALUES**, which matter more than the boxes. If the gate proves too strict the answer is
+fewer boxes, not looser validation. Header fields ONLY: the rescue never reads the item
+block, so a scanned job's marked PDF carries header marks and no product lines.
+
+The crop pad is 14pt for a vision box vs 5pt for a measured one (`evidence.py`): a box
+accurate to thousandths of a page, cropped as tightly as a measured one, can clip the
+first or last digit — a worse read than no crop.
+
+### ★★ Rendering: PNG is wrong for a photograph
+
+A whole-page PNG of a scanned sheet was 4.8 MB, and lowering the DPI barely helped —
+PNG is lossless, so it stores photographic noise faithfully. JPEG q72 → **397 KB**.
+`page-image` picks per page: text layer → PNG (line art, digits stay sharp),
+photograph → JPEG. 7 MB → ~300 KB per page.
+
+### ★★ `#page=N` on an iframe is read once, at load
+
+Rewriting the fragment on an already-loaded PDF changes nothing, so every page click and
+field hover was silently ignored — the strip said page 10 while the viewer showed page 3.
+The review viewer now renders a page IMAGE by default (`FULL PDF` toggles back for text
+selection and printing). It is also the only way to draw a highlight box: you cannot
+position an element over a browser PDF plugin. Zoom is held in state — the old hardcoded
+`zoom=page-fit` was re-applied on every hover-jump, so zooming appeared broken.
+
+## Deploy + first-boot facts (verified 2026-08-04)
+
+The stack was torn down with `down -v` and rebuilt from the Dockerfile — **the fresh-database
+boot test that `0006` once broke now PASSES**: `0001 → 0008` ran to head on empty volumes,
+21 tables, 0 errors. A first-time deploy boots. Also proves rover is fully retired —
+`rover_documents` / `rover_items` / `rover_reports` do NOT exist on a clean install; they
+were only ever created by rover's own self-heal, never by a migration.
+
+- **nginx caches the app container's IP.** It resolves `app` once at start, so after any
+  `up -d --no-deps app` the site 502s while the app itself is healthy. **Restart nginx after
+  recreating app** — otherwise you debug a working backend.
+- **The boot banner prints the DB password.** `✅ Database initialized (postgres) — DSN:
+  postgresql+psycopg://ro_ed:<password>@postgres:5432/ro_ed`, once per uvicorn worker. Dev
+  password today; the line prints whatever the real credential is. Mask it.
+- **`must_change_password` never fires when `.env` supplies the password.**
+  `database.py:326-328` — the env path sets `must_change = 0`; only the random-password path
+  forces a change. So a deploy with `ADMIN_DEFAULT_PASSWORD` set never prompts. That value is
+  also only used to CREATE the admin: changing `.env` later does nothing to an existing user.
+- The `pg-backup` sidecar fired **8 full dumps in 61 seconds** on 3 Aug (02:00:41→02:01:08).
+  Looks like a retry storm in `pg_backup_loop.sh`. Harmless at 20K, wasteful at real size.
+
+## DON'T list
+- **Don't treat "typed" as "authoritative".** It says how a page is FILLED IN, not which
+  document it is. An Import Licence is machine-printed and is not the declaration. Use
+  `document`, and never default an unrecognised value to DECLARATION.
+- **Don't fix dedup before fixing provenance.** Collapsing duplicates makes a wrong answer
+  tidy: 19 licence-and-CUSDEC rows become 11 licence rows reconciling to the penny against
+  a licence total, with nothing left to fail.
+- **Don't build a document-identity marker set out of customs vocabulary.** A licence
+  prints HS codes, a goods table and `Total CIF Value`. Only title-block phrases
+  (`IMPORT LICENCE`, `APPENDIX 4b`, `Ministry of Commerce`) separate the forms.
+- **Don't let a scoping rule empty a job.** No items = no sum = nothing to fail. Keep the
+  rows, force review, and say which document they came from.
+- **Don't assert a guard by grepping source for a string.** A comment explaining the fix
+  can satisfy it, and the test goes green asserting nothing. Walk the AST. (Cost: the
+  jsonb blind-spot test passed on the word "TypeError" appearing in its own fix's comment.)
+- **Don't ask a model for a value that is printed at a fixed label.** A deterministic
+  text-layer reader gets it free and exactly; on a scan the model echoes a neighbouring
+  field to fill the blank, and a date has no arithmetic to fail. Blank beats an echo.
+- **Don't repair a model-reported coordinate.** Clamping an out-of-range box makes it
+  indistinguishable from a measured one. Reject it. Same rule as never inventing a page.
+- **Don't let a vision box claim `exact`.** `_located` keys on `model == "geometry"`;
+  anything else is `estimated`, and the reviewer is told it was reported, not measured.
+- **Don't let a page number be a fallback.** If a value was not located, return 0 /
+  render `–`. Page 1, `idx + 1` and "first hit in the document" have all shipped here and
+  all send a reviewer to the wrong document with full confidence.
+- **Don't search for a stored value verbatim.** Go through `field_bbox._variants()` —
+  the column holds `98773433.29` and `2025-10-14`, the form prints `98,773,433.29` and
+  `2025/10/14`. Generate printed forms from the TYPE, never by pattern-matching the text.
+- **Don't add a field to the review payload's `job` dict by forgetting to.** It is a
+  hand-written whitelist and therefore a schema: `field_bboxes`, `cost_usd`, `tokens_in`,
+  `tokens_out`, `processing_time_seconds` and `model_used` were all computed, stored, read
+  by the UI, and absent from that dict — so the header showed `$0.000 · TOK:0.0k · TIME:—`
+  and every field claimed page 1.
+- **Don't declare a response-model field type by hand and hope.** `0007` made four `items`
+  columns `numeric`; `ItemResponse` still said `str`; Pydantic v2 refuses `Decimal → str`,
+  so `/api/data/items` answered **500 on every request for a day** while the page's own
+  empty state ("No product items yet") made it look intended. `tests/test_response_schema_types.py`
+  derives column types from the migration chain and pins this.
+- **Don't render a photographed page as PNG.** Lossless storage of camera noise cost 4.8 MB
+  a page; JPEG q72 costs 397 KB. Keep PNG only where there is a text layer.
+- **Don't invent a confidence number.** Status words and a plain sentence; a percentage
+  reads as a measurement and none of these are measured.
+- **Don't `docker exec ... <<HEREDOC` without `-i`.** stdin is discarded, the command
+  exits 0 having done nothing, and `set -e` sees success. The first data wipe deleted
+  1.2 GB of PDFs and left every database row in place.
+
+- **Don't add an engine without updating all SEVEN places** — and remember `settings.engines_enabled` / `engine_default` in the DB OVERRIDE the code defaults. See the ROSETTA section.
+- **Don't redefine what an existing column means.** `invoice_price` is the INVOICE CURRENCY. Changing a column's unit is invisible to types, to tests that only check presence, and to the CIF gate (which reads `invoice_price_fc` first).
+- **Don't use `a or b` on a money or tax field.** A declared 0 is a reading, not a blank. Use `_pick()`.
+- **Don't parse an amount or a date inline.** Use `numeric.py` / `dates.py`. Never strip every non-digit — that turns dates and the MA-series id into numbers.
+- **Don't drop a row because its date won't parse.** Keep it and let a human see it.
+- **Don't add an infinite CSS animation**, and honour `prefers-reduced-motion`. A decorative blinking terminal cursor was removed for exactly this.
+
+- **Don't change a column type by editing `database.py`.** Alembic owns the DDL; the
+  self-heal only ADDs columns. Write a migration, and guard every ALTER with an
+  existence check — `0006` took down a first-time deploy by altering a column that
+  no migration creates.
+- **Don't `json.loads()` a `*_json` column.** They are `jsonb` since `0007`, so they
+  arrive already parsed. Use `jsonio.loads_maybe()`. And never compare one to `''` in
+  SQL — that is a hard cast error on jsonb.
+- **Don't pass `''` or a default into a numeric column.** One bad row aborts the whole
+  `executemany` and the items vanish while the job reports success. Coerce through
+  `numeric.to_float`; absent stays NULL.
+- **Don't change the item schema in one prompt only** — `single_agent.py` AND
+  `products.py` both produce items, and `products.py` wins.
 - **Don't reference deleted code.** V8 / V9 / V9_PRO / V10 (without _PRO) are gone. So is the WebSocket SSE proxy and Tesseract OCR. Don't mention them.
 - **Don't read `database.py` for schema.** It's a legacy compat shim. Schema lives in `backend/alembic/versions/0001_initial_schema.py`.
 - **Don't write secrets to logs.** No printing JWT_SECRET_KEY, LDAP bind passwords, S3 keys, or OpenRouter keys.
@@ -406,7 +1058,7 @@ Config/code one-liners, not repo leaks (`.env`/certs are gitignored):
 - **Don't put `{@const}` at template root** — must be inside `{#if}` / `{#each}` / `<Component>` blocks.
 - **Don't hard-code hex colors in components** — use design tokens (`var(--primary)`, `var(--on-surface)`, `var(--surface-container)`, etc.) defined in `frontend/src/app.css`. Never re-introduce the old brutalist `* { border-radius: 0 !important }` reset, hard `box-shadow: 4px 4px 0px 0px var(--on-surface)` stamp, neon greens (`#00fc40`, `#22c55e`), or `Space Grotesk` font — they were removed in the Claude-style redesign.
 - **Don't use uppercase + ultra-bold for body chrome** — the design system is sentence-case with serif headings (Source Serif 4) and Inter body. Reserve uppercase for tiny labels (`.tag-label`, table column headers).
-- **Don't reintroduce the top `Header` nav or black/heavy borders** — navigation is the grouped left `Sidebar.svelte`; borders use `var(--line)` (soft). Build new pages from the `cl-*` layer in `app.css`, not bespoke boxes. Dark terminal/log consoles (history, PipelineVisualizer) stay intentionally dark.
+- **Don't reintroduce the old `Header` or `Sidebar` navs** — navigation is the horizontal `TopNav.svelte` (Sidebar.svelte is dead code); borders use `var(--line)` (soft). Build new pages from the `cl-*` layer in `app.css`, not bespoke boxes. The agent page is LIGHT everywhere (user rejected dark mode) — the CLI console goes light via the `.atl-flip` invert filter, not by re-hexing colors.
 - **Don't add slowapi limits without `request: Request` in the handler signature** — it 500s.
 - **Don't add a declaration/item field without updating BOTH Excel writers.** The exports build rows from hand-written dicts — `routes/jobs.py` `download_job_excel` (per-job, Declaration sheet) and `routes/data.py` `download_declarations_excel` / `download_items_excel` (bulk). A new column in the DB + review UI does NOT appear in the spreadsheet on its own. That's exactly how freight/insurance/adjustment shipped in v2026.6.13 but stayed missing from every download until v2026.6.16 — the field was on screen, in the DB, and in the export's `SELECT d.*`, just absent from the dict. `jobs.py` also passes `columns=` to `pd.DataFrame`, so the column list must be updated too or the key is silently dropped.
 - **Don't store the legacy SQLite file.** Postgres has been the only backend since `0001_initial_schema.py`. Use `backend/scripts/migrate_sqlite_to_pg.py` if you find one in the wild.
@@ -431,6 +1083,12 @@ Config/code one-liners, not repo leaks (`.env`/certs are gitignored):
 | Schema drift after pull | `docker compose exec app alembic upgrade head`. New migrations land in `backend/alembic/versions/`. Evolving columns also self-heal on boot via `ALTER ADD COLUMN IF NOT EXISTS` in `database.py init_database()`. |
 | `column "model_used" ... does not exist` | Old DB stamped at head without the col. Self-heals on boot (`init_database` ALTERs). One-time manual: `ALTER TABLE jobs ADD COLUMN IF NOT EXISTS model_used VARCHAR(100); ADD ... processed_at TIMESTAMP;`. |
 | Worker `(unhealthy)` but jobs run | Healthcheck false-fail (strict `os.environ['REDIS_URL']` / slow cold probe on a shared host). Fixed in `docker-compose.yml` (`.get` fallback + `socket_connect_timeout` + wider timeout/retries). Pull → `docker compose up -d worker`. Nothing depends on worker health status. |
+| Product Items sheet exports 0 rows, job says success | `save_items` hit a numeric column with `''` or a comma string; one bad row aborts the batch. Check the worker log for `save_items error: invalid input syntax for type numeric`. |
+| 502 Bad Gateway, but `/api/health` on `127.0.0.1:9000` is 200 | nginx resolved the `app` container's IP once at startup and you recreated app. `docker restart ro-ed-nginx`. |
+| Review says "LOCATION NOT KNOWN" / "NO MARKS" on every field | The declaration pages are photographs (check `page.get_text()` — a bundle can hold 8k chars and have all of them on the licence/invoice). Correct behaviour, not a bug: no box beats a wrong box. Vision boxes fill this from 2026-08-04, but ONLY on re-extraction — `relocate-boxes` cannot create them. |
+| Checks / evidence page is empty, no error | A `*_json` column is `jsonb` and a caller still does `json.loads()` inside a bare `except`, or SQL compares it to `''`. |
+| Fresh deploy crash-loops, `Running upgrade -> 0001_initial` repeatedly | A migration ALTERed a column that no migration creates; transactional DDL rolled the whole chain back. Add the `_present_cols()` guard. |
+| Item count TOO HIGH (e.g. 4 → 19), extra products that are not in the shipment | A bundled release order carries an Import Licence with its own goods table. Tail the worker log for `[scope]` — it names the lane, the documents it read and what it dropped. If nothing appears, the classifier returned no `document == DECLARATION` (check an all-photograph bundle: `page.get_text()` on every page) and scoping was skipped. See "Document identity". |
 | Item count short (e.g. 16 → 13) | Dedup over-collapse. **Two gates**: (1) V7 assembler at `backend/pipeline/assembler.py:1988-2015` — key = `(name.lower(), HS Code, _pack_size(name), price_bucket, quantity)`. (2) V11 merger `_dedup_match` at `backend/v11/agents/merger.py` — exact normalized name + HS-agree + pack-match + qty-match. Pack-regex covers `gms?\|gm\|grams?\|gr\|kgs?\|kg\|mls?\|ml\|ltr?\|l\|lbs?\|lb\|oz\|pcs?\|pieces?\|x` (case-insensitive, optional trailing dot). Tail worker log for `Dedup: N → M items` — printed key tuple reveals which field collided (empty `pack_size` = regex miss → add the unit variant; same `price_bucket` across variants priced equal = expected). |
 
 ## Quick reference

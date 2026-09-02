@@ -12,6 +12,8 @@ import io
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 
+import numeric
+
 from . import store
 
 _HEAD_FONT = Font(bold=True, color="FFFFFF")
@@ -20,10 +22,8 @@ _META = ["doc_id", "job_id", "document_name", "needs_review"]
 
 
 def _num(v):
-    try:
-        return float(str(v).replace(",", "").strip())
-    except Exception:
-        return None
+    # An amount printed with its currency used to export as a blank cell.
+    return numeric.to_float(v)
 
 
 def _style_header(ws):

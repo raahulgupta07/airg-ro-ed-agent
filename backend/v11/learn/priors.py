@@ -38,6 +38,7 @@ CLI
 from __future__ import annotations
 
 import json
+from jsonio import loads_maybe
 import logging
 import re
 from statistics import median
@@ -485,7 +486,7 @@ def get_priors(importer_name: str) -> dict:
 
     fee_baseline: dict = {}
     try:
-        fee_baseline = json.loads(data.get("fee_baseline_json") or "{}")
+        fee_baseline = loads_maybe(data.get("fee_baseline_json"))
         if not isinstance(fee_baseline, dict):
             fee_baseline = {}
     except (json.JSONDecodeError, TypeError):

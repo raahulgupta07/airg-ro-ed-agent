@@ -41,10 +41,23 @@ class PrestoDeclaration(BaseModel):
     currency: Optional[str] = None
     currency_2: Optional[str] = None
     exchange_rate: Optional[float] = None
+    declaration_no_official: Optional[str] = None     # the doc's own no. when a
+                                                      # first-approval no. also exists
+    arrival_date: Optional[str] = None
+    release_order_date: Optional[str] = None
+    completion_date: Optional[str] = None
     invoice_price: Optional[float] = None
-    freight_value: Optional[float] = None             # CIF build-up, invoice currency
-    insurance_value: Optional[float] = None           # CIF build-up, invoice currency
-    adjustment_value: Optional[float] = None          # other additions/deductions (signed)
+    invoice_price_fc: Optional[float] = None          # 'Invoice price' foreign-currency line
+    invoice_price_mmk: Optional[float] = None         # 'Invoice price' (MMK) line
+    # CIF build-up. Each line prints its OWN currency code on the form — Insurance is
+    # often already MMK while Adjustment on the same declaration is in the invoice
+    # currency. Assuming one unit for all three overstated a real total 4x.
+    freight_value: Optional[float] = None
+    freight_currency: Optional[str] = None
+    insurance_value: Optional[float] = None
+    insurance_currency: Optional[str] = None
+    adjustment_value: Optional[float] = None          # signed; NOT the small 'Adjustment' code
+    adjustment_currency: Optional[str] = None
     total_customs_value: Optional[float] = None       # reconcile anchor
     customs_duty: Optional[float] = None
     commercial_tax: Optional[float] = None

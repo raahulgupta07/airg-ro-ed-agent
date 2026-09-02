@@ -220,7 +220,7 @@ from routes import activity as activity_routes
 from routes import storage as storage_routes
 from routes import review as review_routes
 from routes import learn as learn_routes
-from routes import rover as rover_routes
+from routes import evidence as evidence_routes
 app.include_router(auth_routes.router, prefix="/api/auth", tags=["auth"])
 app.include_router(job_routes.router, prefix="/api/jobs", tags=["jobs"])
 app.include_router(user_routes.router, prefix="/api/users", tags=["users"])
@@ -234,7 +234,11 @@ app.include_router(ldap_routes.router, prefix="/api/ldap", tags=["ldap"])
 app.include_router(activity_routes.router, prefix="/api/activity", tags=["activity"])
 app.include_router(storage_routes.router, prefix="/api/storage", tags=["storage"])
 app.include_router(review_routes.router, prefix="/api/review", tags=["review"])
-app.include_router(rover_routes.router, prefix="/api/rover", tags=["rover"])
+# /api/rover unmounted 2 Aug 2026 — the app is ATLAS-only. `backend/rover/` and
+# `routes/rover.py` are still on disk (and its tests still run) so this is one line
+# to undo; the `rover_documents` / `rover_items` / `rover_reports` tables and every
+# past job are untouched.
+app.include_router(evidence_routes.router, prefix="/api/evidence", tags=["evidence"])
 
 
 @app.post("/api/extract")
@@ -614,6 +618,28 @@ def _split_event(event):
     return "message", event
 
 
+def _default_engine_model() -> str:
+    """Which reader the currently-default engine will use.
+
+    Each engine resolves its own model — ROSETTA pins one in its definition,
+    ROVER reads a shared env var, Atlas uses the configured extraction model.
+    Reporting a single global constant here is what made the footer lie.
+    """
+    try:
+        import database
+        default = database.get_app_setting("engine_default", None) or "atlas"
+    except Exception:
+        default = "atlas"
+    try:
+        if default == "rosetta":
+            from v11.workflow import ROSETTA_MODEL
+            return ROSETTA_MODEL
+        if default == "rover":
+            return os.environ.get("ROVER_PRIMARY_MODEL", "google/gemini-3.6-flash")
+        return getattr(config, "EXTRACTION_MODEL", None) or "unknown"
+    except Exception:
+        return "unknown"
+
 @app.get("/api/health")
 async def health_check():
     """Health check with system stats."""
@@ -629,6 +655,10 @@ async def health_check():
         "status": "ok",
         "version": config.APP_VERSION,
         "engine": config.APP_ENGINE,
+        # The reader the DEFAULT engine actually uses. The footer used to show a
+        # hardcoded "GEMINI-3.1-FLASH-LITE" prop default that was never passed a
+        # value, so it displayed a model nothing had used for months.
+        "model": _default_engine_model(),
         "changelog": config.APP_CHANGELOG,
         "pipeline": "LLM Assembler + Verifier",
         "database": {

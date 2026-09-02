@@ -80,19 +80,56 @@ def merge_results(v7_result: Optional[Dict], v10_result: Optional[Dict]) -> Dict
 
     # Merge declaration: V7 wins where present, else V10
     merged_decl = dict(v10_decl)  # start with V10
+    # Which lane supplied each field. Without this the only way to find out was to
+    # re-run and guess, which cost four cycles on one document.
+    field_engine = {k: "hw" for k in v10_decl}
+    typed_tag = (v7 or {}).get("_field_engine") or {}
     for k, v in v7_decl.items():
         if v not in (None, "", "None"):
             merged_decl[k] = v   # V7 overrides
+            field_engine[k] = typed_tag.get(k, "typed")
+    merged_decl["_field_engine"] = field_engine
 
     # Merge items: V7 first, then V10 items merged into matching V7 entries
     import re
+    from difflib import SequenceMatcher
+
+    # Brackets, slashes, commas, semicolons, colons and stray periods differ
+    # between two reads of the same printed line and carry no product meaning.
+    # Digits and letters are untouched: a pack size is part of the identity.
+    _PUNCT_RE = re.compile(r"[()\[\]{}/,;:.\-–—_'\"]+")
+
+    # A near-match is only entertained once HS, pack size and quantity have all
+    # already agreed. At that point the remaining difference is spelling, and the
+    # one that actually occurs is British vs American: the same carton read as
+    # "FISH FLAVOURED SEASONING" by one lane and "FISH FLAVORED SEASONING" by the
+    # other. A dictionary of -OUR/-OR pairs is not safe (FLOUR -> FLOR), so this
+    # measures the strings instead. 0.94 admits one or two characters in a long
+    # product name and rejects "150 G" against "250 G", which differ by more.
+    _NAME_NEAR = 0.94
+
     _PACK_RE = re.compile(
         r'\b(\d+(?:[.,]\d+)?)\s*(gms?|gm|grams?|gr|kgs?|kg|mls?|ml|ltr?|l|lbs?|lb|oz|pcs?|pieces?|x)\b\.?',
         re.IGNORECASE,
     )
 
     def _norm_name(it):
-        return str(it.get("item_name") or "").strip().upper()
+        """Upper-case, punctuation-stripped, whitespace-collapsed.
+
+        Two lanes reading the same printed line return the same words with
+        different spacing and bracketing:
+
+            BONITO DASHI (FISH FLAVORED SEASONING)( 150 g/Carton box)
+            BONITO DASHI (FISH FLAVORED SEASONING) (150 G/CARTON BOX)
+
+        Under plain `.strip().upper()` those are different strings, so the same
+        product was stored twice. Only layout is discarded here — every word and
+        every digit survives, so "150 G" and "200 G" remain different names and
+        the pack-size guard below is not being leaned on to catch them.
+        """
+        s = str(it.get("item_name") or "").upper()
+        s = _PUNCT_RE.sub(" ", s)
+        return " ".join(s.split())
 
     def _norm_hs(it):
         """HS code: digits only — handles '0406.10.10 00' vs '0406101000'."""
@@ -111,7 +148,7 @@ def merge_results(v7_result: Optional[Dict], v10_result: Optional[Dict]) -> Dict
            Avoids collapsing pack variants (100g vs 200g) and quantity splits."""
         na = _norm_name(a)
         nb = _norm_name(b)
-        if not na or not nb or na != nb:
+        if not na or not nb:
             return False
         ha = _norm_hs(a)
         hb = _norm_hs(b)
@@ -125,7 +162,16 @@ def merge_results(v7_result: Optional[Dict], v10_result: Optional[Dict]) -> Dict
         qa, qb = _qty(a), _qty(b)
         if qa and qb and qa != qb:
             return False
-        return True
+        if na == nb:
+            return True
+        # Names still differ after layout was normalised away. Allow a near-match
+        # ONLY when the identifying fields have already agreed AND at least one of
+        # them was actually present to agree — otherwise two rows carrying no HS,
+        # no pack and no quantity would collapse on spelling alone, which is how
+        # genuinely different products get merged.
+        if not ((ha and hb) or (pa and pb) or (qa and qb)):
+            return False
+        return SequenceMatcher(None, na, nb).ratio() >= _NAME_NEAR
 
     def _fill_blanks(target, source):
         """Copy source fields into target only where target value is blank."""

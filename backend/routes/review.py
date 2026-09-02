@@ -157,19 +157,46 @@ def _auto_build_priors(job_id: str) -> None:
         pass
 
 
+def _reject_unparseable(col: str, field: str, value, numeric_columns: set) -> None:
+    """400 (not 500) when a typed column is handed text it cannot hold."""
+    if col in numeric_columns:
+        try:
+            database.coerce_numeric(value)
+        except ValueError:
+            raise HTTPException(
+                400, f"{field} is a number — could not read a value from {value!r}")
+        return
+    if col in database.DATE_DECLARATION_COLUMNS:
+        # The column is TEXT, so Postgres would accept anything; the check is
+        # here to stop the mixed-format mess the stored rows already show.
+        try:
+            database.coerce_date(value)
+        except ValueError:
+            raise HTTPException(
+                400, f"{field} is a date — could not read one from {value!r}. "
+                     "Use 2025-10-27, 2025/10/27 or 27/10/2025.")
+
+
 def _apply_edit(job_id: str, entity_type: str, entity_index: int,
                 req: FieldEditRequest, current_user: dict, request: Request) -> dict:
     """Apply a field edit (declaration or item). Returns audit dict."""
+    # A money column is `double precision`; the reviewer is looking at "1,394,615".
+    # database.update_*_field coerces the common formats, but text with no number in
+    # it must come back as a 400 the reviewer can read, not a psycopg 500.
     if entity_type == "declaration":
         col = database.DECLARATION_FIELD_MAP.get(req.field)
         if not col:
             raise HTTPException(400, f"Unknown declaration field: {req.field}")
+        _reject_unparseable(col, req.field, req.value,
+                            database.NUMERIC_DECLARATION_COLUMNS)
         original = database.get_declaration_field(job_id, req.field)
         ok = database.update_declaration_field(job_id, req.field, req.value)
     elif entity_type == "item":
         col = database.ITEM_FIELD_MAP.get(req.field)
         if not col:
             raise HTTPException(400, f"Unknown item field: {req.field}")
+        _reject_unparseable(col, req.field, req.value,
+                            database.NUMERIC_ITEM_COLUMNS)
         original = database.get_item_field(job_id, entity_index, req.field)
         ok = database.update_item_field(job_id, entity_index, req.field, req.value)
     else:
@@ -361,6 +388,25 @@ async def get_review_detail(job_id: str, current_user: dict = Depends(get_curren
             "document_type": job.get("document_type"),
             "accuracy_percent": job.get("accuracy_percent"),
             "total_pages": job.get("total_pages"),
+            # The header strip above the reviewer reads all five and rendered
+            # `$0.000 · TOK:0.0k/0.0k · TIME:—` on every job because none of them
+            # were sent. Every one is a real column on `jobs`.
+            "cost_usd": job.get("cost_usd"),
+            "tokens_in": job.get("tokens_in"),
+            "tokens_out": job.get("tokens_out"),
+            "processing_time_seconds": job.get("processing_time_seconds"),
+            "model_used": job.get("model_used"),
+            # Where on the page each value was found. Computed on every job since
+            # V11, stored in `jobs.field_bboxes_json`, read by ReviewSplitView as
+            # `job.field_bboxes` — and absent from this hand-written dict, so the
+            # UI has always received `{}` and fallen back to showing page 1 for
+            # every field. On a bundled release order the declaration can be on
+            # page 10; "p1" was wrong on every row and looked deliberate.
+            #
+            # Same shape of defect as the `_save_to_db` whitelist: a field that is
+            # computed, stored and consumed, silently dropped by a dict in the
+            # middle that nobody thought of as a schema.
+            "field_bboxes": job.get("field_bboxes") or {},
         },
         "declarations": job.get("declarations", []),
         "items": job.get("items", []),
@@ -368,7 +414,38 @@ async def get_review_detail(job_id: str, current_user: dict = Depends(get_curren
         "flags": {
             "cross_validation": job.get("cross_validation"),
         },
+        "issues": _build_issues_safe(job),
+        "evidence": _evidence_safe(job),
     }
+
+
+def _evidence_safe(job: dict) -> dict:
+    """Per-field extraction evidence, keyed by declaration field.
+
+    Shape: {field: {value, source, confidence, model, status, alternates, note}}.
+    Empty dict for jobs extracted before evidence was persisted, or by an engine
+    that doesn't emit it — the UI must treat absence as 'no evidence', never as
+    'nothing wrong'. Never raises into the review payload.
+    """
+    try:
+        decls = job.get("declarations") or []
+        raw = (decls[0] or {}).get("evidence_json") if decls else None
+        if not raw:
+            return {}
+        ev = json.loads(raw) if isinstance(raw, str) else raw
+        return ev if isinstance(ev, dict) else {}
+    except Exception:
+        return {}
+
+
+def _build_issues_safe(job: dict) -> list:
+    """Derive the issues list; never let it break the review payload."""
+    try:
+        from issues import build_issues
+        decls = job.get("declarations") or []
+        return build_issues(job, decls[0] if decls else None, job.get("items") or [])
+    except Exception:
+        return []
 
 
 @router.patch("/{job_id}/declaration")

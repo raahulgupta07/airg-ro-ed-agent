@@ -4,6 +4,8 @@ columns 'suspect' (which the challenger tier then re-checks). Fail-closed:
 any suspect column -> needs_review."""
 from typing import Dict, List, Tuple
 
+import numeric
+
 from .schema import Cell
 
 # invoice-currency -> MMK plausibility band (mirrors reconcile._CCY_BANDS)
@@ -12,10 +14,10 @@ BANDS = {"THB": (40, 90), "USD": (1500, 5000), "SGD": (1500, 2500),
 
 
 def _num(v):
-    try:
-        return float(str(v).replace(",", "").strip())
-    except Exception:
-        return None
+    # Shared parser: also handles the currency token the form prints with the
+    # amount ("THB 652,279.7184"), which the old comma-strip silently dropped —
+    # here that meant the math supervisor could not run its identity at all.
+    return numeric.to_float(v)
 
 
 # OCR digit confusions seen on scanned CUSDEC barcodes (S↔5, O↔0, I/l↔1, B↔8…).
@@ -85,6 +87,34 @@ def cross_check_declaration_no(det: Dict[str, Cell], vis: Dict[str, Cell],
                 c.alternates.append(alt)
 
 
+def flag_multi_declaration(rec: Dict[str, Cell], ids: List[str]) -> List[str]:
+    """A PDF carrying MORE THAN ONE customs declaration id is a bundle of separate
+    declarations, and this pipeline produces ONE record. Proven in the corpus:
+    100313488550.pdf also contains 100319576711, and the engine read the second
+    declaration's money block (total 198,450,000 + its duty/CT/AT — every value
+    correct) while filing it under the first declaration's number. Right numbers,
+    wrong document identity, and nothing flagged it.
+
+    Until the pipeline can split a bundle into one record per declaration, refuse to
+    ship it silently: mark the identity suspect and name the other ids so a human can
+    see which declaration the money block actually belongs to."""
+    notes: List[str] = []
+    if not ids or len(ids) <= 1:
+        return notes
+    c = rec.get("declaration_no")
+    others = [i for i in ids if _digits(i) != _digits(getattr(c, "value", None))]
+    why = (f"file contains {len(ids)} declarations ({', '.join(ids)}) — the extracted "
+           f"money block may belong to a different one; confirm identity")
+    if c is not None:
+        c.status = "suspect"
+        c.note = (c.note + "; " if c.note else "") + why
+        for o in others:
+            if o not in c.alternates:
+                c.alternates.append(o)
+    notes.append(f"declaration_no: {why}")
+    return notes
+
+
 def merge(det: Dict[str, Cell], vis: Dict[str, Cell]) -> Dict[str, Cell]:
     """Merge deterministic + vision. A high-confidence deterministic read
     (>=0.95: First-approval decl_no, anchored date) WINS over vision. A weaker
@@ -135,7 +165,32 @@ def check(rec: Dict[str, Cell]) -> Tuple[List[str], List[str]]:
     if ct and exn and abs(ct - exn) < 1:
         flag("commercial_tax_ct", "CT equals Exemption/Reduction — likely mislabel")
 
-    # 4. low-confidence any column.
+    # 4. CIF cross-check — the invariant that catches an IN-BAND rate digit-slip or a
+    #    customs-value misread that no single-field band can see:
+    #        total_customs_value (MMK) ≈ (invoice_fc + freight + insurance + adjustment) × rate
+    #    Now computable because invoice_price_fc + the freight/insurance/adjustment build-up
+    #    are extracted. Fail-safe: only fires when every input is present and positive.
+    #    Tolerance tightens to 4% when the build-up is supplied (adjustment carries the
+    #    assessed uplift, so the identity should close tightly); 15% otherwise. A flag here
+    #    routes exchange_rate + total_customs_value to the zoom-recovery re-read, which
+    #    re-checks this same invariant — so a corrected digit auto-clears, else stays flagged.
+    inv_fc = _num(rec.get("invoice_price_fc") and rec["invoice_price_fc"].value)
+    total = _num(rec.get("total_customs_value") and rec["total_customs_value"].value)
+    frt = _num(rec.get("freight_value") and rec["freight_value"].value) or 0.0
+    ins = _num(rec.get("insurance_value") and rec["insurance_value"].value) or 0.0
+    adj = _num(rec.get("adjustment_value") and rec["adjustment_value"].value) or 0.0
+    if inv_fc and rate and total and inv_fc > 0 and total > 0:
+        expected = (inv_fc + frt + ins + adj) * rate
+        has_buildup = any(x for x in (frt, ins, adj))
+        tol = 0.04 if has_buildup else 0.15
+        if abs(expected - total) > tol * total:
+            gap = (expected - total) / total
+            flag("exchange_rate",
+                 f"CIF mismatch: (inv+frt+ins+adj)×rate={expected:,.0f} vs "
+                 f"customs value {total:,.0f} ({gap:+.0%}) — likely rate/value digit-slip")
+            flag("total_customs_value", "CIF mismatch — customs value or rate misread")
+
+    # 5. low-confidence any column.
     for col, c in rec.items():
         if isinstance(c, Cell) and c.status == "ok" and c.confidence and c.confidence < 0.75:
             flag(col, f"low confidence {c.confidence:.2f}")
@@ -193,12 +248,56 @@ def derive_rate_from_totals(rec: Dict[str, Cell]):
     c.note = (c.note + "; " if getattr(c, "note", None) else "") + note
 
 
-def compile(det: Dict[str, Cell], vis: Dict[str, Cell]):
+_ECHOABLE_DATES = ("arrival_date", "release_order_date", "completion_date")
+
+
+def flag_echoed_dates(det: Dict[str, Cell], rec: Dict[str, Cell]) -> List[str]:
+    """Flag a date the model appears to have copied from the declaration date.
+
+    Two documents were found holding an arrival date and a release-order date
+    that are printed nowhere in the file — both equal to that document's
+    declaration date, i.e. the model filled an empty row by echoing a
+    neighbouring one. A date has no arithmetic to fail, so no other gate can
+    see it.
+
+    This FLAGS rather than clears, because an equal date is not proof of an
+    echo: 100306922661 genuinely prints "Declaration date 2025/06/25 Completion
+    date 2025/06/25" on the same row. Deleting on a match would destroy real
+    readings. The signal is only suspicious when the deterministic reader —
+    which reads the printed characters — found no such label at all.
+    """
+    notes = []
+    decl = rec.get("declaration_date")
+    decl_v = getattr(decl, "value", None)
+    if not decl_v:
+        return notes
+    for col in _ECHOABLE_DATES:
+        cell = rec.get(col)
+        val = getattr(cell, "value", None)
+        if not val or str(val) != str(decl_v):
+            continue
+        # Did the text layer actually carry this field?
+        d = det.get(col)
+        if d is not None and getattr(d, "value", None):
+            continue                      # deterministic read it — it is real
+        why = ("same as the declaration date and not found in the text layer — "
+               "may be copied rather than read")
+        cell.status = "suspect"
+        cell.note = (cell.note + "; " if cell.note else "") + why
+        notes.append(f"{col}: {why}")
+    return notes
+
+
+def compile(det: Dict[str, Cell], vis: Dict[str, Cell], decl_ids: List[str] = None):
     rec = merge(det, vis)
     normalize_declaration_no(rec)                    # Fix A
     cross_check_declaration_no(det, vis, rec)        # Fix: catch wrong decl_no on bundles
     derive_rate_from_totals(rec)                     # Fix L2
+    echo_notes = flag_echoed_dates(det, rec)
+    bundle_notes = flag_multi_declaration(rec, decl_ids or [])
     suspect, notes = check(rec)
+    notes.extend(bundle_notes)
+    notes.extend(echo_notes)
     # Sweep: any cell a prior step already marked 'suspect' (cross-check, derivation)
     # joins the review set even if check()'s own rules didn't fire it.
     for col, c in rec.items():

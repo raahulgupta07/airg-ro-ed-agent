@@ -55,6 +55,10 @@ COPY backend/storage/ /app/storage/
 # Backend code — RQ workers (queue + tasks)
 COPY backend/jobs/ /app/jobs/
 
+# Backend code — ROVER (ATLAS V15 native-PDF engine: tiered verified extraction,
+# math-supervisor JUDGE, fail-closed review; own /rover surface + bridged into v11)
+COPY backend/rover/ /app/rover/
+
 # Frontend from stage 1
 COPY --from=frontend-build /frontend/build/ /app/frontend-build/
 

@@ -79,12 +79,24 @@ async def activity_stats(
 
 @router.get("/{event_id}")
 async def get_event(event_id: int, _=Depends(require_admin)):
-    """Single event detail (for drawer)."""
+    """Single event detail (for drawer), plus recent events by the same user.
+
+    Three SQLite-era mistakes lived here and made this 500 on every call, so the
+    detail drawer had never opened:
+
+      * the table is `activity_logs`, not `activity_log`,
+      * the column is `username`, not `user`,
+      * ordering was by `timestamp`, which this table does not have — it has
+        `created_at`.
+
+    None of it could ever have worked against Postgres. The route was written
+    for the SQLite schema and never revisited after the migration.
+    """
     import sqlite3
     conn = database._connect()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
-    cur.execute("SELECT * FROM activity_log WHERE id = ?", (event_id,))
+    cur.execute("SELECT * FROM activity_logs WHERE id = ?", (event_id,))
     row = cur.fetchone()
     conn.close()
     if not row:
@@ -96,11 +108,11 @@ async def get_event(event_id: int, _=Depends(require_admin)):
         conn = database._connect()
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
-        if event.get("user"):
-            cur.execute("""SELECT * FROM activity_log
-                            WHERE user = ? AND id != ?
-                            ORDER BY timestamp DESC LIMIT 5""",
-                        (event["user"], event_id))
+        if event.get("username"):
+            cur.execute("""SELECT * FROM activity_logs
+                            WHERE username = ? AND id != ?
+                            ORDER BY created_at DESC LIMIT 5""",
+                        (event["username"], event_id))
             related = [dict(r) for r in cur.fetchall()]
         conn.close()
     except Exception:

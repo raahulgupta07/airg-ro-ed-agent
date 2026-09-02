@@ -19,6 +19,9 @@ import os
 import sys
 import time
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import numeric  # noqa: E402  (needs the backend root on the path first)
+
 # Key declaration fields compared field-by-field.
 _DECL_KEYS = [
     "declaration_no", "importer_name", "consignor_name", "exchange_rate",
@@ -28,10 +31,10 @@ _DECL_KEYS = [
 
 
 def _num(v):
-    try:
-        return float(str(v).replace(",", ""))
-    except Exception:
-        return None
+    # Shared parser — the bench scorer compared amounts by string-stripping
+    # commas, so any value printed with its currency scored as a mismatch
+    # against an identical value that happened to lack one.
+    return numeric.to_float(v)
 
 
 def _eq(a, b):

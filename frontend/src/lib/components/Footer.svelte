@@ -3,16 +3,19 @@
 
   let {
     pipelineStatus = 'IDLE',
-    model = 'GEMINI-3.1-FLASH-LITE',
+    model = '',
     totalJobs = 0,
     totalCost = 0,
   } = $props();
 
   const statusLabel = $derived(pipelineStatus.toString().toLowerCase());
-  const modelLabel  = $derived(model.toString().toLowerCase());
+  const modelLabel  = $derived(
+    (model?.toString() || healthModel || '—').toLowerCase());
 
   // App version/patch — fetched from the running backend so the UI always
   // reflects what is actually deployed (handy for verifying an AWS update).
+  // /api/health reports the model the DEFAULT engine actually uses.
+  let healthModel = $state('');
   let appVersion = $state('');
   let appEngine = $state('');
   let changelog = $state<string[]>([]);
@@ -22,12 +25,13 @@
       const j = JSON.parse(await r.text());
       appVersion = j.version || '';
       appEngine = j.engine || '';
+      healthModel = j.model || '';
       changelog = Array.isArray(j.changelog) ? j.changelog : [];
     } catch {}
   });
 </script>
 
-<footer class="fixed bottom-0 left-0 md:left-[236px] right-0 h-10 z-40 flex items-center px-3 md:px-6 gap-3 md:gap-5 text-xs overflow-x-auto whitespace-nowrap"
+<footer class="fixed bottom-0 left-0 right-0 h-10 z-40 flex items-center px-3 md:px-6 gap-3 md:gap-5 text-xs overflow-x-auto whitespace-nowrap"
         style="background: rgba(245,244,238,0.85); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-top: 1px solid var(--line); color: var(--on-surface-muted);">
 
   <!-- System ok -->

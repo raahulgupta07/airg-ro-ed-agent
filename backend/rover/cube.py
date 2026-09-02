@@ -23,6 +23,8 @@ import csv
 import json
 import re
 
+import numeric
+
 from . import store
 
 _ID_RE = re.compile(r"[^A-Za-z0-9_-]")
@@ -51,17 +53,10 @@ def _rows(grain: str) -> list:
 
 
 def _num(v):
-    """Coerce a value to float (stripping commas), or None if not numeric."""
-    if v is None:
-        return None
+    """Coerce a value to float, or None if it is not an amount."""
     if isinstance(v, bool):
         return None
-    if isinstance(v, (int, float)):
-        return float(v)
-    try:
-        return float(str(v).replace(",", "").strip())
-    except (ValueError, AttributeError):
-        return None
+    return numeric.to_float(v)
 
 
 # --------------------------------------------------------------------------- #

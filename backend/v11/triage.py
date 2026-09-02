@@ -78,6 +78,60 @@ def _locate_cusdec_page(pdf_path: str):
     return None, False
 
 
+def declaration_pages(pdf_path: str, cusdec_page: Optional[int],
+                      declaration_no: Optional[str] = None) -> List[int]:
+    """1-based pages the customs declaration occupies. Never raises.
+
+    `cusdec_page` is the 0-based anchor `compute_triage` already found; pass it
+    straight through rather than re-scanning. A MACCS declaration runs 1/3-3/3
+    and only the FIRST sheet carries the tax block, so the marker probe finds
+    the anchor and nothing else — the continuation sheets hold the item rows,
+    which is exactly what an item highlight needs to point at.
+
+    Those sheets are found by the declaration number, which is reprinted in the
+    header of every one. Only pages AFTER the anchor count: the number is also
+    quoted on the release-order notification that precedes the declaration in
+    the bundle, and on `100313870641` and `100314743761` that alone pulled in
+    page 9 and page 13 — attachments, not the declaration.
+
+    Returns `[]` when the anchor is unknown, which is every scanned declaration.
+    That is deliberate. A scanned page has no text layer, so no box could be
+    found on it anyway; searching the rest of the bundle would return boxes
+    drawn exclusively from attachments, which is the failure this exists to
+    prevent. No box is the honest answer.
+
+    Measured on the 20-document UAT corpus: 9 documents exact, 0 strays, 11
+    empty (every one a scanned declaration).
+    """
+    if not fitz or not pdf_path or cusdec_page is None:
+        return []
+    try:
+        doc = fitz.open(str(pdf_path))
+    except Exception:
+        return []
+    try:
+        anchor = int(cusdec_page)
+        if not 0 <= anchor < doc.page_count:
+            return []
+        pages = {anchor + 1}
+        dn = (str(declaration_no).strip() if declaration_no else "")
+        if len(dn) >= 6:                      # too short and it matches anything
+            for pg in range(anchor + 1, doc.page_count):
+                try:
+                    if dn in (doc[pg].get_text() or ""):
+                        pages.add(pg + 1)
+                except Exception:
+                    continue
+        return sorted(pages)
+    except Exception:
+        return []
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
+
+
 def compute_triage(pdf_path: str, cls: Dict, engine: str = "auto") -> Dict:
     """Build the authoritative document-type record from the classifier output.
 
@@ -105,7 +159,20 @@ def compute_triage(pdf_path: str, cls: Dict, engine: str = "auto") -> Dict:
     # Fast-path (Presto) eligibility: every TYPED page digital (same rule the
     # router used inline, now centralised here as the single source of truth).
     typed = [p for p in pages if (p.get("label") or "").upper() == "TYPED"]
-    fast_path_available = bool(typed) and all(p.get("has_text_layer") for p in typed)
+    # `all(...)` here meant ONE scanned page switched the fast path off for the whole
+    # bundle. These bundles almost always carry a scanned attachment — a stamped
+    # licence, a photographed invoice — so the fast path was effectively never taken:
+    # on a real 12-page document, pages 3, 6, 7, 8 and 9 had no text layer and Presto
+    # never ran, even though the declaration page itself was perfectly readable. The
+    # slower image re-read then supplied the header instead, and got the declaration
+    # number, the customs value and the adjustment wrong on a page whose text layer
+    # gives all three exactly.
+    #
+    # Presto only reads the pages handed to it, so the requirement is that SOME typed
+    # page is digital — the caller passes just those. A scanned attachment no longer
+    # disqualifies a readable declaration.
+    typed_digital = [p for p in typed if p.get("has_text_layer")]
+    fast_path_available = bool(typed_digital)
 
     det_rescue_available = bool(cusdec_digital)
     # Scanned/absent CUSDEC text → deterministic rescue can't run → vision rescue.

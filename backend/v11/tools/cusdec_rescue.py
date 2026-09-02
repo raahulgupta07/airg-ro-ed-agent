@@ -10,6 +10,8 @@ All parsing is deterministic over the page text layer; never raises.
 """
 import re
 
+import numeric
+
 try:
     import fitz  # PyMuPDF
 except Exception:  # pragma: no cover
@@ -64,14 +66,12 @@ _PREFER = (
     "security_fee_sf", "maccs_service_fee_mf", "total_customs_value",
     "exchange_rate", "declaration_no", "declaration_date",
     "freight_value", "insurance_value", "adjustment_value",
+    "exemption_reduction",
 )
 
 
 def _num(s):
-    try:
-        return float(str(s).replace(",", "").strip())
-    except Exception:
-        return None
+    return numeric.to_float(s)
 
 
 def _is_value_slot(s) -> bool:
@@ -254,7 +254,44 @@ def _parse(text: str, page=None) -> dict:
     """
     lines = [x.strip() for x in text.split("\n")]
     out: dict = {}
+
+    # Geometry first, where the page is available. The flattened text of this form
+    # is not in visual order — a real page extracts as
+    #     MACCS SERVICE FEE 20,000 * MF * 30,000 SECURITY FEE SF
+    # so "the value before the label" hands Security Fee the MACCS fee's amount and
+    # vice versa. That produced a clean transposition on two documents: 20,000 and
+    # 30,000 each stored under the other's name, with no gate able to notice because
+    # both are plausible flat fees and their sum is unchanged.
+    #
+    # The same rows read correctly by coordinate (66 fields across the corpus, no
+    # disagreements). This stage is the LAST writer for these fields, so the reading
+    # has to happen here — a coordinate read earlier in the pipeline is simply
+    # overwritten by whatever this function returns.
+    if page is not None:
+        try:
+            from v11.textlayer_header import _value as _tl_value
+            for field, label in (
+                ("import_export_customs_duty", "IMPORT/EXPORT CUSTOMS DUTY"),
+                ("commercial_tax_ct", "COMMERCIAL TAX"),
+                ("advance_income_tax_at", "ADVANCED INCOME TAX"),
+                ("security_fee_sf", "SECURITY FEE"),
+                ("maccs_service_fee_mf", "MACCS SERVICE FEE"),
+                # Printed in the totals column beside Taxes and fees. Never read
+                # before: the save layer's old `default=0.0` made an unread field
+                # look like a declared zero, which is right often enough to hide it.
+                ("exemption_reduction", "Exemption/Reduction"),
+            ):
+                v = _tl_value(page, label, "num", 260)
+                if v is not None:
+                    n = _num(v)
+                    if n is not None:
+                        out[field] = n
+        except Exception:
+            pass  # geometry is an improvement, never a requirement
+
     for field, keywords in _TAX_MATCH:
+        if field in out:
+            continue      # already read by coordinate — do not let text override it
         for i, line in enumerate(lines):
             ll = line.lower()
             if not any(k in ll for k in keywords):
@@ -306,15 +343,35 @@ def _parse(text: str, page=None) -> dict:
     big = sorted({_num(x) for x in re.findall(r"\b[\d,]{7,}\.\d{2}\b", text) if _num(x)},
                  reverse=True)
     out["total_customs_value"] = big[0] if big else None
-    # MACCS declaration number: 12 consecutive digits.
-    dm = re.search(r"\b(\d{12})\b", text)
-    out["declaration_no"] = dm.group(1) if dm else None
+    # MACCS declaration number. "The first 12 consecutive digits on the page" is not
+    # a rule — it is whatever the flattened text happens to emit first. On an Ex-bond
+    # release the page carries TWO 12-digit declaration numbers: its own, at the top
+    # beside "Declaration No.", and the "First approval declaration No." of the
+    # earlier bonded entry it clears. The bare regex returned the wrong one, and this
+    # function runs AFTER the merge, so it overwrote a correct reading.
+    # Team rule: the top-of-form "Declaration No." only.
+    out["declaration_no"] = None
+    if page is not None:
+        try:
+            from v11.textlayer_header import _value as _tl_value
+            out["declaration_no"] = _tl_value(page, "Declaration No.", "num", 300) or None
+        except Exception:
+            out["declaration_no"] = None
+    if out["declaration_no"] is None:
+        # No page object to read by position: take a 12-digit number ONLY when the
+        # page carries exactly one, so an Ex-bond release can never be mislabelled.
+        cands = set(re.findall(r"\b(\d{12})\b", text))
+        out["declaration_no"] = cands.pop() if len(cands) == 1 else None
     # CIF build-up fields — captured only when the CUSDEC carries a real number
     # ("-" dash stays None). Adjustment "0" is an explicit zero (shown as 0, not —).
     lines = [x.strip() for x in text.split("\n")]
     out["freight_value"] = _adj_num(lines, "Freight")
     out["insurance_value"] = _adj_num(lines, "Insurance")
-    out["adjustment_value"] = _adj_num(lines, "Adjustment")
+    # "Adjustment" and "Adjustment value" are two DIFFERENT rows, 33 points apart.
+    # The first holds a small classification code (2), the second holds the money
+    # ("Adjustment value AD - USD - 44,612.82"). Matching the shorter label read the
+    # code and stored it as an amount.
+    out["adjustment_value"] = _adj_num(lines, "Adjustment value")
     return out
 
 
@@ -415,9 +472,15 @@ def apply_cusdec(decl: dict, pdf_path: str, items=None):
     except Exception:
         fields = None
     if fields:
+        # Provenance, recorded by the writer. This stage runs LAST and wins over
+        # everything upstream, so without a tag here the review screen would
+        # credit whichever earlier lane the value happens to share a name with.
+        _fe = decl.get("_field_engine") or {}
         for k in _PREFER:
             if fields.get(k) is not None:
                 decl[k] = fields[k]
+                _fe[k] = "cusdec_text"
+        decl["_field_engine"] = _fe
         used = True
 
     # Item rescue — only when CUSDEC items reconcile with the (now authoritative)
