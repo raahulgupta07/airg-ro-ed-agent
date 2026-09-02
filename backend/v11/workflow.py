@@ -1959,7 +1959,32 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
                 # digit correction. A wide gap still means missing items and is left
                 # for the gate to fail.
                 _gap365 = abs(_isum - _decl_tot) if _decl_tot else None
-                if (not _decl_tot) or (0 < _gap365 <= _decl_tot * 0.01):
+                # A MEASURED total is not corrected by a corroboration. This phase
+                # exists for a total read off a page by a model — the figure under
+                # the customs PASS stamp, where two votes misread the same pixels
+                # the same way and agreement proves nothing. A deterministic reader
+                # is a different kind of answer: it did not look at the number, it
+                # copied the characters the page actually carries.
+                #
+                # On 100329052130 the text layer read `(10) Total customs value
+                # 109,138,893.66` exactly, three item rows summed 197,001 higher —
+                # 0.18%, inside this window — and the corroborator overwrote the
+                # evidence with the thing it was meant to check. The gate then
+                # passed, because it compared the replacement against the very rows
+                # that produced it.
+                #
+                # A blank still adopts the item sum whatever the writer says: no
+                # reading was destroyed, because there was none.
+                _fe_now = (_d365.get("_field_engine") or {}).get("total_customs_value")
+                _measured = _fe_now in ("textlayer", "cusdec_text")
+                if _decl_tot and _measured:
+                    out["trace"].append({"phase": "total_item_corroboration",
+                                         "skipped": "total was read deterministically",
+                                         "writer": _fe_now, "decl": _decl_tot,
+                                         "item_sum": round(_isum, 2)})
+                    print(f"[total] kept {_decl_tot} from {_fe_now} — item sum "
+                          f"{round(_isum, 2)} does not overrule a measured value")
+                elif (not _decl_tot) or (0 < _gap365 <= _decl_tot * 0.01):
                     _d365["total_customs_value"] = round(_isum, 2)
                     _fe365 = _d365.get("_field_engine") or {}
                     _fe365["total_customs_value"] = "item_sum_corroborated"
@@ -2040,9 +2065,20 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
                 if a in (None, "") or b in (None, ""):
                     return False
                 try:
-                    return abs(float(a) - float(b)) <= 0.01
+                    fa, fb = float(a), float(b)
                 except (TypeError, ValueError):
                     return str(a).strip().upper() == str(b).strip().upper()
+                # Two zeros are not a copied neighbour. On these declarations a duty
+                # of 0 and an Exemption/Reduction of 0 are BOTH printed on the form,
+                # and equality between them carries no information at all — every
+                # blank tax on every clean document matches this way. Blanking there
+                # deletes the one reading a reviewer cannot reconstruct: a stored
+                # NULL says "nobody could read it", while the form says zero.
+                # Measured on 100325461351 and 100329052130, where the text layer
+                # read duty 0.0 correctly and this guard removed it.
+                if fa == 0 and fb == 0:
+                    return False
+                return abs(fa - fb) <= 0.01
 
             _cleared38 = []
             for _tax in ("commercial_tax_ct", "import_export_customs_duty",
