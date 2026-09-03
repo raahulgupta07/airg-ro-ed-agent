@@ -1069,11 +1069,20 @@ def _census_prune(out, pdf_path, triage) -> int:
         return False
 
     def _has_qty(it) -> bool:
-        q = it.get("quantity")
-        try:
-            return q is not None and float(str(q).replace(",", "")) > 0
-        except (TypeError, ValueError):
-            return bool(str(q or "").strip())
+        """A quantity that will not survive into the database is not a quantity.
+
+        This is where the first live run went wrong. The rule looked right and
+        did nothing: at this point in the pipeline an item's quantity is still
+        the raw string off the form — `94 CT`, `1X144` — and treating any
+        non-empty string as a quantity made every echo row look genuine. The
+        SAME rows land in the database with a NULL quantity, because
+        `numeric.to_float` refuses a unit-suffixed number, so the guard was
+        judging a shape the reviewer never sees.
+
+        Reading it through the same parser the save path uses means the guard
+        asks the question that matters: will this row arrive with a quantity?
+        """
+        return (numeric.to_float(it.get("quantity")) or 0) > 0
 
     suspect = [i for i, it in enumerate(items)
                if not _has_qty(it) and not _printed_on_paper(it.get("customs_value_mmk"))]

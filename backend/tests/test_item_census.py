@@ -95,11 +95,8 @@ def _prune(items, printed, doc_text):
         return False
 
     def has_qty(it):
-        q = it.get("quantity")
-        try:
-            return q is not None and float(str(q).replace(",", "")) > 0
-        except (TypeError, ValueError):
-            return bool(str(q or "").strip())
+        import numeric
+        return (numeric.to_float(it.get("quantity")) or 0) > 0
 
     if not printed or len(items) <= printed:
         return list(items), set()
@@ -171,6 +168,28 @@ class TestThePrune:
         assert dropped == set(), (
             "this row has no quantity but its value IS printed on the form; "
             "dropping it would delete a reading a reviewer cannot recover")
+
+    def test_a_unit_suffixed_quantity_counts_as_absent(self):
+        """The live failure this test exists for.
+
+        At the point the guard runs, an item's quantity is still the raw string
+        off the form — `94 CT`, `1X144`. The first version treated any non-empty
+        string as a quantity, so every echo row looked genuine and the guard did
+        nothing on production while passing every test here. Those same rows
+        reach the database with a NULL quantity, because `numeric.to_float`
+        refuses a unit-suffixed number. Reading it through the SAME parser the
+        save path uses is what makes the guard judge the row a reviewer sees.
+        """
+        import numeric
+        assert numeric.to_float("94 CT") is None  # the shape that fooled it
+        items = [
+            {"item_name": "REAL", "quantity": 684.0, "customs_value_mmk": 61016876.63},
+            {"item_name": "ECHO", "quantity": "94 CT", "customs_value_mmk": None},
+        ]
+        kept, dropped = _prune(items, 1, PRISTINE_TEXT)
+        assert dropped == {1}, (
+            "a row whose quantity will not survive into the database must not "
+            "count as quantified")
 
     def test_a_quantified_surplus_row_is_never_dropped(self):
         items = PRISTINE[:3] + [
