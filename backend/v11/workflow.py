@@ -1006,6 +1006,99 @@ _OFF_DECLARATION_HEADER = (
 _FOREIGN_DOCUMENTS = frozenset({"LICENCE", "INVOICE", "PACKING_LIST"})
 
 
+def _census_prune(out, pdf_path, triage) -> int:
+    """Drop item rows the form itself says cannot exist. Returns how many.
+
+    These declarations print their own census in the decision box — `Total items
+    3` — and nothing ever read it. Three of the seven documents from the 2 Sep
+    complaint round came back with more rows than the form allows: 9 for 5, 8
+    for 6, 5 for 3. The surplus rows were echoes of real ones carrying no
+    quantity, and on 100329052130 the two extras' customs values summed to
+    197,001 — EXACTLY the item-sum gap that had the job flagged. One cause, two
+    symptoms.
+
+    A model can invent a row; it cannot make the form print a larger number.
+
+    Three conditions, all required, because a wrongly kept row can be deleted by
+    a reviewer while a wrongly dropped one cannot be recovered:
+      1. the form printed a count and there are MORE rows than that;
+      2. the row carries no quantity — every genuine row prints `Quantity (1)`;
+      3. the row's customs value appears nowhere in the document's text layer.
+    Rows go worst-last-first and never below the printed count. A surplus that
+    does not look unsupported is flagged for a human instead of guessed at.
+    """
+    items = out.get("items") or []
+    if not items:
+        return 0
+    census = {}
+    if triage.get("cusdec_page") is not None and triage.get("cusdec_page_digital"):
+        from v11.textlayer_header import read_census as _tl_census
+        p0 = int(triage["cusdec_page"]) + 1
+        census = _tl_census(pdf_path, [p0, p0 + 1]) or {}
+    printed = census.get("total_items")
+    if not printed or len(items) <= int(printed):
+        return 0
+    printed = int(printed)
+
+    doc_text = ""
+    try:
+        import fitz as _fitz
+        doc = _fitz.open(pdf_path)
+        try:
+            doc_text = "".join(doc[i].get_text() for i in range(doc.page_count))
+        finally:
+            doc.close()
+    except Exception:
+        doc_text = ""
+
+    def _printed_on_paper(val) -> bool:
+        if val in (None, "", 0):
+            return False
+        try:
+            f = float(str(val).replace(",", "").strip())
+        except (TypeError, ValueError):
+            return False
+        if not doc_text:
+            # A photographed bundle corroborates nothing, so "unsupported" would
+            # mean every row. Never prune on an absence of evidence.
+            return True
+        for cand in {f"{f:,.2f}", f"{f:,.4f}".rstrip("0").rstrip("."),
+                     f"{f:,.0f}", f"{f:.2f}", repr(f), str(f)}:
+            if cand and cand in doc_text:
+                return True
+        return False
+
+    def _has_qty(it) -> bool:
+        q = it.get("quantity")
+        try:
+            return q is not None and float(str(q).replace(",", "")) > 0
+        except (TypeError, ValueError):
+            return bool(str(q or "").strip())
+
+    suspect = [i for i, it in enumerate(items)
+               if not _has_qty(it) and not _printed_on_paper(it.get("customs_value_mmk"))]
+    surplus = len(items) - printed
+    drop = set(suspect[-surplus:]) if len(suspect) >= surplus else set()
+    if not drop:
+        out.setdefault("sanity_flags", []).append("item_count_over_declared")
+        out["needs_review"] = True
+        out.setdefault("trace", []).append({"phase": "item_census", "printed": printed,
+                                            "count": len(items), "dropped": []})
+        print(f"[census] form prints {printed} items, extraction produced {len(items)}; "
+              f"none look unsupported — flagged for review")
+        return 0
+
+    kept = [it for i, it in enumerate(items) if i not in drop]
+    out["items"] = kept
+    out.setdefault("sanity_flags", []).append("phantom_items_dropped")
+    out.setdefault("trace", []).append({"phase": "item_census", "printed": printed,
+                                        "was": len(items), "now": len(kept),
+                                        "dropped": sorted(drop)})
+    print(f"[census] form prints {printed} items, extraction produced {len(items)}; "
+          f"dropped {len(drop)} row(s) with no quantity and no printed value")
+    return len(drop)
+
+
 def _scope_items(cls_pages, v7_res, v10_res, v7_pages, v10p_pages, out) -> None:
     """Drop items from a lane that demonstrably read a different document.
 
@@ -2164,105 +2257,6 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
         except Exception as _ge:
             out.setdefault("trace", []).append({"phase": "neighbour_guard", "error": str(_ge)})
 
-        # ─── Phase 4.39: the form says how many items it has ───
-        # These declarations print their own census in the decision box —
-        # `Total items 3`. A model can add a row; it cannot make the form print a
-        # larger number, and on the seven documents the team filed complaints
-        # about the printed count was right every time, on three of which
-        # extraction had produced MORE rows than the declaration has: 9 for 5,
-        # 8 for 6, 5 for 3.
-        #
-        # The surplus rows were echoes — the same product names again, carrying
-        # no quantity — and on 100329052130 the two extras' customs values summed
-        # to 197,001, which was EXACTLY the item-sum gap. That is the shape this
-        # removes: a row with nothing to check it by, whose figure appears nowhere
-        # in the document's own text.
-        #
-        # Three conditions, all required, because a wrongly dropped row cannot be
-        # recovered by a reviewer while a wrongly kept one can be deleted:
-        #   1. the form printed a count, and we have MORE rows than that;
-        #   2. the row carries no quantity — every genuine row on these forms
-        #      prints `Quantity (1)`;
-        #   3. the row's customs value is not printed anywhere in the text layer
-        #      (a missing value counts as unsupported; it is the emptier case).
-        # Rows are dropped worst-first and never below the printed count.
-        current_stage = "item_census"
-        try:
-            _cen = {}
-            if triage.get("cusdec_page") is not None and triage.get("cusdec_page_digital"):
-                from v11.textlayer_header import read_census as _tl_census
-                _p0c = int(triage["cusdec_page"]) + 1
-                _cen = _tl_census(pdf_path, [_p0c, _p0c + 1]) or {}
-            _printed = _cen.get("total_items")
-            _items39 = out.get("items") or []
-            if _printed and len(_items39) > int(_printed):
-                _printed = int(_printed)
-                # The document's own characters, once — the test for "is this
-                # figure actually on the paper".
-                _doc_text = ""
-                try:
-                    import fitz as _fitz39
-                    _doc39 = _fitz39.open(pdf_path)
-                    try:
-                        _doc_text = "".join(_doc39[i].get_text() for i in range(_doc39.page_count))
-                    finally:
-                        _doc39.close()
-                except Exception:
-                    _doc_text = ""
-
-                def _printed_on_paper(val) -> bool:
-                    """Is this number written somewhere in the document?"""
-                    if val in (None, "", 0):
-                        return False
-                    try:
-                        f = float(str(val).replace(",", "").strip())
-                    except (TypeError, ValueError):
-                        return False
-                    if not _doc_text:
-                        # No text layer at all: nothing is corroborated, and
-                        # "unsupported" would mean every row. Treat as supported
-                        # so a scanned bundle is never pruned on no evidence.
-                        return True
-                    for cand in {f"{f:,.2f}", f"{f:,.4f}".rstrip("0").rstrip("."),
-                                 f"{f:,.0f}", f"{f:.2f}", repr(f), str(f)}:
-                        if cand and cand in _doc_text:
-                            return True
-                    return False
-
-                def _has_qty(it) -> bool:
-                    q = it.get("quantity")
-                    try:
-                        return q is not None and float(str(q).replace(",", "")) > 0
-                    except (TypeError, ValueError):
-                        return bool(str(q or "").strip())
-
-                _suspect = [
-                    i for i, it in enumerate(_items39)
-                    if not _has_qty(it) and not _printed_on_paper(it.get("customs_value_mmk"))
-                ]
-                _surplus = len(_items39) - _printed
-                _drop = set(_suspect[-_surplus:]) if len(_suspect) >= _surplus else set()
-                if _drop:
-                    _kept = [it for i, it in enumerate(_items39) if i not in _drop]
-                    out["items"] = _kept
-                    out.setdefault("sanity_flags", []).append("phantom_items_dropped")
-                    out["trace"].append({"phase": "item_census", "printed": _printed,
-                                         "was": len(_items39), "now": len(_kept),
-                                         "dropped": sorted(_drop)})
-                    print(f"[census] form prints {_printed} items, extraction produced "
-                          f"{len(_items39)}; dropped {len(_drop)} row(s) with no quantity "
-                          f"and no printed value")
-                elif _suspect or _surplus:
-                    # More rows than the form allows, but they do not all look
-                    # unsupported — say so and let a human decide. Never guess
-                    # which real-looking row is the intruder.
-                    out.setdefault("sanity_flags", []).append("item_count_over_declared")
-                    out["needs_review"] = True
-                    out["trace"].append({"phase": "item_census", "printed": _printed,
-                                         "count": len(_items39), "dropped": []})
-        except Exception as _ce39:
-            out.setdefault("trace", []).append({"phase": "item_census", "error": str(_ce39)})
-
         # ─── Phase 4.4: Reconciliation gate (the common invariant) ───
         # One guard, one chokepoint: the declared customs total must equal the
         # sum of item customs values. Any upstream leak — misclassified page,
@@ -2355,6 +2349,27 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
                     "msg": ("exchange rate suspect (extracted="
                             f"{verdict.get('extracted_rate')}, derived={_dr}) → "
                             + ("auto-corrected + flagged" if _corrected else "flagged for review"))})
+
+            # ─── Phase 4.45: the form says how many items it has ───
+            # AFTER recovery, deliberately. The first version of this ran before
+            # the reconcile gate and did nothing on three of the four documents
+            # it was written for, because the surplus rows are ADDED by the
+            # recovery pass — one document went 8 rows to 13 after it. A census
+            # taken before the last thing that can add rows is a census of the
+            # wrong list.
+            current_stage = "item_census"
+            try:
+                _dropped = _census_prune(out, pdf_path, triage)
+                if _dropped:
+                    # The gates must judge the list that ships, so re-run
+                    # reconcile on the pruned rows. On 100329052130 this is the
+                    # whole point: the two dropped rows summed to exactly the
+                    # 197,001 gap, and the sum lands on the declared total.
+                    verdict = _reconcile.reconcile(out.get("declaration") or {},
+                                                   out.get("items") or [])
+                    out["reconcile"] = verdict
+            except Exception as _ce:
+                out.setdefault("trace", []).append({"phase": "item_census", "error": str(_ce)})
 
             # Per-row math gate: a suspect individual item (value ≠ qty×price×rate)
             # → force review even if the total balances.

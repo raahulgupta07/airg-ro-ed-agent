@@ -220,15 +220,49 @@ class TestTheWorkflowShipsThisRule:
             "workflow does not import the census reader, so the printed count "
             "is not consulted anywhere")
 
+    def test_the_prune_runs_after_recovery_not_before(self):
+        """Order is the whole fix, and getting it wrong looked like success.
+
+        The first version ran before the reconcile gate and did nothing on three
+        of the four documents it was written for: the surplus rows are ADDED by
+        the recovery pass inside that gate — one document went from 8 rows to 13
+        — so a census taken earlier counts the wrong list. The call must sit
+        after the recovery, and the verdict must be recomputed on the rows that
+        actually ship.
+        """
+        src = WORKFLOW.read_text(encoding="utf-8")
+        # The CALL, not the `def` — both contain the same argument list, and
+        # matching the definition would compare the wrong two positions and pass
+        # or fail for reasons that have nothing to do with ordering.
+        call = src.find("= _census_prune(out, pdf_path, triage)")
+        recovery = src.find("recovery = {\"attempted\"")
+        assert call > 0, "nothing calls the census prune"
+        assert recovery > 0 and call > recovery, (
+            "the census prune runs before the recovery pass, which is where the "
+            "surplus rows come from")
+        after = src[call:call + 900]
+        assert "_reconcile.reconcile(" in after, (
+            "rows are dropped but the verdict is not recomputed, so the gates "
+            "judge a list that no longer exists")
+
+    def test_a_surplus_that_looks_real_is_flagged_not_guessed(self):
+        """13 rows against a printed 6, every one carrying a quantity: the rule
+        must decline. Choosing which real-looking row is the intruder is exactly
+        the guess this guard exists to avoid."""
+        src = WORKFLOW.read_text(encoding="utf-8")
+        i = src.find("def _census_prune")
+        body = src[i:i + 4200]
+        assert "item_count_over_declared" in body and "needs_review" in body
+
     def test_the_three_conditions_are_all_present(self):
         """No quantity AND value not on paper AND a printed count."""
         src = WORKFLOW.read_text(encoding="utf-8")
-        i = src.find("Phase 4.39")
-        assert i > 0, "the item-census phase is gone"
+        i = src.find("def _census_prune")
+        assert i > 0, "the item-census helper is gone"
         block = src[i:i + 6000]
         for needed in ("_has_qty", "_printed_on_paper", "total_items"):
             assert needed in block, f"the census phase no longer uses {needed}"
-        assert "_drop = set(_suspect[-_surplus:])" in block, (
+        assert "drop = set(suspect[-surplus:])" in block, (
             "the phase no longer limits the drop to the surplus, so it could "
             "prune below the count the form printed")
 
