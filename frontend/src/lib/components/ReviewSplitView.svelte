@@ -1085,7 +1085,7 @@
 <!-- ═══ SPLIT GRID ═══ -->
 <div class="review-grid">
   <!-- LEFT: PDF -->
-  <div class="border-2 flex flex-col {mobileTab === 'data' ? 'hidden md:flex' : 'flex'}"
+  <div class="border-2 flex flex-col rv-viewer {mobileTab === 'data' ? 'hidden md:flex' : 'flex'}"
     style="border-color: var(--line); background: white;">
     <div class="dark-bar flex justify-between items-center text-xs">
       <span>PDF_VIEWER</span>
@@ -1202,7 +1202,10 @@
          inline-block so it shrinks to the image's rendered size, and auto
          margins do not centre an inline-block. It sat hard left, which on a
          scrolled column reads as an empty pane. -->
-    <div class="flex-1 min-h-[400px] overflow-auto custom-scrollbar"
+    <!-- `min-h-0`, not a 400px floor: a flex child refuses to shrink below its
+         content unless told to, which is what let the stack of pages push the
+         panel — and the window — taller instead of scrolling here. -->
+    <div class="flex-1 min-h-0 overflow-auto custom-scrollbar"
       bind:this={scrollEl}
       style="background: var(--surface-container-low); text-align: center;">
       {#if viewer === 'page'}
@@ -1612,6 +1615,33 @@
     box-shadow: 0 0 0 3px rgb(37 99 235 / 0.18);
   }
 
+  /* The viewer owns a fixed height, and the pages scroll INSIDE it.
+     Without this the panel is content-height: stacking every page made the
+     panel as tall as the whole document, so the browser window scrolled and the
+     data column slid away off the top — the opposite of what a side-by-side
+     reviewer needs. `sticky` keeps the sheet in place while the data column
+     scrolls on its own.
+     `100dvh` not `100vh`: on mobile Safari the toolbar makes vh taller than the
+     visible area, which would push the bottom of the pane under the chrome. */
+  .rv-viewer {
+    min-height: 0;   /* a flex child will not shrink below content without it */
+  }
+  @media (min-width: 768px) {
+    .rv-viewer {
+      position: sticky;
+      top: 0.5rem;
+      height: calc(100dvh - 9.5rem);
+      max-height: calc(100dvh - 9.5rem);
+    }
+  }
+  @media (max-width: 767px) {
+    /* One column on a phone: a sticky pane would pin the PDF over the data. */
+    .rv-viewer {
+      height: 75dvh;
+      max-height: 75dvh;
+    }
+  }
+
   /* One page in the scrolling column. The page the strip is pointing at gets a
      border, so after a jump it is obvious which sheet you landed on — with
      every page mounted, "the one on screen" is otherwise ambiguous. */
@@ -1673,6 +1703,10 @@
   @media (min-width: 768px) {
     .review-grid {
       grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      /* Grid items stretch to the tallest row by default, which makes the
+         viewer column as tall as the data column and leaves `position: sticky`
+         nothing to slide against. */
+      align-items: start;
     }
   }
 </style>
