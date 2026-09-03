@@ -303,6 +303,11 @@
     if (_jumpTimer) { clearTimeout(_jumpTimer); _jumpTimer = null; }
     currentPage = page;
     if (searchVal !== undefined) pdfSearchTerm = String(searchVal || '').slice(0, 80);
+    // In the page column the pages are all mounted, so a jump is a scroll. The
+    // observer sets `currentPage` again when the scroll lands; assigning it
+    // above keeps the strip correct for the iframe view and while smooth
+    // scrolling is still in flight.
+    if (viewer === 'page') scrollToPage(page);
   }
 
   function jumpToPage(n: number) {
@@ -384,10 +389,58 @@
   // Server picks the format: JPEG for a photographed page, PNG where there is a
   // text layer. 150 DPI is readable and keeps a scanned page around 300 KB —
   // the old fixed render was ~7 MB, which is not something to fetch on hover.
-  const pageImgSrc = $derived.by(() => {
-    if (!jobId || !currentPage) return '';
+  function pageImgSrc(n: number) {
+    if (!jobId || !n) return '';
     const t = encodeURIComponent(auth.token || '');
-    return `/api/jobs/${jobId}/page-image/${currentPage}?token=${t}&dpi=150`;
+    return `/api/jobs/${jobId}/page-image/${n}?token=${t}&dpi=150`;
+  }
+
+  // ── The page column ────────────────────────────────────────────────────
+  // Every page is rendered, stacked in one scrolling column, because a bundle
+  // is read as a document: the CUSDEC continuation sheet holding the item block
+  // is the page after the header, and paging one image at a time made the
+  // commonest comparison in review a click-and-wait.
+  //
+  // `currentPage` is now DERIVED from the scroll position rather than driving
+  // which image is mounted. It still drives the iframe (`pdfSrc`) and the page
+  // strip.
+  let scrollEl = $state<HTMLElement | null>(null);
+  const pageEls: Record<number, HTMLElement> = {};
+
+  function scrollToPage(n: number) {
+    const el = pageEls[n];
+    if (!el) return;
+    el.scrollIntoView({
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      block: 'start',
+    });
+  }
+
+  // The page you are looking at is the topmost one still crossing the upper
+  // band of the column — NOT the most visible one, which flips between two
+  // numbers while a page boundary sits mid-column.
+  $effect(() => {
+    const root = scrollEl;
+    // `pageEls` is a plain object, so it is not reactive — read the page COUNT
+    // so this re-runs when the pages arrive (the job loads after mount) or the
+    // viewer flips back from the iframe. Without it the observer would watch
+    // whatever existed on first run, which is nothing.
+    const n = pageList.length;
+    if (!root || viewer !== 'page' || !n) return;
+    const els = Object.values(pageEls).filter(Boolean);
+    if (!els.length) return;
+    const io = new IntersectionObserver((entries) => {
+      let best: IntersectionObserverEntry | null = null;
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        if (!best || e.boundingClientRect.top < best.boundingClientRect.top) best = e;
+      }
+      if (!best) return;
+      const n = Number((best.target as HTMLElement).dataset.page);
+      if (n && n !== currentPage) currentPage = n;
+    }, { root, rootMargin: '-8% 0px -70% 0px', threshold: 0 });
+    for (const el of els) io.observe(el);
+    return () => io.disconnect();
   });
 
   // ── Highlight boxes ────────────────────────────────────────────────────
@@ -401,28 +454,37 @@
   // image's natural width turns that into a percentage — which survives zoom,
   // window resizing and the browser's own scaling without any further work.
   const PAGE_IMG_DPI = 150;
-  let imgNatural = $state<{ w: number; h: number }>({ w: 0, h: 0 });
+  // One natural size PER PAGE. A bundle mixes A4 text pages with photographed
+  // sheets of another size, so a single shared measurement would place boxes on
+  // one page using another page's dimensions.
+  let imgNaturals = $state<Record<number, { w: number; h: number }>>({});
+  // Why a page could not be drawn, per page. The commonest cause is a job whose
+  // `pdf_path` points somewhere the container no longer has — the render 404s
+  // with "PDF not found" and the reviewer is owed that sentence, not a broken
+  // image icon.
+  let pageErrors = $state<Record<number, string>>({});
   let activeField = $state<string>('');
 
-  function pctBox(bb: any) {
-    if (!bb || !imgNatural.w || !imgNatural.h) return null;
+  function pctBox(bb: any, page: number) {
+    const nat = imgNaturals[page];
+    if (!bb || !nat?.w || !nat?.h) return null;
     const k = PAGE_IMG_DPI / 72;
     return {
-      left: (bb.x * k) / imgNatural.w * 100,
-      top: (bb.y * k) / imgNatural.h * 100,
-      width: (bb.w * k) / imgNatural.w * 100,
-      height: (bb.h * k) / imgNatural.h * 100,
+      left: (bb.x * k) / nat.w * 100,
+      top: (bb.y * k) / nat.h * 100,
+      width: (bb.w * k) / nat.w * 100,
+      height: (bb.h * k) / nat.h * 100,
     };
   }
 
   // Every box on the page currently shown, so a reviewer can see at a glance
   // which figures on this sheet the pipeline actually located.
-  const boxesOnPage = $derived.by(() => {
+  function boxesForPage(pageNo: number) {
     const out: { field: string; label: string; box: any }[] = [];
     const decl = fieldBboxes?.declaration || {};
     for (const [field, bb] of Object.entries<any>(decl)) {
-      if (bb?.page !== currentPage) continue;
-      const b = pctBox(bb);
+      if (bb?.page !== pageNo) continue;
+      const b = pctBox(bb, pageNo);
       if (b) out.push({ field, label: field, box: b });
     }
     // Item rows too. These were computed and stored alongside the declaration
@@ -432,14 +494,14 @@
     const items = fieldBboxes?.items || {};
     for (const [idx, row] of Object.entries<any>(items)) {
       for (const [field, bb] of Object.entries<any>(row || {})) {
-        if (bb?.page !== currentPage) continue;
-        const b = pctBox(bb);
+        if (bb?.page !== pageNo) continue;
+        const b = pctBox(bb, pageNo);
         if (b) out.push({ field: `item:${idx}:${field}`,
                           label: `Item ${Number(idx) + 1} · ${field}`, box: b });
       }
     }
     return out;
-  });
+  }
 
   // The same zoom control drives both viewers, so switching between them does
   // not silently change the size of the page.
@@ -1141,6 +1203,7 @@
          margins do not centre an inline-block. It sat hard left, which on a
          scrolled column reads as an empty pane. -->
     <div class="flex-1 min-h-[400px] overflow-auto custom-scrollbar"
+      bind:this={scrollEl}
       style="background: var(--surface-container-low); text-align: center;">
       {#if viewer === 'page'}
         <!-- Page image. The reason this is the default: a browser PDF viewer
@@ -1149,32 +1212,64 @@
              field hover was silently ignored — the strip said page 10 while the
              document sat on page 3. An <img> has no such problem: change the
              src, the page changes. -->
-        {#if pageImgSrc}
-          <!-- The wrapper is inline-block so it shrinks to the image's own
-               rendered size. Percentage-positioned boxes then line up at any
-               zoom without recomputing anything. -->
-          <div style="position: relative; display: inline-block; margin: 0 auto;">
-            <img
-              src={pageImgSrc}
-              alt="Page {currentPage} of {totalPages}"
-              style="display: block; {imgWidthStyle}"
-              onload={(e) => {
-                const t = e.currentTarget as HTMLImageElement;
-                imgNatural = { w: t.naturalWidth, h: t.naturalHeight };
-              }}
-            />
-            {#each boxesOnPage as b (b.field)}
-              <!-- Padded outward by a hair: `search_for` returns a tight glyph
-                   box, and a rectangle drawn exactly on the ink reads as a
-                   strikethrough rather than a highlight. -->
-              <div
-                class="rv-box {activeField === b.field ? 'on' : ''}"
-                style="left: calc({b.box.left}% - 2px); top: calc({b.box.top}% - 2px);
-                       width: calc({b.box.width}% + 4px); height: calc({b.box.height}% + 4px);"
-                title={b.label}
-              ></div>
-            {/each}
-          </div>
+        {#if jobId && totalPages > 0}
+          {#each pageList as p, i (p?.page_number ?? i + 1)}
+            {@const num = p?.page_number ?? (i + 1)}
+            <!-- The wrapper is inline-block so it shrinks to the image's own
+                 rendered size. Percentage-positioned boxes then line up at any
+                 zoom without recomputing anything. -->
+            <!-- `width: fit-content` + `margin: auto`, NOT inline-block: the
+                 column is `text-align: center`, so inline-block pages flow into
+                 each other and wrap side by side — which is exactly what a
+                 failed image render looks like, since the alt text is narrow.
+                 Block-level with a shrink-to-fit width centres the sheet AND
+                 keeps one page per row. -->
+            <div
+              class="rv-page {currentPage === num ? 'on' : ''}"
+              data-page={num}
+              bind:this={pageEls[num]}
+              style="position: relative; display: block; width: fit-content; margin: 0 auto 10px;"
+            >
+              {#if pageErrors[num]}
+                <!-- A page that will not render says so, at the size a page
+                     would have been. The browser's own broken-image alt text is
+                     a few narrow words, so a failed render used to collapse the
+                     column into a run of text and read as a layout bug rather
+                     than a missing file. -->
+                <div class="rv-page-missing">
+                  <span>PAGE {num} UNAVAILABLE</span>
+                  <span class="rv-page-missing-why">{pageErrors[num]}</span>
+                </div>
+              {:else}
+                <img
+                  src={pageImgSrc(num)}
+                  alt="Page {num} of {totalPages}"
+                  loading="lazy"
+                  decoding="async"
+                  style="display: block; {imgWidthStyle}"
+                  onload={(e) => {
+                    const t = e.currentTarget as HTMLImageElement;
+                    imgNaturals = { ...imgNaturals, [num]: { w: t.naturalWidth, h: t.naturalHeight } };
+                  }}
+                  onerror={() => {
+                    pageErrors = { ...pageErrors, [num]: 'The source PDF is not where this job recorded it.' };
+                  }}
+                />
+              {/if}
+              <span class="rv-pageno">{num}</span>
+              {#each boxesForPage(num) as b (b.field)}
+                <!-- Padded outward by a hair: `search_for` returns a tight glyph
+                     box, and a rectangle drawn exactly on the ink reads as a
+                     strikethrough rather than a highlight. -->
+                <div
+                  class="rv-box {activeField === b.field ? 'on' : ''}"
+                  style="left: calc({b.box.left}% - 2px); top: calc({b.box.top}% - 2px);
+                         width: calc({b.box.width}% + 4px); height: calc({b.box.height}% + 4px);"
+                  title={b.label}
+                ></div>
+              {/each}
+            </div>
+          {/each}
         {:else}
           <div class="flex items-center justify-center h-full">
             <span class="text-xs font-bold uppercase" style="color: var(--outline);">NO PAGE</span>
@@ -1515,6 +1610,59 @@
     background: rgb(250 204 21 / 0.42);
     outline: 2px solid var(--primary);
     box-shadow: 0 0 0 3px rgb(37 99 235 / 0.18);
+  }
+
+  /* One page in the scrolling column. The page the strip is pointing at gets a
+     border, so after a jump it is obvious which sheet you landed on — with
+     every page mounted, "the one on screen" is otherwise ambiguous. */
+  .rv-page {
+    outline: 1px solid var(--line);
+    scroll-margin-top: 8px;
+  }
+  .rv-page.on {
+    outline: 2px solid var(--primary);
+  }
+  /* Page number sits on the sheet's own corner: a stacked column has no other
+     place to say which page you are reading. */
+  /* A page that could not be rendered, at roughly the size the page would have
+     been (A4 is 1:1.414) so the column keeps its shape and the scrollbar keeps
+     telling the truth about how long the document is. */
+  .rv-page-missing {
+    width: min(78vw, 420px);
+    aspect-ratio: 1 / 1.414;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    padding: 1rem;
+    background: var(--surface-container);
+    color: var(--on-surface-muted, var(--outline));
+    font-family: var(--font-mono, monospace);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-align: center;
+  }
+  .rv-page-missing-why {
+    max-width: 32ch;
+    letter-spacing: 0;
+    font-size: 10px;
+    line-height: 1.5;
+    opacity: 0.75;
+  }
+
+  .rv-pageno {
+    position: absolute;
+    top: 0;
+    left: 0;
+    padding: 1px 5px;
+    font-family: var(--font-mono, monospace);
+    font-size: 9px;
+    font-variant-numeric: tabular-nums;
+    background: var(--on-surface);
+    color: var(--surface);
+    opacity: 0.65;
+    pointer-events: none;
   }
 
   .review-grid {
