@@ -963,6 +963,79 @@ selection and printing). It is also the only way to draw a highlight box: you ca
 position an element over a browser PDF plugin. Zoom is held in state — the old hardcoded
 `zoom=page-fit` was re-applied on every hover-jump, so zooming appeared broken.
 
+## ★★★ The form prints its own item count (2026-09-03)
+
+Every one of these declarations carries `Total items N` in its decision box, and
+nothing read it until now. Three of the seven documents in the 2 Sep complaint
+round stored MORE item rows than the form allows — 9 for 5, 8 for 6, 5 for 3 —
+and the surplus rows were echoes of real ones carrying no quantity. On
+`100329052130` the two extras' customs values summed to **197,001, which was
+exactly the item-sum gap** that had the job flagged. One cause, two symptoms:
+fix the count and the arithmetic closes on its own.
+
+A model can invent a row; it cannot make the form print a larger number.
+
+`textlayer_header.read_census()` reads `Total items` / `Total item value` by the
+same coordinate anchoring as the header fields. It is deliberately NOT in
+`_SPEC`: those are declaration columns, and `_save_to_db`'s whitelist would drop
+these silently. `Total items 0` is a failed read, not a form with no items — a
+declaration with no item block prints no total either.
+
+`workflow._census_prune()` (Phase 4.45) drops a row only when **all three** hold:
+the form printed a count and there are more rows than that; the row has no
+quantity; and its customs value appears nowhere in the document's text layer. It
+never prunes below the printed count, and never fires on an all-photograph
+bundle — there nothing is corroborated and "unsupported" would mean every row. A
+surplus it cannot explain raises `item_count_over_declared` and forces review
+rather than guessing which real-looking row is the intruder.
+
+**★★★ It failed live TWICE before working, and both times the suite was green,
+the logs were quiet and the output was unchanged.** Read
+`tests/test_item_census.py` before touching it:
+
+1. **It ran in the wrong phase.** Placed before the Phase 4.4 gate — but the
+   surplus rows are ADDED by the recovery pass INSIDE that gate (`100327095522`
+   went 8 rows → 13 there). A census taken before the last thing that can add
+   rows counts a list that no longer exists at save time. It now runs after
+   recovery AND recomputes `verdict`, or the gates judge a list that changed
+   under them.
+2. **It read a value shape the database never stores.** At that point an item's
+   `quantity` is still the raw string off the form — `94 CT`, `1X144` — and
+   "any non-empty string counts" made every echo row look quantified. The same
+   rows reach Postgres with NULL, because `numeric.to_float` refuses a
+   unit-suffixed number. **Read a field through the same parser the save path
+   uses**, or the guard judges a row the reviewer never sees.
+
+Log a line when a guard DECLINES, not only when it acts. The
+`none look unsupported — flagged` line is what exposed the second failure; the
+first was invisible until real documents were re-run and diffed against the
+paper.
+
+## ★★★ A total that spells out the invoice-currency amount IS that amount
+
+Bundle `0259100560` stored `total_customs_value = 942,418,932` where the form
+prints `CIF- 942,418.9320` in THB: the same digit string with the decimal point
+lost. All twelve pages are photographs, so no text-layer reader can settle it
+and the arithmetic gate could only report that the sum disagreed.
+
+Phase 4.38 now blanks a total whose DIGITS match the invoice-currency amount's
+**and** which is nowhere near `fc × rate` — both conditions, so a coincidence
+cannot delete a real total. Phase 4.365 has already run by then, so the guard
+hands the figure to the item sum itself and always sets `needs_review`.
+`_digits()` deliberately avoids `re`: this module imports it per-function, and a
+NameError inside a guard would be swallowed by the surrounding `except` on
+exactly the documents the guard exists to save.
+
+## Issues: a warning that fires on every document is not a warning
+
+`issues.py` used to open the checks panel with "Freight cost is empty" and
+"Insurance cost is empty" on every job — while its own reason line admits "most
+of these documents leave this blank (just a dash)". All seven complaint
+documents print a dash for both. Two permanent entries at the top of a checklist
+teach a reviewer to skip the checklist. They now appear only when `cif_ok` is
+False, the one state where a missing build-up line explains the arithmetic.
+Unknown is not broken: `cif_ok is None` stays quiet.
+
 ## Deploy + first-boot facts (verified 2026-08-04)
 
 The stack was torn down with `down -v` and rebuilt from the Dockerfile — **the fresh-database
@@ -971,18 +1044,93 @@ boot test that `0006` once broke now PASSES**: `0001 → 0008` ran to head on em
 `rover_documents` / `rover_items` / `rover_reports` do NOT exist on a clean install; they
 were only ever created by rover's own self-heal, never by a migration.
 
+### Production (AWS) — where it actually runs, verified 2026-09-03
+
+- **Host `/opt/airg-ro-ed-agent` on `ubuntu@18.143.119.236`, reachable only through
+  the jump box `chladmin@10.16.73.75`** (that box's key is authorised on AWS;
+  a laptop has none). Passwordless sudo on the AWS host, and the repo there is
+  root-owned, so every git/docker command needs `sudo`.
+- **URL `https://pgroagent.citygpt.xyz`** (renamed from `betaroed` on 3 Sep; the
+  old name's DNS record is gone). TLS is terminated by a **shared Nginx Proxy
+  Manager** on :80/:443 that also fronts `pg.citygpt.xyz`, `admin.pg.citygpt.xyz`
+  and `pgrtmagent.citygpt.xyz`. The app's OWN nginx service is commented out in
+  the prod `docker-compose.yml` — an uncommitted local edit. Preserve it across a
+  pull with `git stash push -- docker-compose.yml` → merge → `stash pop`.
+- **Deploy:** pull → `docker compose build --build-arg GIT_SHA=$(git rev-parse
+  --short HEAD) app worker` → `up -d --force-recreate app worker`. Confirm with
+  `/api/health`, which reports `version` AND `commit`. Sudo strips a bare
+  `GIT_SHA=... docker compose build`; pass `--build-arg` explicitly or the image
+  stamps `unknown`.
+- **★★★ Migrations are a one-way door.** `0005`→`0008` were applied to 160 live
+  jobs; after them the previous image CANNOT boot (unknown alembic head), so a
+  rollback needs a DB restore, not just the retagged image. Dump first:
+  `docker exec ro-ed-postgres pg_dump -U ro_ed -d ro_ed --clean --if-exists | gzip`.
+- **★★ Rows written before `0006` keep their rounding.** The migration widened
+  money `real` → `double precision`, which preserves what `real` already lost
+  (`109138896` for a printed `109,138,893.66`). Only re-extraction fixes them.
+- **★★★ Port 9000 is published on 0.0.0.0 and must stay firewalled.** It is how
+  the local proxy reaches the app, and it also exposed the whole API over plain
+  HTTP. `DOCKER-USER` is the only chain that can filter a docker-published port
+  (ufw cannot). **The proxy's traffic hairpins**: it leaves NPM as `172.18.0.6`
+  addressed to this host's public IP, is NATed, and arrives with
+  `SRC=18.143.119.236` — allow BOTH legs or the site 502s. Rules are reapplied at
+  boot by `ro-ed-port9000-lockdown.service`; iptables does not persist by itself.
+  Measure before writing a rule: `iptables -I DOCKER-USER -p tcp --dport 9000
+  --syn -j LOG --log-prefix "P9K "` then `dmesg`.
+- **`LDAP_FERNET_KEY` / `STORAGE_FERNET_KEY` are unset on prod.** Zero
+  `ldap_configs` and zero `storage_config` rows, so nothing is encrypted yet —
+  set them BEFORE anyone configures LDAP or S3, or those secrets become
+  undecryptable after a restart.
+- **`scripts/pg_backup_loop.sh` had restarted the sidecar 240 times.** `expr N + 0`
+  exits 1 whenever the result is zero and `set -e` turned that into an exit, so at
+  any minute `:00` the loop died and the container came back into another full
+  dump — the "8 dumps in 61 seconds". Use `$((10#$x))`, which cannot fail.
+
 - **nginx caches the app container's IP.** It resolves `app` once at start, so after any
   `up -d --no-deps app` the site 502s while the app itself is healthy. **Restart nginx after
   recreating app** — otherwise you debug a working backend.
-- **The boot banner prints the DB password.** `✅ Database initialized (postgres) — DSN:
-  postgresql+psycopg://ro_ed:<password>@postgres:5432/ro_ed`, once per uvicorn worker. Dev
-  password today; the line prints whatever the real credential is. Mask it.
+- ~~**The boot banner prints the DB password.**~~ Fixed 2026-09-03:
+  `database._masked_dsn()` keeps the host, port and database name (which is what
+  the line is for) and replaces the password. It printed once per uvicorn worker
+  into `docker logs` and anything shipping them onward.
 - **`must_change_password` never fires when `.env` supplies the password.**
   `database.py:326-328` — the env path sets `must_change = 0`; only the random-password path
   forces a change. So a deploy with `ADMIN_DEFAULT_PASSWORD` set never prompts. That value is
   also only used to CREATE the admin: changing `.env` later does nothing to an existing user.
 - The `pg-backup` sidecar fired **8 full dumps in 61 seconds** on 3 Aug (02:00:41→02:01:08).
   Looks like a retry storm in `pg_backup_loop.sh`. Harmless at 20K, wasteful at real size.
+
+## The review PDF pane scrolls (2026.9.2 → 9.3)
+
+Every page of the document is mounted in one scrolling column in
+`ReviewSplitView.svelte`, each in its own positioned wrapper, so the
+percentage-positioned highlight boxes needed no change. `currentPage` is now
+DERIVED from scroll by an `IntersectionObserver` rooted on the column
+(`rootMargin: '-8% 0px -70% 0px'`, topmost crossing page wins — "most visible"
+flickers between two numbers at a boundary) instead of deciding which single
+image is mounted; it still drives the page strip and the iframe view. The strip,
+prev/next and field jumps became `scrollIntoView` through the existing
+`jumpPdfImmediate`.
+
+- `imgNatural` became **`imgNaturals[page]`**: a bundle mixes A4 text pages with
+  photographs of another size, and one shared measurement places a page's boxes
+  using another page's geometry.
+- `loading="lazy"` per image — mounting 18 pages must not fetch 18 renders.
+- A page that cannot be drawn renders `PAGE n UNAVAILABLE` with the reason at A4
+  proportions. The browser's broken-image alt text is a few narrow words, so a
+  job whose `pdf_path` no longer resolves (the render 404s `PDF not found`) used
+  to collapse the column into a run of text and read as a broken layout.
+
+**★★★ Two CSS facts each cost a release.** A flex child does not shrink below its
+content without `min-height: 0`, so the pane grew to the height of the whole
+document and the BROWSER WINDOW scrolled — side-by-side review with the data
+column off screen. And grid items stretch to the tallest row, so the viewer
+column matched the data column and `position: sticky` had nothing to slide
+against (`align-items: start` on the md grid). The pane owns
+`calc(100dvh - 9.5rem)` — `dvh`, because mobile Safari's `vh` counts the toolbar.
+Also: page wrappers must be block-level with `width: fit-content`;
+`inline-block` inside the column's `text-align: center` makes pages tile
+sideways.
 
 ## DON'T list
 - **Don't treat "typed" as "authoritative".** It says how a page is FILLED IN, not which
@@ -1036,6 +1184,20 @@ were only ever created by rover's own self-heal, never by a migration.
 - **Don't parse an amount or a date inline.** Use `numeric.py` / `dates.py`. Never strip every non-digit — that turns dates and the MA-series id into numbers.
 - **Don't drop a row because its date won't parse.** Keep it and let a human see it.
 - **Don't add an infinite CSS animation**, and honour `prefers-reduced-motion`. A decorative blinking terminal cursor was removed for exactly this.
+
+- **Don't place a guard before the pass that creates what it guards against.** The
+  item census ran before the reconcile gate, and the surplus rows are added by the
+  recovery pass inside it — a green suite, quiet logs and unchanged output. Ask
+  where the data is FINAL, and recompute the verdict after changing the rows.
+- **Don't read a field's raw shape when the database stores a parsed one.** At
+  Phase 4.45 `quantity` is still `94 CT`; `numeric.to_float` refuses it and the row
+  lands NULL. Go through the same parser the save path uses.
+- **Don't allow a reverse proxy through its container IP.** Its traffic hairpins via
+  the host's public address; allow both legs, and LOG the packets before writing
+  the rule rather than reasoning about the path.
+- **Don't use `expr N + 0` under `set -e`.** It exits 1 when the result is zero.
+- **Don't leave the two permanent warnings in the checks panel.** A finding that is
+  true on every document trains reviewers to ignore the panel.
 
 - **Don't change a column type by editing `database.py`.** Alembic owns the DDL; the
   self-heal only ADDs columns. Write a migration, and guard every ALTER with an
