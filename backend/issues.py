@@ -140,9 +140,29 @@ def build_issues(job: Dict, decl: Optional[Dict], items: List[Dict]) -> List[Dic
         })
 
     # ── 4. Empty header fields (warn each, with its usual plain reason) ──
+    #
+    # Freight and insurance are the exception. Their own reason line says "most
+    # of these documents leave this blank (just a dash)" — and it is true: all
+    # seven documents in the last complaint round print a dash for both, so the
+    # panel opened with two warnings about correct readings on every single job.
+    # A checklist that always has the same two items ticked teaches a reviewer to
+    # stop reading it, which costs more than the warnings are worth.
+    #
+    # They still matter when the arithmetic wants them: if the CIF identity does
+    # NOT close, a missing build-up line is a candidate explanation and is worth
+    # naming. `cif_ok is False` is the only state that asks for them; unknown
+    # (None, nothing to check against) is not.
+    _cif_ok = (job or {}).get("cif_ok")
+    if _cif_ok is None:
+        _flags = str((job or {}).get("sanity_flags") or (decl or {}).get("sanity_flags") or "")
+        _cif_ok = False if "cif" in _flags.lower() else None
+    _buildup_matters = _cif_ok is False
+
     for key, label, cause in _HEADER_FIELDS:
         if key == "total_customs_value" and total is None:
             continue  # already covered above
+        if key in ("freight_value", "insurance_value") and not _buildup_matters:
+            continue  # a dash on the form is the right answer, not a finding
         if _blank(decl.get(key)):
             issues.append({
                 "code": "FIELD_EMPTY", "title": f"{label} is empty",

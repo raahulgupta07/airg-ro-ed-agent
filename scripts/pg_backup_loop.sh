@@ -60,9 +60,17 @@ prune_old || true
 while true; do
     now_h=$(date -u +%H)
     now_m=$(date -u +%M)
-    # Strip leading zeros so shell arithmetic doesn't treat them as octal
-    now_h=$(expr "$now_h" + 0)
-    now_m=$(expr "$now_m" + 0)
+    # Strip leading zeros so shell arithmetic doesn't treat them as octal.
+    #
+    # `expr` was the wrong tool and it cost 240 container restarts. `expr N + 0`
+    # exits 1 WHENEVER THE RESULT IS ZERO — that is documented behaviour, not a
+    # bug — and `set -e` at the top of this script turns that into an exit. So at
+    # any minute :00 the loop died, the container restarted, its startup backup
+    # ran, and the clock was still at :00: eight full dumps in 61 seconds on 3
+    # August, and the same every day at 02:00 and every hour of midnight.
+    # `$((10#$x))` forces base 10 and cannot fail.
+    now_h=$((10#$now_h))
+    now_m=$((10#$now_m))
     target_h=2
     if [ "$now_h" -lt "$target_h" ]; then
         sleep_s=$(( (target_h - now_h) * 3600 - now_m * 60 ))

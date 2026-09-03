@@ -2099,6 +2099,62 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
             if _same(_d38.get("invoice_price_mmk"), _d38.get("total_customs_value")):
                 _d38["invoice_price_mmk"] = None
                 _cleared38.append("invoice_price_mmk=total_customs_value")
+            # ── the same digits, a different quantity ──
+            # On the all-photograph bundle 0259100560 the stored total was
+            # 942,418,932 where the form prints `CIF- 942,418.9320` in the
+            # INVOICE CURRENCY: the same digit string with the decimal point
+            # lost. The declaration's real total is 105,506,056, which its item
+            # rows already sum to. Every page is a photograph, so no text-layer
+            # reader can settle it — but the digits themselves prove it: a kyat
+            # total that spells out the foreign-currency amount IS that amount.
+            #
+            # Two conditions, because a coincidence must not blank a real total:
+            # the digit strings match exactly, AND the value is nowhere near the
+            # kyat figure the rate implies (a THB rate is ~64, so a genuine total
+            # and its FC amount cannot share digits).
+            def _digits(v):
+                # No `re` here on purpose: this module imports it per-function,
+                # not at the top, and a NameError inside a guard would take the
+                # whole declaration down for a document the guard exists to save.
+                s = "".join(c for c in str(v or "") if c.isdigit())
+                return s.lstrip("0").rstrip("0")
+
+            try:
+                _tot38 = float(str(_d38.get("total_customs_value") or 0).replace(",", ""))
+            except (TypeError, ValueError):
+                _tot38 = 0.0
+            _fc38 = _d38.get("invoice_price_fc") or _d38.get("invoice_price")
+            try:
+                _rate38 = float(str(_d38.get("exchange_rate") or 0).replace(",", ""))
+                _fcv38 = float(str(_fc38 or 0).replace(",", ""))
+            except (TypeError, ValueError):
+                _rate38, _fcv38 = 0.0, 0.0
+            if (_tot38 and _fcv38 and _digits(_tot38) and _digits(_tot38) == _digits(_fcv38)):
+                _implied = _fcv38 * _rate38 if _rate38 else 0.0
+                if not _implied or abs(_tot38 - _implied) > 2 * _implied:
+                    _d38["total_customs_value"] = None
+                    _cleared38.append("total_customs_value=invoice_currency_amount")
+                    # Phase 4.365 — which adopts an item sum for a blank total —
+                    # has already run by now, so hand the figure over here or the
+                    # document ships with no total at all. The item block is a
+                    # second, independent reading of the same number; on this
+                    # document it gives 105,506,056, the figure handwritten in the
+                    # CUSDEC's own box. Always flagged: a total nobody could read
+                    # directly is a human's call, however well the rows agree.
+                    try:
+                        _isum38 = sum(
+                            float(str(_i.get("customs_value_mmk") or 0).replace(",", ""))
+                            for _i in (out.get("items") or [])
+                        )
+                    except (TypeError, ValueError):
+                        _isum38 = 0.0
+                    if _isum38 > 0:
+                        _d38["total_customs_value"] = round(_isum38, 2)
+                        out.setdefault("sanity_flags", []).append("total_from_items")
+                        print(f"[guard] total spelled the invoice-currency amount; "
+                              f"adopted the item sum {_isum38:,.2f}")
+                    out["needs_review"] = True
+
             if _cleared38:
                 out["declaration"] = _d38
                 out.setdefault("sanity_flags", []).append("neighbour_value_rejected")
@@ -2107,6 +2163,105 @@ def run(pdf_path: str, job_id: Optional[str] = None, engine: str = "auto") -> Di
                       f"{', '.join(_cleared38)}")
         except Exception as _ge:
             out.setdefault("trace", []).append({"phase": "neighbour_guard", "error": str(_ge)})
+
+        # ─── Phase 4.39: the form says how many items it has ───
+        # These declarations print their own census in the decision box —
+        # `Total items 3`. A model can add a row; it cannot make the form print a
+        # larger number, and on the seven documents the team filed complaints
+        # about the printed count was right every time, on three of which
+        # extraction had produced MORE rows than the declaration has: 9 for 5,
+        # 8 for 6, 5 for 3.
+        #
+        # The surplus rows were echoes — the same product names again, carrying
+        # no quantity — and on 100329052130 the two extras' customs values summed
+        # to 197,001, which was EXACTLY the item-sum gap. That is the shape this
+        # removes: a row with nothing to check it by, whose figure appears nowhere
+        # in the document's own text.
+        #
+        # Three conditions, all required, because a wrongly dropped row cannot be
+        # recovered by a reviewer while a wrongly kept one can be deleted:
+        #   1. the form printed a count, and we have MORE rows than that;
+        #   2. the row carries no quantity — every genuine row on these forms
+        #      prints `Quantity (1)`;
+        #   3. the row's customs value is not printed anywhere in the text layer
+        #      (a missing value counts as unsupported; it is the emptier case).
+        # Rows are dropped worst-first and never below the printed count.
+        current_stage = "item_census"
+        try:
+            _cen = {}
+            if triage.get("cusdec_page") is not None and triage.get("cusdec_page_digital"):
+                from v11.textlayer_header import read_census as _tl_census
+                _p0c = int(triage["cusdec_page"]) + 1
+                _cen = _tl_census(pdf_path, [_p0c, _p0c + 1]) or {}
+            _printed = _cen.get("total_items")
+            _items39 = out.get("items") or []
+            if _printed and len(_items39) > int(_printed):
+                _printed = int(_printed)
+                # The document's own characters, once — the test for "is this
+                # figure actually on the paper".
+                _doc_text = ""
+                try:
+                    import fitz as _fitz39
+                    _doc39 = _fitz39.open(pdf_path)
+                    try:
+                        _doc_text = "".join(_doc39[i].get_text() for i in range(_doc39.page_count))
+                    finally:
+                        _doc39.close()
+                except Exception:
+                    _doc_text = ""
+
+                def _printed_on_paper(val) -> bool:
+                    """Is this number written somewhere in the document?"""
+                    if val in (None, "", 0):
+                        return False
+                    try:
+                        f = float(str(val).replace(",", "").strip())
+                    except (TypeError, ValueError):
+                        return False
+                    if not _doc_text:
+                        # No text layer at all: nothing is corroborated, and
+                        # "unsupported" would mean every row. Treat as supported
+                        # so a scanned bundle is never pruned on no evidence.
+                        return True
+                    for cand in {f"{f:,.2f}", f"{f:,.4f}".rstrip("0").rstrip("."),
+                                 f"{f:,.0f}", f"{f:.2f}", repr(f), str(f)}:
+                        if cand and cand in _doc_text:
+                            return True
+                    return False
+
+                def _has_qty(it) -> bool:
+                    q = it.get("quantity")
+                    try:
+                        return q is not None and float(str(q).replace(",", "")) > 0
+                    except (TypeError, ValueError):
+                        return bool(str(q or "").strip())
+
+                _suspect = [
+                    i for i, it in enumerate(_items39)
+                    if not _has_qty(it) and not _printed_on_paper(it.get("customs_value_mmk"))
+                ]
+                _surplus = len(_items39) - _printed
+                _drop = set(_suspect[-_surplus:]) if len(_suspect) >= _surplus else set()
+                if _drop:
+                    _kept = [it for i, it in enumerate(_items39) if i not in _drop]
+                    out["items"] = _kept
+                    out.setdefault("sanity_flags", []).append("phantom_items_dropped")
+                    out["trace"].append({"phase": "item_census", "printed": _printed,
+                                         "was": len(_items39), "now": len(_kept),
+                                         "dropped": sorted(_drop)})
+                    print(f"[census] form prints {_printed} items, extraction produced "
+                          f"{len(_items39)}; dropped {len(_drop)} row(s) with no quantity "
+                          f"and no printed value")
+                elif _suspect or _surplus:
+                    # More rows than the form allows, but they do not all look
+                    # unsupported — say so and let a human decide. Never guess
+                    # which real-looking row is the intruder.
+                    out.setdefault("sanity_flags", []).append("item_count_over_declared")
+                    out["needs_review"] = True
+                    out["trace"].append({"phase": "item_census", "printed": _printed,
+                                         "count": len(_items39), "dropped": []})
+        except Exception as _ce39:
+            out.setdefault("trace", []).append({"phase": "item_census", "error": str(_ce39)})
 
         # ─── Phase 4.4: Reconciliation gate (the common invariant) ───
         # One guard, one chokepoint: the declared customs total must equal the

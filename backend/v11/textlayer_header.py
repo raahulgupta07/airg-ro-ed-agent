@@ -158,6 +158,63 @@ def _coerce(field: str, raw: str):
         return None
 
 
+#: The form's own census of its item block, printed in the decision box:
+#: `Total pages 3` / `Total items 3`. Kept OUT of `_SPEC` because these are not
+#: declaration columns — `_save_to_db` would drop them silently — and because
+#: they answer a different question: not "what is this field", but "how many
+#: rows should there be".
+_CENSUS = (
+    ("Total items", "total_items", "num", 120, ()),
+    ("Total item value", "total_item_value", "num", 300, ()),
+)
+
+
+def read_census(pdf_path: str, pages: Optional[List[int]] = None) -> Dict[str, object]:
+    """How many item rows the form says it has, and their declared sum.
+
+    A model can add an item; it cannot make the form print a larger number. On
+    the seven documents the team filed complaints about, the printed count was
+    right every time — including on three where extraction produced more rows
+    than the declaration has (9 for 5, 8 for 6, 5 for 3). The surplus rows were
+    echoes of real ones carrying no quantity, and on one document their values
+    summed to exactly the item-sum gap.
+
+    `max_dx` is deliberately short for the count: `Total items` sits in a narrow
+    decision box, and a wide search would happily cross into the next column.
+    """
+    out: Dict[str, object] = {}
+    try:
+        doc = fitz.open(str(pdf_path))
+    except Exception:
+        return out
+    try:
+        idxs = [p - 1 for p in (pages or range(1, doc.page_count + 1))
+                if 1 <= p <= doc.page_count]
+        for label, field, kind, dx, stop in _CENSUS:
+            for i in idxs:
+                try:
+                    v = _value(doc[i], label, kind, dx, stop)
+                except Exception:
+                    v = None
+                if v is None:
+                    continue
+                cv = _coerce(field, v)
+                if cv is None:
+                    continue
+                if field == "total_items":
+                    n = int(cv)
+                    # 0 is not a census, it is a failed read: a declaration with
+                    # no items has no total either.
+                    if n > 0:
+                        out[field] = n
+                else:
+                    out[field] = cv
+                break
+    finally:
+        doc.close()
+    return out
+
+
 def read(pdf_path: str, pages: Optional[List[int]] = None) -> Dict[str, object]:
     """Header fields recoverable from the text layer. {} when there is none."""
     out: Dict[str, str] = {}

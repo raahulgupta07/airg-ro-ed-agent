@@ -64,6 +64,29 @@ def _connect():
 
 _INIT_DONE = False
 
+
+def _masked_dsn(dsn) -> str:
+    """`postgresql+psycopg://ro_ed:s3cret@postgres:5432/ro_ed` -> `…:***@…`.
+
+    The boot banner printed the DSN verbatim, once per uvicorn worker, so the
+    database password sat in `docker logs` and in anything shipping those logs
+    onward. The rest of the string is worth keeping — host, port and database
+    name are what the line is actually for.
+    """
+    s = str(dsn or "")
+    at = s.rfind("@")
+    if at == -1:
+        return s
+    scheme_end = s.find("://")
+    if scheme_end == -1:
+        return s
+    creds = s[scheme_end + 3:at]
+    if ":" not in creds:
+        return s
+    user = creds.split(":", 1)[0]
+    return f"{s[:scheme_end + 3]}{user}:***{s[at:]}"
+
+
 def init_database():
     """Initialize Postgres schema (idempotent + per-process guard + advisory lock).
 
@@ -720,7 +743,7 @@ def init_database():
         except Exception:
             pass
     _INIT_DONE = True
-    print(f"✅ Database initialized (postgres) — DSN: {db_engine.DATABASE_URL}")
+    print(f"✅ Database initialized (postgres) — DSN: {_masked_dsn(db_engine.DATABASE_URL)}")
 
 
 def insert_activity_log_v2(timestamp, user, action, details=None,
