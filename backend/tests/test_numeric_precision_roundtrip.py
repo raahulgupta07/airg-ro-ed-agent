@@ -248,6 +248,17 @@ class TestTheLiveColumnRoundTripsTheRealValues:
         col_type = _live_column_type(live_conn, table, column)
         if col_type is None:
             pytest.skip(f"{table}.{column} does not exist in this database")
+        if (table, column) in db_engine.PERCENTAGE_COLUMNS:
+            # A value probe cannot say anything about these two. They are
+            # numeric(9,4) by contract, so a kyat probe overflows before it
+            # measures anything — and no value they CAN hold distinguishes
+            # correct storage from `real`: at four decimals and a magnitude
+            # under 1, float32's shortest representation reads back exactly
+            # (0.05 -> '0.05'). A probe that passes on the defect is worse than
+            # no probe. Their type and width are covered live by
+            # `assert_no_schema_drift`, which rejects `real` outright.
+            pytest.skip(f"{table}.{column} is a percentage — covered by "
+                        f"assert_no_schema_drift, not by a value probe")
 
         cur = live_conn.cursor()
         try:

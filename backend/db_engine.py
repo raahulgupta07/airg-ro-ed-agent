@@ -481,7 +481,8 @@ MONEY_COLUMNS = {
     ("items", "cif_unit_price"): "unit price multiplied BY a rate",
     ("items", "exchange_rate"): "rate, 61.95007144978846 — must be a number",
     # Percentages, but inputs to a monetary product (tax = value × rate), so a
-    # float32 artefact in the rate lands in a kyat figure.
+    # float32 artefact in the rate lands in a kyat figure. They belong to the
+    # contract for their TYPE, not for their magnitude — see PERCENTAGE_COLUMNS.
     ("items", "customs_duty_rate"): "duty %, multiplied into a kyat amount",
     ("items", "commercial_tax_percent"): "tax %, multiplied into a kyat amount",
     # importer_profiles — learned FX bands. `real` here rounds 67.2133333 to
@@ -521,6 +522,25 @@ MONEY_COLUMN_WIDTHS = {
     ("importer_profiles", "exchange_rate_max"): (24, 10),
     ("importer_profiles", "exchange_rate_avg"): (24, 10),
     ("jobs", "cost_usd"): (20, 8),
+}
+
+#: The money columns that hold a PERCENTAGE, not an amount.
+#:
+#: They are in MONEY_COLUMNS because of what a wrong TYPE costs — a float32
+#: artefact in a duty rate lands in a kyat figure — but their MAGNITUDE is a
+#: fraction: the live corpus runs 0.03 to 0.15, and `numeric(9,4)` (above) caps
+#: them at 99,999.9999 on purpose. A probe that writes a kyat amount into one of
+#: them therefore overflows before it can measure anything, which is not a
+#: finding about storage.
+#:
+#: Nor can a smaller probe rescue it: at four decimals and a magnitude under 1,
+#: float32 reads back exactly (`real` returns 0.05 as '0.05'), so no value these
+#: columns can legally hold tells correct storage apart from `real`. A value
+#: probe here would pass on the defect, so it is skipped and their type and
+#: width are left to `find_schema_drift`, which rejects `real` outright.
+PERCENTAGE_COLUMNS = {
+    ("items", "customs_duty_rate"),
+    ("items", "commercial_tax_percent"),
 }
 
 #: (table, column) -> why `real` is deliberately fine here. Anything typed `real`

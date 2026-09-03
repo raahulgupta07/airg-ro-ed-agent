@@ -658,9 +658,21 @@ class TestTheLiveSchema:
         declared, _unparsed = effective_types()
         interesting = (set(db_engine.MONEY_COLUMNS)
                        | {k for k in declared if k[1].endswith("_json")})
+        # Compare BASE types on both sides. `_live_column_types` reads
+        # `format_type`, so it carries the typmod (`numeric(24,10)`), while the
+        # DDL parser normalises every width away to `numeric` — so comparing the
+        # spellings directly reported all eleven widened columns as drift on a
+        # correctly-migrated database, every run. The width has its own live
+        # guard (`test_the_declared_width_survives_in_the_database`, driven by
+        # MONEY_COLUMN_WIDTHS); this one asks whether the migration was applied
+        # at all.
         mismatches = sorted(
-            (k, declared.get(k), live.get(k)) for k in interesting
-            if k in live and declared.get(k) != live.get(k))
+            (k, db_engine._base_type(declared.get(k)),
+             db_engine._base_type(live.get(k)))
+            for k in interesting
+            if k in live
+            and db_engine._base_type(declared.get(k))
+            != db_engine._base_type(live.get(k)))
         assert mismatches == [], "\n".join(
             f"  {t}.{c}: the DDL says {d}, the database has {l}"
             for (t, c), d, l in mismatches)
