@@ -654,6 +654,14 @@ async def health_check():
     return {
         "status": "ok",
         "version": config.APP_VERSION,
+        # The commit this image was built from. `version` is a hand-maintained
+        # label and it went two months without a bump while the engine was
+        # retired and three data-corrupting guards were fixed — so on 3 Sep 2026
+        # production reporting 2026.6.16 against a repo at 2026.6.23 read as one
+        # patch behind when it was nine commits and a missing module behind.
+        # This field cannot drift: the build stamps it. "unknown" means the image
+        # was built without --build-arg GIT_SHA, which is itself worth seeing.
+        "commit": config.GIT_SHA,
         "engine": config.APP_ENGINE,
         # The reader the DEFAULT engine actually uses. The footer used to show a
         # hardcoded "GEMINI-3.1-FLASH-LITE" prop default that was never passed a

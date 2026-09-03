@@ -73,6 +73,15 @@ RUN mkdir -p /app/data/results /app/data/uploads /app/data/jobs \
     && chown -R appuser:appuser /app
 
 ENV PYTHONUNBUFFERED=1
+
+# The commit this image was built from, surfaced at GET /api/health as `commit`.
+# Declared LAST so a new commit does not invalidate the dependency layers above.
+#   docker compose build --build-arg GIT_SHA=$(git rev-parse --short HEAD) app
+# Left "unknown" when the build does not pass it — an honest answer, and one that
+# tells you the build was not stamped rather than implying it was current.
+ARG GIT_SHA=unknown
+ENV GIT_SHA=${GIT_SHA}
+
 EXPOSE 9000
 
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \

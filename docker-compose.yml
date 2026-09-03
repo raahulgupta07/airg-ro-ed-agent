@@ -34,6 +34,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # Stamps the running image with the commit it was built from, reported at
+        # GET /api/health as `commit`. Reads GIT_SHA from the environment, so a
+        # deploy is:
+        #   GIT_SHA=$(git rev-parse --short HEAD) docker compose build app
+        # Unset leaves it "unknown" — which correctly says "this build was not
+        # stamped" instead of quietly claiming to be current.
+        GIT_SHA: ${GIT_SHA:-unknown}
     image: ro-ed-lang-app:latest
     pull_policy: never
     container_name: ro-ed-api
